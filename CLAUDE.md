@@ -2,7 +2,7 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `docs/prd/MeshOS_PRD_v1.0.md` and `docs/architecture/MeshOS_Architecture_v1.0.md`.
+For full detail, read `documents/prd/MeshOS_PRD_v1.0.md` and `documents/architecture/MeshOS_Architecture_v1.0.md`.
 
 ---
 
@@ -109,7 +109,7 @@ meshos-platform/
 │   ├── k8s/                        # Kubernetes manifests
 │   ├── docker/                     # Docker Compose (MVP)
 │   └── scripts/                    # Deployment and operational scripts
-├── docs/
+├── documents/
 │   ├── prd/                        # Product Requirements Document
 │   ├── architecture/               # Architecture document and ADRs
 │   ├── api/                        # Generated from OpenAPI specs
@@ -199,7 +199,7 @@ The goal of Phase 1 is a running platform where a user can:
 
 **Never import across module boundaries directly.** Cross-module calls use the exported TypeScript interface, not the implementation file.
 
-**Always write an ADR for significant decisions.** Architecture Decision Records live in `docs/architecture/adr/`. Numbered, dated, with context, decision, and consequences.
+**Always write an ADR for significant decisions.** Architecture Decision Records live in `documents/architecture/adr/`. Numbered, dated, with context, decision, and consequences.
 
 **Never store raw credentials.** Connector credentials are stored as AWS Secrets Manager ARN references only.
 
@@ -286,7 +286,7 @@ The goal of Phase 1 is a running platform where a user can:
 
 ## Full Documentation
 
-- Product Requirements Document: `docs/prd/MeshOS_PRD_v1.0.md`
-- Architecture Document: `docs/architecture/MeshOS_Architecture_v1.0.md`
-- Architecture Decision Records: `docs/architecture/adr/`
-- API Reference: `docs/api/` (generated from OpenAPI specs)
+- Product Requirements Document: `documents/prd/MeshOS_PRD_v1.0.md`
+- Architecture Document: `documents/architecture/MeshOS_Architecture_v1.0.md`
+- Architecture Decision Records: `documents/architecture/adr/`
+- API Reference: `documents/api/` (generated from OpenAPI specs)

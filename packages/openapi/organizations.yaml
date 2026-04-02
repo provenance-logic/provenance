@@ -1,0 +1,661 @@
+openapi: 3.1.0
+
+info:
+  title: MeshOS Organizations API
+  version: 1.0.0
+  description: |
+    Manages organizations (tenants), domains within organizations, and the
+    principals and roles associated with them.
+
+    All endpoints require a valid Keycloak-issued JWT in the Authorization header.
+    Every resource is scoped to an organization via org_id — cross-org access is
+    never permitted.
+
+servers:
+  - url: /api/v1
+    description: MeshOS control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Organizations
+    description: Tenant management
+  - name: Domains
+    description: Domain management within an organization
+  - name: Members
+    description: Principal membership and role assignment
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Shared primitives
+    # ------------------------------------------------------------------
+    Uuid:
+      type: string
+      format: uuid
+      examples:
+        - "018e8e5f-1234-7abc-8def-012345678901"
+
+    Timestamp:
+      type: string
+      format: date-time
+      examples:
+        - "2026-04-01T12:00:00Z"
+
+    Slug:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+      description: URL-safe lowercase identifier, 3–63 characters.
+      examples:
+        - "my-domain"
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    # ------------------------------------------------------------------
+    # Organization
+    # ------------------------------------------------------------------
+    OrganizationStatus:
+      type: string
+      enum: [active, suspended, decommissioned]
+
+    Organization:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          examples:
+            - "Acme Data Co."
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        status:
+          $ref: "#/components/schemas/OrganizationStatus"
+        contactEmail:
+          type: string
+          format: email
+          nullable: true
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    CreateOrganizationRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 500
+        contactEmail:
+          type: string
+          format: email
+
+    UpdateOrganizationRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        contactEmail:
+          type: string
+          format: email
+
+    OrganizationList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Organization"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Domain
+    # ------------------------------------------------------------------
+    Domain:
+      type: object
+      required:
+        - id
+        - orgId
+        - name
+        - slug
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          examples:
+            - "Customer Analytics"
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+          description: The principal (human user or service account) responsible for this domain.
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    CreateDomainRequest:
+      type: object
+      required: [name, slug, ownerPrincipalId]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 1000
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+
+    UpdateDomainRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+
+    DomainList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Domain"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Principal / Member
+    # ------------------------------------------------------------------
+    PrincipalType:
+      type: string
+      enum: [human_user, service_account, ai_agent, platform_admin]
+
+    RoleType:
+      type: string
+      enum: [org_admin, domain_owner, data_product_owner, consumer, governance_member]
+
+    Member:
+      type: object
+      required: [principalId, principalType, role, joinedAt]
+      properties:
+        principalId:
+          $ref: "#/components/schemas/Uuid"
+        principalType:
+          $ref: "#/components/schemas/PrincipalType"
+        role:
+          $ref: "#/components/schemas/RoleType"
+        email:
+          type: string
+          format: email
+          nullable: true
+        displayName:
+          type: string
+          nullable: true
+        joinedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    AddMemberRequest:
+      type: object
+      required: [principalId, principalType, role]
+      properties:
+        principalId:
+          $ref: "#/components/schemas/Uuid"
+        principalType:
+          $ref: "#/components/schemas/PrincipalType"
+        role:
+          $ref: "#/components/schemas/RoleType"
+
+    MemberList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Member"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Authenticated principal lacks permission for this operation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Resource already exists (e.g. duplicate slug).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  parameters:
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    DomainId:
+      name: domainId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    PrincipalId:
+      name: principalId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    OffsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+paths:
+  # ------------------------------------------------------------------
+  # Organizations
+  # ------------------------------------------------------------------
+  /organizations:
+    get:
+      operationId: listOrganizations
+      summary: List organizations visible to the authenticated principal.
+      tags: [Organizations]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      operationId: createOrganization
+      summary: Create a new organization (tenant).
+      tags: [Organizations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /organizations/{orgId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: getOrganization
+      summary: Get an organization by ID.
+      tags: [Organizations]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updateOrganization
+      summary: Update an organization.
+      tags: [Organizations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganizationRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Domains
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/domains:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listDomains
+      summary: List all domains within an organization.
+      tags: [Domains]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createDomain
+      summary: Create a domain within an organization.
+      tags: [Domains]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /organizations/{orgId}/domains/{domainId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+
+    get:
+      operationId: getDomain
+      summary: Get a domain by ID.
+      tags: [Domains]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updateDomain
+      summary: Update a domain.
+      tags: [Domains]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDomainRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: deleteDomain
+      summary: Delete a domain. Only permitted if no data products exist within it.
+      tags: [Domains]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Domain has existing data products and cannot be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ------------------------------------------------------------------
+  # Members
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/members:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listMembers
+      summary: List principals with roles in this organization.
+      tags: [Members]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      operationId: addMember
+      summary: Add a principal to an organization with a role.
+      tags: [Members]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemberRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /organizations/{orgId}/members/{principalId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/PrincipalId"
+
+    delete:
+      operationId: removeMember
+      summary: Remove a principal from an organization.
+      tags: [Members]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"

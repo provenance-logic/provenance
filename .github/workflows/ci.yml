@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint and typecheck — runs on all packages in parallel via Turborepo
+  # ---------------------------------------------------------------------------
+  lint-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages (types must be compiled before apps typecheck)
+        run: pnpm turbo run build --filter=@meshos/types
+
+      - name: Lint
+        run: pnpm turbo run lint
+
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+
+  # ---------------------------------------------------------------------------
+  # Tests — NestJS API unit tests
+  # ---------------------------------------------------------------------------
+  test-api:
+    name: Test API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build types
+        run: pnpm turbo run build --filter=@meshos/types
+
+      - name: Run API tests
+        run: pnpm turbo run test --filter=@meshos/api
+        env:
+          NODE_ENV: test
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_NAME: meshos_test
+          DATABASE_USER: meshos
+          DATABASE_PASSWORD: test_password
+          KEYCLOAK_REALM: meshos
+          KEYCLOAK_AUTH_SERVER_URL: http://localhost:8080
+          KEYCLOAK_CLIENT_ID: meshos-api
+
+  # ---------------------------------------------------------------------------
+  # Build Docker images (verify they compile — no push on PRs)
+  # ---------------------------------------------------------------------------
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - { context: apps/api, name: api }
+          - { context: apps/web, name: web }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.context }}/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: meshos/${{ matrix.service.name }}:pr-${{ github.event.pull_request.number }}
+
+  # ---------------------------------------------------------------------------
+  # OpenAPI spec validation
+  # ---------------------------------------------------------------------------
+  validate-openapi:
+    name: Validate OpenAPI Specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install openapi package deps
+        run: pnpm --filter=@meshos/openapi install
+
+      - name: Validate specs
+        run: pnpm --filter=@meshos/openapi validate

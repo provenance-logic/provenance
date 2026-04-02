@@ -1,0 +1,15 @@
+{
+  "name": "@meshos/openapi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenAPI 3.1 specifications — source of truth for all MeshOS APIs",
+  "scripts": {
+    "validate": "redocly lint organizations.yaml products.yaml",
+    "bundle": "redocly bundle organizations.yaml -o dist/organizations.json && redocly bundle products.yaml -o dist/products.json",
+    "generate:types": "openapi-typescript organizations.yaml -o ../types/src/generated/organizations.ts && openapi-typescript products.yaml -o ../types/src/generated/products.ts"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.10.0",
+    "openapi-typescript": "^7.0.0"
+  }
+}

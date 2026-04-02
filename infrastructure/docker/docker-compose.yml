@@ -1,0 +1,618 @@
+# MeshOS MVP — Docker Compose
+#
+# Service startup order (dependency chain):
+#   postgres           (no deps)
+#   neo4j              (no deps)
+#   redpanda           (no deps)
+#   opensearch         (no deps)
+#   minio              (no deps)
+#   keycloak           → postgres (healthy)
+#   opa                → (config volume ready)
+#   temporal-init      → postgres (healthy)
+#   temporal           → postgres (healthy), temporal-init (completed)
+#   temporal-ui        → temporal (healthy)
+#   api                → postgres, neo4j, redpanda, opensearch, keycloak, opa, temporal (all healthy)
+#   agent-query        → api (healthy), opa (healthy), neo4j (healthy), opensearch (healthy)
+#   kong-migrations    → postgres (healthy)
+#   kong               → postgres (healthy), kong-migrations (completed)
+#   embedding          → opensearch (healthy)
+#   web                (no service deps — connects via Kong at runtime)
+#
+# All stateful services use named volumes.
+# All services connect via the `meshos` bridge network.
+# Credentials are passed via environment variables.
+# Never hardcode secrets — override via a .env file or secrets manager in production.
+
+name: meshos
+
+networks:
+  meshos:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
+  redpanda_data:
+  opensearch_data:
+  minio_data:
+  keycloak_data:
+  temporal_data:
+  opa_policies:
+  kong_data:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 — control plane relational state
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: meshos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: meshos
+      POSTGRES_USER: meshos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meshos -d meshos"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Neo4j Community — lineage graph
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5.18-community
+    container_name: meshos-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-meshos_dev_password}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 1g
+      NEO4J_dbms_memory_pagecache_size: 512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt protocol
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Redpanda — Kafka-compatible message broker (no Zookeeper)
+  # ---------------------------------------------------------------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    container_name: meshos-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    ports:
+      - "19092:19092"   # External Kafka
+      - "18082:18082"   # External Pandaproxy (REST)
+      - "18081:18081"   # Schema Registry
+      - "9644:9644"     # Admin API
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy.+true' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # Redpanda Console — topic browser UI (dev only)
+  redpanda-console:
+    image: redpandadata/console:v2.5.2
+    container_name: meshos-redpanda-console
+    restart: unless-stopped
+    environment:
+      CONFIG_FILEPATH: /etc/redpanda/redpanda-console-config.yaml
+    volumes:
+      - ./config/redpanda-console-config.yaml:/etc/redpanda/redpanda-console-config.yaml:ro
+    ports:
+      - "8090:8080"
+    networks:
+      - meshos
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch — product discovery index and semantic vector search
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: meshos-opensearch
+    restart: unless-stopped
+    environment:
+      cluster.name: meshos-search
+      node.name: meshos-opensearch-node1
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"   # Dev only; enable TLS in production
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"   # REST API
+      - "9600:9600"   # Performance analyzer
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage (policy artifacts, audit exports)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-04-06T05-26-02Z
+    container_name: meshos-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-meshos}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-meshos_dev_password}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console UI
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Keycloak — OIDC identity provider
+  # Depends on: postgres (healthy)
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: meshos-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: meshos
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-meshos_dev_admin}
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./config/keycloak/realms:/opt/keycloak/data/import:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # Open Policy Agent — hot-reloadable policy engine (sidecar pattern)
+  # Policies are loaded from the opa_policies volume.
+  # In Phase 2, the Governance Engine writes compiled Rego bundles to this volume.
+  # ---------------------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:0.63.0
+    container_name: meshos-opa
+    restart: unless-stopped
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --log-level=info
+      - --log-format=json
+      - /policies
+    volumes:
+      - opa_policies:/policies
+      - ./config/opa/policies:/policies/bootstrap:ro
+    ports:
+      - "8181:8181"
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8181/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Temporal — workflow engine for governance processes
+  #
+  # Startup sequence:
+  #   1. temporal-init  — runs auto-setup (creates temporal DB schema), then exits
+  #   2. temporal       — starts server once schema is ready
+  #   3. temporal-ui    — starts once server is healthy
+  # ---------------------------------------------------------------------------
+  temporal-init:
+    image: temporalio/auto-setup:1.23.0
+    container_name: meshos-temporal-init
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: meshos
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development.yaml
+    volumes:
+      - ./config/temporal:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # This container runs schema migrations and exits — it is not a long-lived service.
+    restart: "no"
+
+  temporal:
+    image: temporalio/server:1.23.0
+    container_name: meshos-temporal
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: meshos
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development.yaml
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
+      TEMPORAL_HISTORY_MEMBERSHIP_HOST: temporal
+      TEMPORAL_MATCHING_MEMBERSHIP_HOST: temporal
+      TEMPORAL_FRONTEND_MEMBERSHIP_HOST: temporal
+      TEMPORAL_WORKER_MEMBERSHIP_HOST: temporal
+    volumes:
+      - ./config/temporal:/etc/temporal/config/dynamicconfig:ro
+    ports:
+      - "7233:7233"   # gRPC frontend
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 2>&1 | grep -q 'SERVING' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: meshos-temporal-ui
+    restart: unless-stopped
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: "http://localhost:3000"
+    ports:
+      - "8088:8080"
+    networks:
+      - meshos
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Kong OSS — API gateway
+  #
+  # Startup sequence:
+  #   1. kong-migrations — runs DB migrations, then exits
+  #   2. kong            — starts once migrations complete
+  # ---------------------------------------------------------------------------
+  kong-migrations:
+    image: kong:3.6-ubuntu
+    container_name: meshos-kong-migrations
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: postgres
+      KONG_PG_PORT: 5432
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: meshos
+      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  kong:
+    image: kong:3.6-ubuntu
+    container_name: meshos-kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: postgres
+      KONG_PG_PORT: 5432
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: meshos
+      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_STATUS_LISTEN: "0.0.0.0:8100"
+    ports:
+      - "8000:8000"   # Proxy (API ingress)
+      - "8001:8001"   # Admin API
+      - "8100:8100"   # Status / health
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kong-migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kong health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # NestJS API — control plane monolith
+  # Built from apps/api. Depends on all backing services being healthy.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+      target: development
+    container_name: meshos-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      # PostgreSQL
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: meshos
+      DATABASE_USER: meshos
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-meshos_dev_password}
+      # Neo4j
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-meshos_dev_password}
+      # Redpanda / Kafka
+      KAFKA_BROKERS: redpanda:9092
+      # OpenSearch
+      OPENSEARCH_NODE: http://opensearch:9200
+      # OPA
+      OPA_BASE_URL: http://opa:8181
+      # Keycloak
+      KEYCLOAK_REALM: meshos
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_CLIENT_ID: meshos-api
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      # MinIO
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-meshos}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-meshos_dev_password}
+      # Temporal
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+    volumes:
+      - ../../apps/api:/app:cached
+      - /app/node_modules
+    ports:
+      - "3001:3001"
+    networks:
+      - meshos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Agent Query Layer — separate NestJS process (non-negotiable constraint #4)
+  # Built from apps/agent-query. Separate process from the control plane monolith.
+  # ---------------------------------------------------------------------------
+  agent-query:
+    build:
+      context: ../../apps/agent-query
+      dockerfile: Dockerfile
+      target: development
+    container_name: meshos-agent-query
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      # Control plane API (for authorization context)
+      API_BASE_URL: http://api:3001
+      # Neo4j (direct read for lineage traversal)
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-meshos_dev_password}
+      # OpenSearch (semantic search)
+      OPENSEARCH_NODE: http://opensearch:9200
+      # OPA (per-query policy evaluation)
+      OPA_BASE_URL: http://opa:8181
+      # Keycloak
+      KEYCLOAK_REALM: meshos
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_CLIENT_ID: meshos-agent-query
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_AGENT_CLIENT_SECRET:-}
+      # Redpanda (agent activity events)
+      KAFKA_BROKERS: redpanda:9092
+      # Claude API (NL query translation)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: claude-sonnet-4-20250514
+    volumes:
+      - ../../apps/agent-query:/app:cached
+      - /app/node_modules
+    ports:
+      - "3002:3002"   # REST / GraphQL
+      - "3003:3003"   # MCP WebSocket
+    networks:
+      - meshos
+    depends_on:
+      api:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Embedding Service — Python FastAPI (sentence-transformers)
+  # ---------------------------------------------------------------------------
+  embedding:
+    build:
+      context: ../../apps/embedding
+      dockerfile: Dockerfile
+    container_name: meshos-embedding
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      OPENSEARCH_NODE: http://opensearch:9200
+      MODEL_NAME: all-MiniLM-L6-v2
+    volumes:
+      - ../../apps/embedding:/app:cached
+    ports:
+      - "8002:8000"
+    networks:
+      - meshos
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s   # sentence-transformers model download on first start
+
+  # ---------------------------------------------------------------------------
+  # React Frontend (served via Vite dev server in development)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+      target: development
+    container_name: meshos-web
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      VITE_AGENT_BASE_URL: http://localhost:8000/agent/v1
+      VITE_KEYCLOAK_URL: http://localhost:8080
+      VITE_KEYCLOAK_REALM: meshos
+      VITE_KEYCLOAK_CLIENT_ID: meshos-web
+    volumes:
+      - ../../apps/web:/app:cached
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - meshos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

@@ -1,0 +1,141 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # Never cancel an in-flight deploy
+
+permissions:
+  id-token: write   # Required for OIDC AWS auth
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and push Docker images to ECR
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      short_sha: ${{ steps.meta.outputs.version }}
+    strategy:
+      matrix:
+        service:
+          - { context: apps/api, name: api }
+          - { context: apps/web, name: web }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/meshos/${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.service.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.context }}/Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to primary EC2 (API + services)
+  # ---------------------------------------------------------------------------
+  deploy-primary:
+    name: Deploy to Primary EC2
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: mvp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy via SSM (no inbound SSH required)
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          aws ssm send-command \
+            --instance-ids "${{ secrets.PRIMARY_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              'cd /opt/meshos',
+              'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
+              'export IMAGE_TAG=${SHORT_SHA}',
+              'export ECR_REGISTRY=${{ env.ECR_REGISTRY }}',
+              'docker compose -f infrastructure/docker/docker-compose.yml pull api',
+              'docker compose -f infrastructure/docker/docker-compose.yml up -d api',
+              'docker system prune -f --filter until=24h'
+            ]" \
+            --timeout-seconds 300 \
+            --region ${{ env.AWS_REGION }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to frontend EC2 (web + Kong)
+  # ---------------------------------------------------------------------------
+  deploy-frontend:
+    name: Deploy to Frontend EC2
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: mvp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy via SSM
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          aws ssm send-command \
+            --instance-ids "${{ secrets.FRONTEND_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              'cd /opt/meshos',
+              'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
+              'export IMAGE_TAG=${SHORT_SHA}',
+              'export ECR_REGISTRY=${{ env.ECR_REGISTRY }}',
+              'docker compose -f infrastructure/docker/docker-compose.yml pull web',
+              'docker compose -f infrastructure/docker/docker-compose.yml up -d web',
+              'docker system prune -f --filter until=24h'
+            ]" \
+            --timeout-seconds 300 \
+            --region ${{ env.AWS_REGION }}

@@ -1,0 +1,775 @@
+openapi: 3.1.0
+
+info:
+  title: MeshOS Data Products API
+  version: 1.0.0
+  description: |
+    Manages data product definitions, lifecycle state, port declarations,
+    and port contracts within an organization domain.
+
+    All endpoints require a valid Keycloak-issued JWT in the Authorization header.
+    All resources are scoped to an organization (org_id) and domain (domain_id).
+
+    Phase 1 scope: Draft lifecycle state only. Publication (Phase 2) requires
+    the governance engine and OPA integration.
+
+servers:
+  - url: /api/v1
+    description: MeshOS control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Data Products
+    description: Data product definition and lifecycle management
+  - name: Ports
+    description: Port declarations on a data product
+  - name: Product Versions
+    description: Immutable version history of a data product
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Shared primitives (duplicated from organizations.yaml for spec
+    # independence — shared types package handles deduplication in code)
+    # ------------------------------------------------------------------
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    Slug:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    # ------------------------------------------------------------------
+    # Data Classification
+    # ------------------------------------------------------------------
+    DataClassification:
+      type: string
+      enum: [public, internal, confidential, restricted]
+      description: |
+        public      — No access controls required.
+        internal    — Available to all principals within the organization.
+        confidential — Access requires explicit grant approval.
+        restricted  — Highest sensitivity; requires governance board approval.
+
+    # ------------------------------------------------------------------
+    # Data Product Lifecycle
+    # ------------------------------------------------------------------
+    DataProductStatus:
+      type: string
+      enum: [draft, published, deprecated, decommissioned]
+      description: |
+        draft         — Being defined. Not discoverable in the marketplace.
+        published     — Validated, policy-compliant, and discoverable.
+        deprecated    — Still accessible; scheduled for decommission.
+        decommissioned — Permanently unavailable. Retained for lineage history only.
+
+    # ------------------------------------------------------------------
+    # Port types
+    # ------------------------------------------------------------------
+    PortType:
+      type: string
+      enum: [input, output, discovery, observability, control]
+      description: |
+        input         — Declares upstream data sources consumed by this product.
+        output        — Exposes data to consumers (humans or agents).
+        discovery     — Metadata endpoint for catalog and marketplace indexing.
+        observability — Exposes SLO and quality metrics.
+        control       — Management interface (deprecation notices, schema evolution).
+
+    OutputPortInterfaceType:
+      type: string
+      enum:
+        - sql_jdbc
+        - rest_api
+        - graphql
+        - streaming_topic
+        - file_object_export
+        - semantic_query_endpoint
+      description: |
+        semantic_query_endpoint is exclusively for AI agents (Phase 4).
+        All other types are available from Phase 2.
+
+    # ------------------------------------------------------------------
+    # Data Product
+    # ------------------------------------------------------------------
+    DataProduct:
+      type: object
+      required:
+        - id
+        - orgId
+        - domainId
+        - name
+        - slug
+        - status
+        - version
+        - classification
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        domainId:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          examples:
+            - "Customer 360 Profile"
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+        status:
+          $ref: "#/components/schemas/DataProductStatus"
+        version:
+          type: string
+          description: Semantic version of the current definition.
+          pattern: "^\\d+\\.\\d+\\.\\d+$"
+          examples:
+            - "1.0.0"
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+          description: The principal responsible for this data product.
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 64
+          maxItems: 20
+          default: []
+        ports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Port"
+          description: Declared ports. Populated when ports have been added.
+          default: []
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    CreateDataProductRequest:
+      type: object
+      required: [name, slug, classification, ownerPrincipalId]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        slug:
+          $ref: "#/components/schemas/Slug"
+        description:
+          type: string
+          maxLength: 2000
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 64
+          maxItems: 20
+
+    UpdateDataProductRequest:
+      type: object
+      minProperties: 1
+      description: |
+        Only draft products may be updated freely. Published products require
+        a new version to be created instead (Phase 2).
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+        ownerPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 64
+          maxItems: 20
+
+    DataProductList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataProduct"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Port
+    # ------------------------------------------------------------------
+    Port:
+      type: object
+      required:
+        - id
+        - productId
+        - orgId
+        - portType
+        - name
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        portType:
+          $ref: "#/components/schemas/PortType"
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          examples:
+            - "Customer Profile Output"
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        interfaceType:
+          $ref: "#/components/schemas/OutputPortInterfaceType"
+          description: Required when portType is output. Null for other port types.
+          nullable: true
+        contractSchema:
+          type: object
+          description: |
+            Port contract definition. Structure depends on portType and interfaceType.
+            For output ports: column-level schema (JSON Schema format).
+            For input ports: upstream product reference.
+            For observability ports: SLO declaration structure.
+          nullable: true
+          additionalProperties: true
+        slaDescription:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Human-readable SLA description (formal SLO declarations come in Phase 3).
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    DeclarePortRequest:
+      type: object
+      required: [portType, name]
+      properties:
+        portType:
+          $ref: "#/components/schemas/PortType"
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+        interfaceType:
+          $ref: "#/components/schemas/OutputPortInterfaceType"
+          description: Required when portType is output.
+        contractSchema:
+          type: object
+          nullable: true
+          additionalProperties: true
+        slaDescription:
+          type: string
+          maxLength: 500
+
+    UpdatePortRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+        interfaceType:
+          $ref: "#/components/schemas/OutputPortInterfaceType"
+        contractSchema:
+          type: object
+          nullable: true
+          additionalProperties: true
+        slaDescription:
+          type: string
+          maxLength: 500
+
+    PortList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Port"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Product Version (immutable snapshot)
+    # ------------------------------------------------------------------
+    ProductVersion:
+      type: object
+      required: [id, productId, orgId, version, snapshot, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        version:
+          type: string
+          pattern: "^\\d+\\.\\d+\\.\\d+$"
+        changeDescription:
+          type: string
+          maxLength: 500
+          nullable: true
+        snapshot:
+          $ref: "#/components/schemas/DataProduct"
+          description: Full immutable copy of the product definition at this version.
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        createdByPrincipalId:
+          $ref: "#/components/schemas/Uuid"
+
+    ProductVersionList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductVersion"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Authenticated principal lacks permission for this operation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Resource already exists or state transition is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  parameters:
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    DomainId:
+      name: domainId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    PortId:
+      name: portId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    OffsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    StatusFilter:
+      name: status
+      in: query
+      schema:
+        $ref: "#/components/schemas/DataProductStatus"
+      description: Filter products by lifecycle status.
+
+paths:
+  # ------------------------------------------------------------------
+  # Data Products
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/domains/{domainId}/products:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+
+    get:
+      operationId: listDataProducts
+      summary: List data products within a domain.
+      tags: [Data Products]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/StatusFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataProductList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createDataProduct
+      summary: Create a new data product in Draft state.
+      tags: [Data Products]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDataProductRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataProduct"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /organizations/{orgId}/domains/{domainId}/products/{productId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+      - $ref: "#/components/parameters/ProductId"
+
+    get:
+      operationId: getDataProduct
+      summary: Get a data product by ID.
+      tags: [Data Products]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataProduct"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updateDataProduct
+      summary: Update a data product. Only permitted in Draft status.
+      tags: [Data Products]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDataProductRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataProduct"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Product is not in Draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: deleteDataProduct
+      summary: Delete a data product. Only permitted in Draft status.
+      tags: [Data Products]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Product is not in Draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ------------------------------------------------------------------
+  # Ports
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/domains/{domainId}/products/{productId}/ports:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+      - $ref: "#/components/parameters/ProductId"
+
+    get:
+      operationId: listPorts
+      summary: List all declared ports on a data product.
+      tags: [Ports]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: declarePort
+      summary: Declare a port on a data product.
+      tags: [Ports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeclarePortRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Port"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /organizations/{orgId}/domains/{domainId}/products/{productId}/ports/{portId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+      - $ref: "#/components/parameters/ProductId"
+      - $ref: "#/components/parameters/PortId"
+
+    get:
+      operationId: getPort
+      summary: Get a declared port by ID.
+      tags: [Ports]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Port"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updatePort
+      summary: Update a port declaration.
+      tags: [Ports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePortRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Port"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: deletePort
+      summary: Remove a port declaration from a data product.
+      tags: [Ports]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Product Versions
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/domains/{domainId}/products/{productId}/versions:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+      - $ref: "#/components/parameters/ProductId"
+
+    get:
+      operationId: listProductVersions
+      summary: List all immutable version snapshots of a data product.
+      tags: [Product Versions]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductVersionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
