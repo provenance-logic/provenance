@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { productsApi } from '../../shared/api/products.js';
-import type { Domain, DataProduct } from '@meshos/types';
+import type { Domain, DataProduct } from '@provenance/types';
 
 export function DomainDashboard() {
   const { orgId, domainId } = useParams<{ orgId: string; domainId: string }>();

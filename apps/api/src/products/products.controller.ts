@@ -21,7 +21,7 @@ import type {
   DataProductStatus,
   DeclarePortRequest,
   UpdatePortRequest,
-} from '@meshos/types';
+} from '@provenance/types';
 
 @UseGuards(JwtAuthGuard)
 @Controller('organizations/:orgId/domains/:domainId/products')

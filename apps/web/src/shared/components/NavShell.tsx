@@ -23,7 +23,7 @@ export function NavShell() {
       {/* Sidebar */}
       <nav className="w-56 flex-shrink-0 bg-slate-900 flex flex-col">
         <div className="px-6 py-5">
-          <span className="text-white font-semibold text-lg tracking-tight">MeshOS</span>
+          <span className="text-white font-semibold text-lg tracking-tight">Provenance</span>
         </div>
 
         <ul className="flex-1 px-3 space-y-1">

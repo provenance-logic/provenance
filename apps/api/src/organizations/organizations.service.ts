@@ -12,7 +12,7 @@ import type {
   CreateDomainRequest,
   UpdateDomainRequest,
   DomainList,
-} from '@meshos/types';
+} from '@provenance/types';
 
 @Injectable()
 export class OrganizationsService {

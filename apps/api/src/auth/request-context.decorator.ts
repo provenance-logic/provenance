@@ -1,5 +1,5 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import type { RequestContext } from '@meshos/types';
+import type { RequestContext } from '@provenance/types';
 
 export const ReqContext = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): RequestContext => {

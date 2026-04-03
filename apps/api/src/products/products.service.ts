@@ -20,7 +20,7 @@ import type {
   UpdatePortRequest,
   ProductVersion,
   ProductVersionList,
-} from '@meshos/types';
+} from '@provenance/types';
 
 @Injectable()
 export class ProductsService {

@@ -3,7 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { passportJwtSecret } from 'jwks-rsa';
 import { getConfig } from '../config.js';
-import type { JwtClaims, RequestContext, PrincipalType } from '@meshos/types';
+import type { JwtClaims, RequestContext, PrincipalType } from '@provenance/types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -26,9 +26,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   validate(payload: JwtClaims): RequestContext {
     return {
-      principalId: payload.meshos_principal_id ?? payload.sub,
-      orgId: payload.meshos_org_id ?? '',
-      principalType: (payload.meshos_principal_type ?? 'human_user') as PrincipalType,
+      principalId: payload.provenance_principal_id ?? payload.sub,
+      orgId: payload.provenance_org_id ?? '',
+      principalType: (payload.provenance_principal_type ?? 'human_user') as PrincipalType,
       roles: [],
       agentId: payload.agent_id,
     };

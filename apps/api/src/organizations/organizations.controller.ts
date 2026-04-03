@@ -20,7 +20,7 @@ import type {
   UpdateOrganizationRequest,
   CreateDomainRequest,
   UpdateDomainRequest,
-} from '@meshos/types';
+} from '@provenance/types';
 
 @UseGuards(JwtAuthGuard)
 @Controller('organizations')

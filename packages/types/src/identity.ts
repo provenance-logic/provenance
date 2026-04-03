@@ -28,10 +28,10 @@ export interface JwtClaims {
   preferred_username?: string;
   given_name?: string;
   family_name?: string;
-  /** MeshOS-specific claims injected by the Keycloak mapper */
-  meshos_principal_id?: Uuid;
-  meshos_org_id?: Uuid;
-  meshos_principal_type?: PrincipalType;
+  /** Provenance-specific claims injected by the Keycloak mapper */
+  provenance_principal_id?: Uuid;
+  provenance_org_id?: Uuid;
+  provenance_principal_type?: PrincipalType;
   /** Present only for AI agent tokens */
   agent_id?: Uuid;
   iat: number;

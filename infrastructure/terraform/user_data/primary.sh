@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for MeshOS primary EC2 instance.
+# Bootstrap script for Provenance primary EC2 instance.
 # Installs Docker, Docker Compose plugin, and AWS CLI.
 # The application is deployed via the CI/CD pipeline — this script only prepares the host.
 
@@ -41,7 +41,7 @@ usermod -aG docker ubuntu
 # ---------------------------------------------------------------------------
 # Application directory
 # ---------------------------------------------------------------------------
-mkdir -p /opt/meshos
-chown ubuntu:ubuntu /opt/meshos
+mkdir -p /opt/provenance
+chown ubuntu:ubuntu /opt/provenance
 
 echo "Bootstrap complete — environment: ${environment}"

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 
 info:
-  title: MeshOS Data Products API
+  title: Provenance Data Products API
   version: 1.0.0
   description: |
     Manages data product definitions, lifecycle state, port declarations,
@@ -15,7 +15,7 @@ info:
 
 servers:
   - url: /api/v1
-    description: MeshOS control plane
+    description: Provenance control plane
 
 security:
   - bearerAuth: []

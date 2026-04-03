@@ -33,7 +33,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build packages (types must be compiled before apps typecheck)
-        run: pnpm turbo run build --filter=@meshos/types
+        run: pnpm turbo run build --filter=@provenance/types
 
       - name: Lint
         run: pnpm turbo run lint
@@ -63,20 +63,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build types
-        run: pnpm turbo run build --filter=@meshos/types
+        run: pnpm turbo run build --filter=@provenance/types
 
       - name: Run API tests
-        run: pnpm turbo run test --filter=@meshos/api
+        run: pnpm turbo run test --filter=@provenance/api
         env:
           NODE_ENV: test
           DATABASE_HOST: localhost
           DATABASE_PORT: 5432
-          DATABASE_NAME: meshos_test
-          DATABASE_USER: meshos
+          DATABASE_NAME: provenance_test
+          DATABASE_USER: provenance
           DATABASE_PASSWORD: test_password
-          KEYCLOAK_REALM: meshos
+          KEYCLOAK_REALM: provenance
           KEYCLOAK_AUTH_SERVER_URL: http://localhost:8080
-          KEYCLOAK_CLIENT_ID: meshos-api
+          KEYCLOAK_CLIENT_ID: provenance-api
 
   # ---------------------------------------------------------------------------
   # Build Docker images (verify they compile — no push on PRs)
@@ -103,7 +103,7 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: meshos/${{ matrix.service.name }}:pr-${{ github.event.pull_request.number }}
+          tags: provenance/${{ matrix.service.name }}:pr-${{ github.event.pull_request.number }}
 
   # ---------------------------------------------------------------------------
   # OpenAPI spec validation
@@ -124,7 +124,7 @@ jobs:
           cache: pnpm
 
       - name: Install openapi package deps
-        run: pnpm --filter=@meshos/openapi install
+        run: pnpm --filter=@provenance/openapi install
 
       - name: Validate specs
-        run: pnpm --filter=@meshos/openapi validate
+        run: pnpm --filter=@provenance/openapi validate

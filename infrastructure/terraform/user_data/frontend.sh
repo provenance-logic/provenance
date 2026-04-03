@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for MeshOS frontend EC2 instance.
+# Bootstrap script for Provenance frontend EC2 instance.
 # Installs Docker, Docker Compose plugin, Nginx, and AWS CLI.
 
 set -euo pipefail
@@ -32,7 +32,7 @@ systemctl enable docker
 systemctl start docker
 usermod -aG docker ubuntu
 
-mkdir -p /opt/meshos
-chown ubuntu:ubuntu /opt/meshos
+mkdir -p /opt/provenance
+chown ubuntu:ubuntu /opt/provenance
 
 echo "Bootstrap complete — environment: ${environment}"

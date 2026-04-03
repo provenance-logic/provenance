@@ -76,7 +76,7 @@ CREATE INDEX product_versions_product_id_idx ON products.product_versions (produ
 CREATE INDEX product_versions_org_id_idx ON products.product_versions (org_id);
 
 -- Product versions are append-only — revoke UPDATE and DELETE at the DB level.
-REVOKE UPDATE, DELETE ON products.product_versions FROM meshos_app;
+REVOKE UPDATE, DELETE ON products.product_versions FROM provenance_app;
 
 -- ---------------------------------------------------------------------------
 -- Lifecycle events log (append-only)
@@ -95,7 +95,7 @@ CREATE TABLE products.lifecycle_events (
 CREATE INDEX lifecycle_events_product_id_idx ON products.lifecycle_events (product_id);
 CREATE INDEX lifecycle_events_org_id_idx ON products.lifecycle_events (org_id);
 
-REVOKE UPDATE, DELETE ON products.lifecycle_events FROM meshos_app;
+REVOKE UPDATE, DELETE ON products.lifecycle_events FROM provenance_app;
 
 -- ---------------------------------------------------------------------------
 -- Row-level security
@@ -105,27 +105,27 @@ ALTER TABLE products.port_declarations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products.product_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products.lifecycle_events ENABLE ROW LEVEL SECURITY;
 
-GRANT USAGE ON SCHEMA products TO meshos_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON products.data_products TO meshos_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON products.port_declarations TO meshos_app;
-GRANT SELECT, INSERT ON products.product_versions TO meshos_app;
-GRANT SELECT, INSERT ON products.lifecycle_events TO meshos_app;
+GRANT USAGE ON SCHEMA products TO provenance_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON products.data_products TO provenance_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON products.port_declarations TO provenance_app;
+GRANT SELECT, INSERT ON products.product_versions TO provenance_app;
+GRANT SELECT, INSERT ON products.lifecycle_events TO provenance_app;
 
 CREATE POLICY data_products_org_isolation ON products.data_products
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 CREATE POLICY port_declarations_org_isolation ON products.port_declarations
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 CREATE POLICY product_versions_org_isolation ON products.product_versions
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 CREATE POLICY lifecycle_events_org_isolation ON products.lifecycle_events
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 -- Triggers
 CREATE TRIGGER data_products_updated_at

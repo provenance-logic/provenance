@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import type { OrganizationStatus } from '@meshos/types';
+import type { OrganizationStatus } from '@provenance/types';
 import { DomainEntity } from './domain.entity.js';
 
 @Entity({ schema: 'organizations', name: 'orgs' })

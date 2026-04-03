@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { productsApi } from '../../shared/api/products.js';
-import type { DataClassification } from '@meshos/types';
+import type { DataClassification } from '@provenance/types';
 import { useAuth } from '../../auth/AuthProvider.js';
 
 const classifications: DataClassification[] = ['public', 'internal', 'confidential', 'restricted'];
@@ -31,8 +31,8 @@ export function NewProductForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const principalId = (keycloak.tokenParsed as { meshos_principal_id?: string } | undefined)
-        ?.meshos_principal_id ?? keycloak.subject ?? '';
+      const principalId = (keycloak.tokenParsed as { provenance_principal_id?: string } | undefined)
+        ?.provenance_principal_id ?? keycloak.subject ?? '';
       const product = await productsApi.create(orgId, domainId, {
         name,
         slug,

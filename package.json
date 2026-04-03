@@ -1,8 +1,8 @@
 {
-  "name": "meshos-platform",
+  "name": "provenance-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "MeshOS — open source cloud-native data mesh platform",
+  "description": "Provenance — open source cloud-native data mesh platform",
   "packageManager": "pnpm@9.1.0",
   "engines": {
     "node": ">=20.0.0",

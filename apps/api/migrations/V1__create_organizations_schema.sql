@@ -49,25 +49,25 @@ ALTER TABLE organizations.domains ENABLE ROW LEVEL SECURITY;
 -- Created here if it does not exist; idempotent via DO block.
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'meshos_app') THEN
-        CREATE ROLE meshos_app;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'provenance_app') THEN
+        CREATE ROLE provenance_app;
     END IF;
 END
 $$;
 
-GRANT USAGE ON SCHEMA organizations TO meshos_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA organizations TO meshos_app;
+GRANT USAGE ON SCHEMA organizations TO provenance_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA organizations TO provenance_app;
 
 -- Orgs: the app role can see any org (org selection happens at the application layer).
 -- In production this will be tightened per-org via a current_setting context variable.
 CREATE POLICY orgs_app_policy ON organizations.orgs
-    FOR ALL TO meshos_app USING (true);
+    FOR ALL TO provenance_app USING (true);
 
 -- Domains: the app role can only see domains within the current org context.
--- The NestJS API sets meshos.current_org_id on every connection via SET LOCAL.
+-- The NestJS API sets provenance.current_org_id on every connection via SET LOCAL.
 CREATE POLICY domains_org_isolation ON organizations.domains
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- updated_at trigger (reused across all tables)

@@ -7,7 +7,7 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import type { PortType, OutputPortInterfaceType } from '@meshos/types';
+import type { PortType, OutputPortInterfaceType } from '@provenance/types';
 import { DataProductEntity } from './data-product.entity.js';
 
 @Entity({ schema: 'products', name: 'port_declarations' })

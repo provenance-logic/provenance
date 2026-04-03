@@ -5,7 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { PrincipalType } from '@meshos/types';
+import type { PrincipalType } from '@provenance/types';
 
 @Entity({ schema: 'identity', name: 'principals' })
 export class PrincipalEntity {

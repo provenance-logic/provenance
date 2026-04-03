@@ -10,7 +10,7 @@ terraform {
 
   # Uncomment and configure when ready to use remote state.
   # backend "s3" {
-  #   bucket = "meshos-terraform-state"
+  #   bucket = "provenance-terraform-state"
   #   key    = "mvp/terraform.tfstate"
   #   region = "us-east-1"
   # }
@@ -21,7 +21,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "MeshOS"
+      Project     = "Provenance"
       Environment = var.environment
       ManagedBy   = "Terraform"
     }
@@ -53,37 +53,37 @@ data "aws_ami" "ubuntu" {
 # ---------------------------------------------------------------------------
 # VPC — single AZ for MVP; expand for production
 # ---------------------------------------------------------------------------
-resource "aws_vpc" "meshos" {
+resource "aws_vpc" "provenance" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = { Name = "meshos-${var.environment}" }
+  tags = { Name = "provenance-${var.environment}" }
 }
 
-resource "aws_internet_gateway" "meshos" {
-  vpc_id = aws_vpc.meshos.id
-  tags   = { Name = "meshos-igw-${var.environment}" }
+resource "aws_internet_gateway" "provenance" {
+  vpc_id = aws_vpc.provenance.id
+  tags   = { Name = "provenance-igw-${var.environment}" }
 }
 
 resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.meshos.id
+  vpc_id                  = aws_vpc.provenance.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = data.aws_availability_zones.available.names[0]
   map_public_ip_on_launch = true
 
-  tags = { Name = "meshos-public-${var.environment}" }
+  tags = { Name = "provenance-public-${var.environment}" }
 }
 
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.meshos.id
+  vpc_id = aws_vpc.provenance.id
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.meshos.id
+    gateway_id = aws_internet_gateway.provenance.id
   }
 
-  tags = { Name = "meshos-rt-public-${var.environment}" }
+  tags = { Name = "provenance-rt-public-${var.environment}" }
 }
 
 resource "aws_route_table_association" "public" {
@@ -95,9 +95,9 @@ resource "aws_route_table_association" "public" {
 # Security groups
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "primary" {
-  name        = "meshos-primary-${var.environment}"
-  description = "MeshOS primary EC2 — all services"
-  vpc_id      = aws_vpc.meshos.id
+  name        = "provenance-primary-${var.environment}"
+  description = "Provenance primary EC2 — all services"
+  vpc_id      = aws_vpc.provenance.id
 
   # SSH
   ingress {
@@ -135,13 +135,13 @@ resource "aws_security_group" "primary" {
     description = "All outbound"
   }
 
-  tags = { Name = "meshos-primary-sg-${var.environment}" }
+  tags = { Name = "provenance-primary-sg-${var.environment}" }
 }
 
 resource "aws_security_group" "frontend" {
-  name        = "meshos-frontend-${var.environment}"
-  description = "MeshOS frontend EC2 — web and Kong admin"
-  vpc_id      = aws_vpc.meshos.id
+  name        = "provenance-frontend-${var.environment}"
+  description = "Provenance frontend EC2 — web and Kong admin"
+  vpc_id      = aws_vpc.provenance.id
 
   ingress {
     from_port   = 22
@@ -175,17 +175,17 @@ resource "aws_security_group" "frontend" {
     description = "All outbound"
   }
 
-  tags = { Name = "meshos-frontend-sg-${var.environment}" }
+  tags = { Name = "provenance-frontend-sg-${var.environment}" }
 }
 
 # ---------------------------------------------------------------------------
 # EC2 key pair
 # ---------------------------------------------------------------------------
-resource "aws_key_pair" "meshos" {
-  key_name   = "meshos-${var.environment}"
+resource "aws_key_pair" "provenance" {
+  key_name   = "provenance-${var.environment}"
   public_key = var.ec2_public_key
 
-  tags = { Name = "meshos-keypair-${var.environment}" }
+  tags = { Name = "provenance-keypair-${var.environment}" }
 }
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ resource "aws_key_pair" "meshos" {
 resource "aws_instance" "primary" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.xlarge"
-  key_name               = aws_key_pair.meshos.key_name
+  key_name               = aws_key_pair.provenance.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.primary.id]
 
@@ -206,14 +206,14 @@ resource "aws_instance" "primary" {
     delete_on_termination = false
     encrypted             = true
 
-    tags = { Name = "meshos-primary-root-${var.environment}" }
+    tags = { Name = "provenance-primary-root-${var.environment}" }
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data/primary.sh", {
     environment = var.environment
   }))
 
-  tags = { Name = "meshos-primary-${var.environment}" }
+  tags = { Name = "provenance-primary-${var.environment}" }
 
   lifecycle {
     ignore_changes = [ami, user_data]
@@ -227,7 +227,7 @@ resource "aws_instance" "primary" {
 resource "aws_instance" "frontend" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.medium"
-  key_name               = aws_key_pair.meshos.key_name
+  key_name               = aws_key_pair.provenance.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.frontend.id]
 
@@ -237,14 +237,14 @@ resource "aws_instance" "frontend" {
     delete_on_termination = false
     encrypted             = true
 
-    tags = { Name = "meshos-frontend-root-${var.environment}" }
+    tags = { Name = "provenance-frontend-root-${var.environment}" }
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data/frontend.sh", {
     environment = var.environment
   }))
 
-  tags = { Name = "meshos-frontend-${var.environment}" }
+  tags = { Name = "provenance-frontend-${var.environment}" }
 
   lifecycle {
     ignore_changes = [ami, user_data]
@@ -257,13 +257,13 @@ resource "aws_instance" "frontend" {
 resource "aws_eip" "primary" {
   instance = aws_instance.primary.id
   domain   = "vpc"
-  tags     = { Name = "meshos-eip-primary-${var.environment}" }
+  tags     = { Name = "provenance-eip-primary-${var.environment}" }
 }
 
 resource "aws_eip" "frontend" {
   instance = aws_instance.frontend.id
   domain   = "vpc"
-  tags     = { Name = "meshos-eip-frontend-${var.environment}" }
+  tags     = { Name = "provenance-eip-frontend-${var.environment}" }
 }
 
 # ---------------------------------------------------------------------------
@@ -273,10 +273,10 @@ locals {
   ecr_repos = ["api", "agent-query", "embedding", "web"]
 }
 
-resource "aws_ecr_repository" "meshos" {
+resource "aws_ecr_repository" "provenance" {
   for_each = toset(local.ecr_repos)
 
-  name                 = "meshos/${each.key}"
+  name                 = "provenance/${each.key}"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -287,11 +287,11 @@ resource "aws_ecr_repository" "meshos" {
     encryption_type = "AES256"
   }
 
-  tags = { Name = "meshos-ecr-${each.key}-${var.environment}" }
+  tags = { Name = "provenance-ecr-${each.key}-${var.environment}" }
 }
 
-resource "aws_ecr_lifecycle_policy" "meshos" {
-  for_each   = aws_ecr_repository.meshos
+resource "aws_ecr_lifecycle_policy" "provenance" {
+  for_each   = aws_ecr_repository.provenance
   repository = each.value.name
 
   policy = jsonencode({
@@ -311,20 +311,20 @@ resource "aws_ecr_lifecycle_policy" "meshos" {
 # ---------------------------------------------------------------------------
 # S3 bucket for audit log exports and policy artifacts
 # ---------------------------------------------------------------------------
-resource "aws_s3_bucket" "meshos" {
-  bucket = "meshos-${var.environment}-${var.aws_account_id}"
-  tags   = { Name = "meshos-storage-${var.environment}" }
+resource "aws_s3_bucket" "provenance" {
+  bucket = "provenance-${var.environment}-${var.aws_account_id}"
+  tags   = { Name = "provenance-storage-${var.environment}" }
 }
 
-resource "aws_s3_bucket_versioning" "meshos" {
-  bucket = aws_s3_bucket.meshos.id
+resource "aws_s3_bucket_versioning" "provenance" {
+  bucket = aws_s3_bucket.provenance.id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "meshos" {
-  bucket = aws_s3_bucket.meshos.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "provenance" {
+  bucket = aws_s3_bucket.provenance.id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -332,8 +332,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "meshos" {
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "meshos" {
-  bucket                  = aws_s3_bucket.meshos.id
+resource "aws_s3_bucket_public_access_block" "provenance" {
+  bucket                  = aws_s3_bucket.provenance.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true

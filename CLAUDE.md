@@ -1,16 +1,16 @@
-# MeshOS — Claude Code Context
+# Provenance — Claude Code Context
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/MeshOS_PRD_v1.0.md` and `documents/architecture/MeshOS_Architecture_v1.0.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.0.md` and `documents/architecture/Provenance_Architecture_v1.0.md`.
 
 ---
 
-## What Is MeshOS
+## What Is Provenance
 
-MeshOS is an open source, cloud-native, multi-tenant self-service data mesh platform built for the Data 3.0 era. It is a **coordination and contract platform** — it does not store data, execute pipelines, or provide a centralized query engine for human consumers.
+Provenance is an open source, cloud-native, multi-tenant self-service data mesh platform built for the Data 3.0 era. It is a **coordination and contract platform** — it does not store data, execute pipelines, or provide a centralized query engine for human consumers.
 
-MeshOS is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
+Provenance is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 **What it is not:**
 - A data warehouse or data lake
@@ -70,7 +70,7 @@ These are hard constraints. Do not work around them.
 ## Monorepo Structure
 
 ```
-meshos-platform/
+provenance-platform/
 ├── apps/
 │   ├── api/                        # NestJS modular monolith (MVP)
 │   │   └── src/
@@ -216,7 +216,7 @@ The goal of Phase 1 is a running platform where a user can:
 - Port contract enforcement engine
 - Semantic change declaration model
 - Agent provenance envelope builder
-- MeshOS-specific MCP tools and prompts
+- Provenance-specific MCP tools and prompts
 - Federated query planner and executor
 
 **Configure from open source (do not reinvent):**
@@ -286,7 +286,7 @@ The goal of Phase 1 is a running platform where a user can:
 
 ## Full Documentation
 
-- Product Requirements Document: `documents/prd/MeshOS_PRD_v1.0.md`
-- Architecture Document: `documents/architecture/MeshOS_Architecture_v1.0.md`
+- Product Requirements Document: `documents/prd/Provenance_PRD_v1.0.md`
+- Architecture Document: `documents/architecture/Provenance_Architecture_v1.0.md`
 - Architecture Decision Records: `documents/architecture/adr/`
 - API Reference: `documents/api/` (generated from OpenAPI specs)

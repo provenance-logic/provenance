@@ -10,7 +10,7 @@ import type {
   DeclarePortRequest,
   UpdatePortRequest,
   ProductVersionList,
-} from '@meshos/types';
+} from '@provenance/types';
 
 const base = (orgId: string, domainId: string) =>
   `/organizations/${orgId}/domains/${domainId}/products`;

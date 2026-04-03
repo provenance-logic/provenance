@@ -7,7 +7,7 @@
     "rootDir": "./src",
     "baseUrl": "./",
     "paths": {
-      "@meshos/types": ["../../packages/types/src/index.ts"]
+      "@provenance/types": ["../../packages/types/src/index.ts"]
     },
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,

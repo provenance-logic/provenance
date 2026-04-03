@@ -1,4 +1,4 @@
-# MeshOS Product Requirements Document
+# Provenance Product Requirements Document
 
 **Version 1.0 — MVP Release**
 **Confidential — Not for Distribution**
@@ -7,11 +7,11 @@
 
 ## Executive Summary
 
-MeshOS is a cloud-native, multi-tenant self-service data mesh platform designed for the Data 3.0 era. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
+Provenance is a cloud-native, multi-tenant self-service data mesh platform designed for the Data 3.0 era. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 The platform embodies the data mesh principles articulated by Zhamak Dehghani while extending them for the agentic AI era through a dual consumption model: human consumers connect directly to data product output ports; AI agents interact through a governed, policy-aware federated semantic query layer.
 
-MeshOS is a coordination and contract platform. It does not store data, execute pipelines, or provide a centralized query engine for human consumers. It owns the contracts between domains, the lineage graph that connects them, and the governance engine that makes the mesh trustworthy.
+Provenance is a coordination and contract platform. It does not store data, execute pipelines, or provide a centralized query engine for human consumers. It owns the contracts between domains, the lineage graph that connects them, and the governance engine that makes the mesh trustworthy.
 
 ### Five Foundational Design Principles
 
@@ -30,7 +30,7 @@ MeshOS is a coordination and contract platform. It does not store data, execute 
 
 ### Deployment Model
 
-Cloud-native SaaS, multi-tenant. The control plane is fully managed SaaS. The data plane remains in each domain's own infrastructure regardless of cloud provider. No data ever transits the MeshOS platform.
+Cloud-native SaaS, multi-tenant. The control plane is fully managed SaaS. The data plane remains in each domain's own infrastructure regardless of cloud provider. No data ever transits the Provenance platform.
 
 ### MVP Scale Targets
 

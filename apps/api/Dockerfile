@@ -1,4 +1,4 @@
-# MeshOS API — multi-stage Dockerfile
+# Provenance API — multi-stage Dockerfile
 # Stage 'development' is used by Docker Compose for local dev with hot-reload.
 # Stage 'production' builds an optimized image for deployment.
 

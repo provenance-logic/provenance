@@ -1,4 +1,4 @@
-# MeshOS Technical Architecture Document
+# Provenance Technical Architecture Document
 
 **Version 1.0 — Companion to PRD v1.0**
 **MVP and Production-Grade Specifications**
@@ -8,7 +8,7 @@
 
 ## Section 1: Architecture Philosophy
 
-MeshOS is being built with Claude Code as the primary engineering capability. This is not a constraint — it is a genuine advantage when the architecture is designed to leverage it. Claude Code excels at integrating well-documented open source systems, implementing against clear interface specifications, and reasoning about standard protocols.
+Provenance is being built with Claude Code as the primary engineering capability. This is not a constraint — it is a genuine advantage when the architecture is designed to leverage it. Claude Code excels at integrating well-documented open source systems, implementing against clear interface specifications, and reasoning about standard protocols.
 
 Every architectural decision in this document therefore optimizes for three properties simultaneously:
 
@@ -224,7 +224,7 @@ RETURN a.agent_id, a.model_id, a.model_version, a.reasoning_trace_ref
 | 2. Preview | Governance Engine API | Impact preview API evaluates proposed rules against current product catalog. |
 | 3. Publish | Governance Engine API | Validated policy JSON written to PostgreSQL as immutable record. Grace period timer started in Temporal if breaking change. |
 | 4. Compile | Governance Engine (background) | Policy JSON compiled to OPA Rego bundle. Bundle pushed to OPA via bundle API. Hot reload — no restart required. |
-| 5. Enforce (publication time) | Data Product API → OPA | On product publish, calls OPA /v1/data/meshos/policy/allow. OPA evaluates in under 10ms. |
+| 5. Enforce (publication time) | Data Product API → OPA | On product publish, calls OPA /v1/data/provenance/policy/allow. OPA evaluates in under 10ms. |
 | 6. Enforce (continuous) | Compliance Monitor (scheduled) | Temporal workflow evaluates all published products against current OPA policy every 24 hours and on trigger events. |
 
 ### MVP Agent Query Layer Architecture
@@ -322,11 +322,11 @@ Total production cost range: $2,400-$8,000/month before customer workload. At me
 
 | Layer | What It Observes | Stack | Audience |
 |---|---|---|---|
-| Platform Operational Observability | MeshOS infrastructure health — service latency, error rates, database performance, Kafka consumer lag, EKS node health | Datadog APM + Logs + Infrastructure | Platform engineering team |
-| Data Product Observability | Data product health — SLO compliance, freshness, schema conformance, trust score, connector health | Custom MeshOS observability service + MeshOS UI | Domain teams, consumers, governance teams |
-| Agent Activity Observability | Agent query patterns, anomaly detection, consumption trends, MCP session metrics | Agent Query Layer metrics → Datadog + MeshOS agent monitoring UI | Governance teams, domain teams (oversight contacts) |
+| Platform Operational Observability | Provenance infrastructure health — service latency, error rates, database performance, Kafka consumer lag, EKS node health | Datadog APM + Logs + Infrastructure | Platform engineering team |
+| Data Product Observability | Data product health — SLO compliance, freshness, schema conformance, trust score, connector health | Custom Provenance observability service + Provenance UI | Domain teams, consumers, governance teams |
+| Agent Activity Observability | Agent query patterns, anomaly detection, consumption trends, MCP session metrics | Agent Query Layer metrics → Datadog + Provenance agent monitoring UI | Governance teams, domain teams (oversight contacts) |
 
-> **Critical:** these three layers must never be conflated in the codebase. Platform operational observability uses Datadog/Grafana. Data product observability is a core MeshOS product feature built custom.
+> **Critical:** these three layers must never be conflated in the codebase. Platform operational observability uses Datadog/Grafana. Data product observability is a core Provenance product feature built custom.
 
 ---
 
@@ -396,7 +396,7 @@ Each phase produces something a real user can interact with. Each phase's compon
 | Federated Query Layer | Query planning engine. Policy-aware execution (OPA integration). Cross-product join semantics. Provenance envelope builder. Result caching (Redis). | NestJS, OPA client, Redis |
 | Agent UI | Agent Registry UI. Agent Activity Monitor. Human Review Queue. Agent Trust Classification UI for governance teams. | React, NestJS agent API |
 
-**Phase 4 deliverable:** MeshOS is a Data 3.0 platform. Any MCP-compatible AI agent can discover, access, and query data products through the platform.
+**Phase 4 deliverable:** Provenance is a Data 3.0 platform. Any MCP-compatible AI agent can discover, access, and query data products through the platform.
 
 ### Phase 5 — Production Hardening (Weeks 27-34)
 
@@ -435,12 +435,12 @@ Explicit records of significant technology choices, alternatives considered, and
 
 Specific patterns and approaches that maximize Claude Code effectiveness for this architecture.
 
-> This section is unique to MeshOS's situation: Claude Code as the engineering team. These are not general software engineering principles — they are specific practices that make Claude Code more effective for this particular architecture.
+> This section is unique to Provenance's situation: Claude Code as the engineering team. These are not general software engineering principles — they are specific practices that make Claude Code more effective for this particular architecture.
 
 ### Repository Structure
 
 ```
-meshos-platform/
+provenance-platform/
 ├── apps/
 │   ├── api/                        # NestJS modular monolith (MVP)
 │   │   └── src/
@@ -509,7 +509,7 @@ meshos-platform/
 - Port contract enforcement engine
 - Semantic change declaration model
 - Agent provenance envelope builder
-- MeshOS-specific MCP tools and prompts
+- Provenance-specific MCP tools and prompts
 - Non-determinism lineage markers
 - Federated query planner and executor
 

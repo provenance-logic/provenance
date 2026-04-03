@@ -10,7 +10,7 @@
     "rootDir": "./src",
     "noEmit": true,
     "paths": {
-      "@meshos/types": ["../../packages/types/src/index.ts"]
+      "@provenance/types": ["../../packages/types/src/index.ts"]
     }
   },
   "include": ["src/**/*"],

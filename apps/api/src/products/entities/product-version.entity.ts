@@ -4,7 +4,7 @@ import {
   Column,
   CreateDateColumn,
 } from 'typeorm';
-import type { DataProduct } from '@meshos/types';
+import type { DataProduct } from '@provenance/types';
 
 @Entity({ schema: 'products', name: 'product_versions' })
 export class ProductVersionEntity {

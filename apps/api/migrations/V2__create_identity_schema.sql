@@ -1,6 +1,6 @@
 -- Migration V2: Identity schema
 -- Stores platform-specific principal metadata.
--- Keycloak is the authentication source; this table stores MeshOS platform metadata only.
+-- Keycloak is the authentication source; this table stores Provenance platform metadata only.
 
 CREATE SCHEMA IF NOT EXISTS identity;
 
@@ -69,20 +69,20 @@ ALTER TABLE identity.principals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity.role_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity.agent_identities ENABLE ROW LEVEL SECURITY;
 
-GRANT USAGE ON SCHEMA identity TO meshos_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity TO meshos_app;
+GRANT USAGE ON SCHEMA identity TO provenance_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity TO provenance_app;
 
 CREATE POLICY principals_org_isolation ON identity.principals
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 CREATE POLICY role_assignments_org_isolation ON identity.role_assignments
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 CREATE POLICY agent_identities_org_isolation ON identity.agent_identities
-    FOR ALL TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR ALL TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 -- Triggers
 CREATE TRIGGER principals_updated_at

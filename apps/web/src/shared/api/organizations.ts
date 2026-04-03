@@ -8,7 +8,7 @@ import type {
   DomainList,
   CreateDomainRequest,
   UpdateDomainRequest,
-} from '@meshos/types';
+} from '@provenance/types';
 
 export const organizationsApi = {
   list: (limit = 20, offset = 0) =>

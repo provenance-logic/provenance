@@ -1,4 +1,4 @@
-# MeshOS Web — multi-stage Dockerfile
+# Provenance Web — multi-stage Dockerfile
 
 FROM node:20-alpine AS base
 WORKDIR /app

@@ -41,9 +41,9 @@ data "aws_iam_policy_document" "github_actions_assume" {
 }
 
 resource "aws_iam_role" "github_actions" {
-  name               = "meshos-github-actions"
+  name               = "provenance-github-actions"
   assume_role_policy = data.aws_iam_policy_document.github_actions_assume.json
-  tags               = { Name = "meshos-github-actions" }
+  tags               = { Name = "provenance-github-actions" }
 }
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ data "aws_iam_policy_document" "github_actions_permissions" {
   statement {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-    resources = ["arn:aws:s3:::meshos-terraform-state", "arn:aws:s3:::meshos-terraform-state/*"]
+    resources = ["arn:aws:s3:::provenance-terraform-state", "arn:aws:s3:::provenance-terraform-state/*"]
   }
 
   # EC2 — Terraform infrastructure management
@@ -112,7 +112,7 @@ data "aws_iam_policy_document" "github_actions_permissions" {
 }
 
 resource "aws_iam_role_policy" "github_actions" {
-  name   = "meshos-github-actions-policy"
+  name   = "provenance-github-actions-policy"
   role   = aws_iam_role.github_actions.id
   policy = data.aws_iam_policy_document.github_actions_permissions.json
 }

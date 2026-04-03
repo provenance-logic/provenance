@@ -4,7 +4,7 @@ import {
   Column,
   CreateDateColumn,
 } from 'typeorm';
-import type { RoleType } from '@meshos/types';
+import type { RoleType } from '@provenance/types';
 
 @Entity({ schema: 'identity', name: 'role_assignments' })
 export class RoleAssignmentEntity {

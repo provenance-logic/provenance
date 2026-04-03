@@ -66,19 +66,19 @@ CREATE INDEX audit_log_resource_idx ON audit.audit_log (resource_type, resource_
 -- ---------------------------------------------------------------------------
 -- Permissions: INSERT only — never UPDATE or DELETE.
 -- ---------------------------------------------------------------------------
-GRANT USAGE ON SCHEMA audit TO meshos_app;
-GRANT SELECT, INSERT ON audit.audit_log TO meshos_app;
+GRANT USAGE ON SCHEMA audit TO provenance_app;
+GRANT SELECT, INSERT ON audit.audit_log TO provenance_app;
 -- Explicitly revoke — belt-and-suspenders.
-REVOKE UPDATE, DELETE ON audit.audit_log FROM meshos_app;
+REVOKE UPDATE, DELETE ON audit.audit_log FROM provenance_app;
 REVOKE UPDATE, DELETE ON ALL TABLES IN SCHEMA audit FROM PUBLIC;
 
 -- RLS on audit log — principals can only read their own org's records.
 ALTER TABLE audit.audit_log ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY audit_log_org_isolation ON audit.audit_log
-    FOR SELECT TO meshos_app
-    USING (org_id = current_setting('meshos.current_org_id', true)::UUID);
+    FOR SELECT TO provenance_app
+    USING (org_id = current_setting('provenance.current_org_id', true)::UUID);
 
 -- INSERT policy: always allowed for the app role (auditing is non-restrictable).
 CREATE POLICY audit_log_insert ON audit.audit_log
-    FOR INSERT TO meshos_app WITH CHECK (true);
+    FOR INSERT TO provenance_app WITH CHECK (true);

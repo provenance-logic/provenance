@@ -37,7 +37,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/provenance-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to ECR
@@ -48,7 +48,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ECR_REGISTRY }}/meshos/${{ matrix.service.name }}
+          images: ${{ env.ECR_REGISTRY }}/provenance/${{ matrix.service.name }}
           tags: |
             type=sha,prefix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
@@ -82,7 +82,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/provenance-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy via SSM (no inbound SSH required)
@@ -93,7 +93,7 @@ jobs:
             --instance-ids "${{ secrets.PRIMARY_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
-              'cd /opt/meshos',
+              'cd /opt/provenance',
               'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
               'export IMAGE_TAG=${SHORT_SHA}',
               'export ECR_REGISTRY=${{ env.ECR_REGISTRY }}',
@@ -118,7 +118,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/meshos-github-actions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/provenance-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy via SSM
@@ -129,7 +129,7 @@ jobs:
             --instance-ids "${{ secrets.FRONTEND_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
-              'cd /opt/meshos',
+              'cd /opt/provenance',
               'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
               'export IMAGE_TAG=${SHORT_SHA}',
               'export ECR_REGISTRY=${{ env.ECR_REGISTRY }}',

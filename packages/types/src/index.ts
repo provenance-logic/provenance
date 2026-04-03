@@ -1,4 +1,4 @@
-// MeshOS shared TypeScript types.
+// Provenance shared TypeScript types.
 // All apps and packages import from this package — never from each other's src/ directly.
 
 export * from './common.js';

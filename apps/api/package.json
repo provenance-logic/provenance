@@ -1,8 +1,8 @@
 {
-  "name": "@meshos/api",
+  "name": "@provenance/api",
   "version": "0.1.0",
   "private": true,
-  "description": "MeshOS NestJS control plane monolith",
+  "description": "Provenance NestJS control plane monolith",
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",
@@ -17,7 +17,7 @@
     "migrate:validate": "flyway -configFiles=flyway.conf validate"
   },
   "dependencies": {
-    "@meshos/types": "workspace:*",
+    "@provenance/types": "workspace:*",
     "@nestjs/common": "^10.3.0",
     "@nestjs/core": "^10.3.0",
     "@nestjs/platform-express": "^10.3.0",

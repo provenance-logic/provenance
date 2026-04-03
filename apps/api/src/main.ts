@@ -24,10 +24,10 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.listen(config.PORT);
-  console.log(`MeshOS API listening on port ${config.PORT}`);
+  console.log(`Provenance API listening on port ${config.PORT}`);
 }
 
 bootstrap().catch((err: unknown) => {
-  console.error('Failed to start MeshOS API:', err);
+  console.error('Failed to start Provenance API:', err);
   process.exit(1);
 });

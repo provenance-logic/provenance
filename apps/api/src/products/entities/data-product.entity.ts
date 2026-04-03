@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import type { DataProductStatus, DataClassification } from '@meshos/types';
+import type { DataProductStatus, DataClassification } from '@provenance/types';
 import { PortDeclarationEntity } from './port-declaration.entity.js';
 
 @Entity({ schema: 'products', name: 'data_products' })

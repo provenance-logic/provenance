@@ -1,5 +1,5 @@
 /**
- * Shared primitive types used across the MeshOS platform.
+ * Shared primitive types used across the Provenance platform.
  * These mirror the OpenAPI schema primitives in packages/openapi/.
  */
 
