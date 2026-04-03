@@ -1,0 +1,213 @@
+# Provenance — Lightweight Development Stack
+#
+# Includes only the services needed for basic UI and API testing.
+#
+# Included:  postgres, keycloak, opa, api, web
+# Excluded:  neo4j, redpanda, opensearch, minio, temporal, kong (and all init/setup containers)
+#
+# Disabled features when running this stack:
+#   - Event publishing (REDPANDA_ENABLED=false — Kafka producer/consumer fail gracefully)
+#   - Product search/indexing (OPENSEARCH_ENABLED=false — ProductIndexService warns and continues)
+#   - Access workflows (TEMPORAL_ENABLED=false — Temporal client uses lazy connection)
+#   - Lineage graph (NEO4J_ENABLED=false — not wired in Phase 1)
+#
+# Usage:
+#   docker compose -f infrastructure/docker/docker-compose.dev.yml up -d
+#
+# For the full stack:
+#   docker compose -f infrastructure/docker/docker-compose.yml up -d
+
+name: provenance-dev
+
+networks:
+  provenance:
+    driver: bridge
+
+volumes:
+  postgres_data_dev:
+  keycloak_data_dev:
+  opa_policies_dev:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 — control plane relational state
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: provenance-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: provenance
+      POSTGRES_USER: provenance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./init/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U provenance -d provenance"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Keycloak — OIDC identity provider
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: provenance-dev-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: provenance
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-provenance_dev_admin}
+    volumes:
+      - keycloak_data_dev:/opt/keycloak/data
+      - ./config/keycloak/realms:/opt/keycloak/data/import:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # Open Policy Agent — hot-reloadable policy engine
+  # ---------------------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:0.63.0
+    container_name: provenance-dev-opa
+    restart: unless-stopped
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --log-level=info
+      - --log-format=json
+      - /policies
+    volumes:
+      - opa_policies_dev:/policies
+      - ./config/opa/policies:/policies/bootstrap:ro
+    ports:
+      - "8181:8181"
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8181/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # NestJS API — control plane monolith (dev mode with hot-reload)
+  #
+  # Excluded services fail gracefully:
+  #   - Kafka producer/consumer: warn and skip connect
+  #   - OpenSearch: warn and skip index creation
+  #   - Temporal: lazy connection (fails at first workflow use, not startup)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../../
+      dockerfile: apps/api/Dockerfile
+      target: development
+    container_name: provenance-dev-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      # PostgreSQL
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: provenance
+      DATABASE_USER: provenance
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+      # OPA
+      OPA_BASE_URL: http://opa:8181
+      # Keycloak
+      KEYCLOAK_REALM: provenance
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_CLIENT_ID: provenance-api
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      # Disabled services — connections fail gracefully (see comments above)
+      REDPANDA_ENABLED: "false"
+      OPENSEARCH_ENABLED: "false"
+      TEMPORAL_ENABLED: "false"
+      NEO4J_ENABLED: "false"
+    volumes:
+      - ../../apps/api:/app/apps/api:cached
+      - ../../packages/types:/app/packages/types:cached
+      - /app/apps/api/node_modules
+    ports:
+      - "3001:3001"
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # React Frontend — Vite dev server
+  # Connects directly to api:3001 (Kong is excluded in the dev stack)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+      target: development
+    container_name: provenance-dev-web
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:3001/api/v1
+      VITE_AGENT_BASE_URL: http://localhost:3001/agent/v1
+      VITE_KEYCLOAK_URL: http://localhost:8080
+      VITE_KEYCLOAK_REALM: provenance
+      VITE_KEYCLOAK_CLIENT_ID: provenance-web
+    volumes:
+      - ../../apps/web:/app/apps/web:cached
+      - ../../packages/types:/app/packages/types:cached
+      - /app/apps/web/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
