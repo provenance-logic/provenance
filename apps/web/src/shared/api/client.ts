@@ -11,7 +11,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+    const body: unknown = await res.json().catch(() => ({}));
     throw new ApiError(res.status, (body as { message?: string }).message ?? res.statusText, body);
   }
 

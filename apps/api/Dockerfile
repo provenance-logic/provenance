@@ -1,4 +1,5 @@
 # Provenance API — multi-stage Dockerfile
+# Build context: monorepo root (../../ relative to docker-compose.yml)
 # Stage 'development' is used by Docker Compose for local dev with hot-reload.
 # Stage 'production' builds an optimized image for deployment.
 
@@ -8,9 +9,13 @@ RUN corepack enable && corepack prepare pnpm@9.1.0 --activate
 
 # ---------------------------------------------------------------------------
 # Dependencies stage
+# Install from monorepo root so pnpm can resolve workspace:* deps and
+# find the root pnpm-lock.yaml.
 # ---------------------------------------------------------------------------
 FROM base AS deps
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/
+COPY packages/types/package.json ./packages/types/
 RUN pnpm install --frozen-lockfile
 
 # ---------------------------------------------------------------------------
@@ -18,7 +23,9 @@ RUN pnpm install --frozen-lockfile
 # ---------------------------------------------------------------------------
 FROM base AS development
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY tsconfig.base.json ./
+WORKDIR /app/apps/api
 EXPOSE 3001
 CMD ["pnpm", "dev"]
 
@@ -27,7 +34,11 @@ CMD ["pnpm", "dev"]
 # ---------------------------------------------------------------------------
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY tsconfig.base.json ./
+COPY packages/types/ ./packages/types/
+COPY apps/api/ ./apps/api/
+WORKDIR /app/apps/api
 RUN pnpm build
 
 # ---------------------------------------------------------------------------
@@ -36,11 +47,9 @@ RUN pnpm build
 FROM node:20-alpine AS production
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.1.0 --activate
-
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./
-
+COPY --from=build /app/apps/api/dist ./dist
+COPY --from=build /app/apps/api/node_modules ./node_modules
+COPY --from=build /app/apps/api/package.json ./
 EXPOSE 3001
 USER node
 CMD ["node", "dist/main"]

@@ -1,0 +1,1072 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance Governance API
+  version: 1.0.0
+  description: |
+    Manages governance policy authoring, effective policy computation,
+    publication-time enforcement, and continuous compliance monitoring.
+
+    All endpoints require a valid Keycloak-issued JWT in the Authorization header.
+    All resources are scoped to an organization via org_id.
+
+    Phase 2 scope: Product Schema Policy and Classification Taxonomy Policy domains.
+    All eight policy domains are represented in the schema for completeness.
+    OPA bundle compilation is triggered asynchronously on policy publish.
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Policy Schemas
+    description: Rule type schemas that drive the UI rule builder per policy domain
+  - name: Policy Versions
+    description: Immutable published policy artifacts
+  - name: Effective Policies
+    description: Computed effective policy (floor ∪ domain extensions) per domain
+  - name: Compliance
+    description: Per-product compliance state and evaluation
+  - name: Exceptions
+    description: Governance-granted compliance exceptions
+  - name: Grace Periods
+    description: Time-bounded remediation windows for breaking policy changes
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Shared primitives (duplicated for spec independence)
+    # ------------------------------------------------------------------
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    # ------------------------------------------------------------------
+    # Enumerations
+    # ------------------------------------------------------------------
+    PolicyDomain:
+      type: string
+      enum:
+        - product_schema
+        - classification_taxonomy
+        - versioning_deprecation
+        - access_control
+        - lineage
+        - slo
+        - agent_access
+        - interoperability
+      description: |
+        product_schema         — Required fields, naming conventions, tagging standards.
+        classification_taxonomy — Permitted classification values and their definitions.
+        versioning_deprecation — Semantic versioning rules and deprecation notice periods.
+        access_control         — Who may request access; approval requirements by classification.
+        lineage                — Minimum lineage completeness thresholds by classification.
+        slo                    — Minimum SLO coverage and freshness requirements.
+        agent_access           — Trust classifications permitted to query; provenance requirements.
+        interoperability       — Port type requirements and schema annotation standards.
+
+    PolicyScopeType:
+      type: string
+      enum: [global_floor, domain_extension]
+      description: |
+        global_floor     — Applies to all domains; cannot be weakened or opted out of.
+        domain_extension — Additive rules scoped to a single domain; cannot contradict the floor.
+
+    ComplianceStateValue:
+      type: string
+      enum: [compliant, drift_detected, grace_period, non_compliant]
+      description: |
+        compliant       — Product meets the effective policy for its domain.
+        drift_detected  — Policy changed since last evaluation; compliance not yet confirmed.
+        grace_period    — Non-compliant but within the remediation window granted at policy publish time.
+        non_compliant   — Fails effective policy; grace period (if any) has expired.
+
+    GracePeriodOutcome:
+      type: string
+      enum: [pending, compliant, escalated]
+
+    # ------------------------------------------------------------------
+    # Policy Schema
+    # ------------------------------------------------------------------
+    PolicySchema:
+      type: object
+      required: [id, orgId, policyDomain, schemaVersion, schemaDefinition, isPlatformDefault, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        schemaVersion:
+          type: string
+          examples:
+            - "1.0.0"
+        schemaDefinition:
+          type: object
+          description: |
+            JSON Schema describing the structure of rules for this policy domain.
+            Drives the UI rule builder — field names, types, allowed operators,
+            and enum values are derived from this schema.
+          additionalProperties: true
+        isPlatformDefault:
+          type: boolean
+          description: True for schemas shipped with the platform. False for org overrides.
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    PolicySchemaList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicySchema"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Policy Version (immutable published artifact)
+    # ------------------------------------------------------------------
+    PolicyVersion:
+      type: object
+      required: [id, orgId, policyDomain, versionNumber, rules, publishedBy, publishedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        versionNumber:
+          type: integer
+          minimum: 1
+          description: Monotonically increasing per (org, policyDomain).
+        rules:
+          type: object
+          description: |
+            The authored governance rules for this policy domain.
+            Structure is validated against the PolicySchema for this domain.
+            Immutable once published.
+          additionalProperties: true
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        publishedBy:
+          $ref: "#/components/schemas/Uuid"
+        publishedAt:
+          $ref: "#/components/schemas/Timestamp"
+        regoBundleRef:
+          type: string
+          description: S3/MinIO path to the compiled OPA bundle. Null until async compilation completes.
+          nullable: true
+
+    PublishPolicyRequest:
+      type: object
+      required: [policyDomain, rules]
+      properties:
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        rules:
+          type: object
+          description: |
+            Governance rules for this domain. Must validate against the PolicySchema
+            for the domain. The governance engine compiles these rules to OPA Rego
+            asynchronously after publish.
+          additionalProperties: true
+        description:
+          type: string
+          maxLength: 500
+
+    PolicyVersionList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyVersion"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Policy Impact Preview
+    # ------------------------------------------------------------------
+    PolicyImpactPreviewRequest:
+      type: object
+      required: [policyDomain, rules]
+      properties:
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        rules:
+          type: object
+          description: Proposed rules to evaluate against the current product catalog.
+          additionalProperties: true
+
+    ImpactedProduct:
+      type: object
+      required: [productId, productName, domainId, violations]
+      properties:
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        productName:
+          type: string
+        domainId:
+          $ref: "#/components/schemas/Uuid"
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceViolation"
+
+    PolicyImpactPreview:
+      type: object
+      required: [totalAffectedProducts, newlyNonCompliantProducts, affectedDomainCount, computedAt]
+      properties:
+        totalAffectedProducts:
+          type: integer
+          minimum: 0
+          description: Number of published products whose compliance state would change.
+        newlyNonCompliantProducts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImpactedProduct"
+          description: Products that would become non-compliant if this policy is published.
+        affectedDomainCount:
+          type: integer
+          minimum: 0
+        computedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ------------------------------------------------------------------
+    # Effective Policy
+    # ------------------------------------------------------------------
+    EffectivePolicy:
+      type: object
+      required: [id, orgId, policyDomain, scopeType, policyVersionId, computedRules, computedAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        scopeType:
+          $ref: "#/components/schemas/PolicyScopeType"
+        scopeId:
+          $ref: "#/components/schemas/Uuid"
+          description: Null for global_floor. Domain UUID for domain_extension.
+          nullable: true
+        policyVersionId:
+          $ref: "#/components/schemas/Uuid"
+        computedRules:
+          type: object
+          description: Union of the governance floor and all applicable domain extensions for this scope.
+          additionalProperties: true
+        computedAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    EffectivePolicyList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EffectivePolicy"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Compliance
+    # ------------------------------------------------------------------
+    ComplianceViolation:
+      type: object
+      required: [policyDomain, ruleId, detail]
+      properties:
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        ruleId:
+          type: string
+          description: Stable identifier for the specific rule within the policy domain.
+        detail:
+          type: string
+          description: Human-readable explanation of the specific violation.
+
+    ComplianceState:
+      type: object
+      required: [id, orgId, productId, state, violations, evaluatedAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        state:
+          $ref: "#/components/schemas/ComplianceStateValue"
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceViolation"
+          description: Empty array when state is compliant.
+        policyVersionId:
+          $ref: "#/components/schemas/Uuid"
+          description: The policy version used for the most recent evaluation. Null if never evaluated.
+          nullable: true
+        evaluatedAt:
+          $ref: "#/components/schemas/Timestamp"
+        nextEvaluationAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Scheduled next evaluation time. Null for event-triggered-only products.
+          nullable: true
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    ComplianceStateList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceState"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    TriggerEvaluationRequest:
+      type: object
+      properties:
+        productId:
+          $ref: "#/components/schemas/Uuid"
+          description: If provided, evaluates only this product. If omitted, evaluates all published products in the org.
+          nullable: true
+
+    EvaluationResult:
+      type: object
+      required: [evaluatedCount, nonCompliantCount, gracePeriodCount, evaluatedAt]
+      properties:
+        evaluatedCount:
+          type: integer
+          minimum: 0
+        nonCompliantCount:
+          type: integer
+          minimum: 0
+        gracePeriodCount:
+          type: integer
+          minimum: 0
+        evaluatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ------------------------------------------------------------------
+    # Exceptions
+    # ------------------------------------------------------------------
+    Exception:
+      type: object
+      required: [id, orgId, productId, policyDomain, exceptionReason, grantedBy, grantedAt, expiresAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        policyVersionId:
+          $ref: "#/components/schemas/Uuid"
+          nullable: true
+        exceptionReason:
+          type: string
+        grantedBy:
+          $ref: "#/components/schemas/Uuid"
+        grantedAt:
+          $ref: "#/components/schemas/Timestamp"
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        revokedAt:
+          $ref: "#/components/schemas/Timestamp"
+          nullable: true
+        revokedBy:
+          $ref: "#/components/schemas/Uuid"
+          nullable: true
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    GrantExceptionRequest:
+      type: object
+      required: [productId, policyDomain, exceptionReason, expiresAt]
+      properties:
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        policyVersionId:
+          $ref: "#/components/schemas/Uuid"
+          description: The policy version this exception applies to. If omitted, applies to the current effective version.
+        exceptionReason:
+          type: string
+          maxLength: 1000
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Must be a future timestamp. Grace periods never exceed the configured org maximum.
+
+    ExceptionList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Exception"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ------------------------------------------------------------------
+    # Grace Periods
+    # ------------------------------------------------------------------
+    GracePeriod:
+      type: object
+      required: [id, orgId, productId, policyDomain, policyVersionId, endsAt, startedAt, outcome, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        orgId:
+          $ref: "#/components/schemas/Uuid"
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        policyVersionId:
+          $ref: "#/components/schemas/Uuid"
+        endsAt:
+          $ref: "#/components/schemas/Timestamp"
+        temporalWorkflowId:
+          type: string
+          nullable: true
+        startedAt:
+          $ref: "#/components/schemas/Timestamp"
+        endedAt:
+          $ref: "#/components/schemas/Timestamp"
+          nullable: true
+        outcome:
+          $ref: "#/components/schemas/GracePeriodOutcome"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    GracePeriodList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/GracePeriod"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Authenticated principal lacks permission for this operation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: State transition is invalid or resource already exists.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  parameters:
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    PolicyVersionId:
+      name: policyVersionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ExceptionId:
+      name: exceptionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    GracePeriodId:
+      name: gracePeriodId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    OffsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+paths:
+  # ------------------------------------------------------------------
+  # Policy Schemas
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/policy-schemas:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listPolicySchemas
+      summary: List policy schemas for all eight domains. Includes platform defaults and org overrides.
+      tags: [Policy Schemas]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySchemaList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/policy-schemas/{policyDomain}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - name: policyDomain
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/PolicyDomain"
+
+    get:
+      operationId: getPolicySchema
+      summary: Get the active policy schema for a specific domain.
+      tags: [Policy Schemas]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySchema"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Policy Versions
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/policy-versions:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listPolicyVersions
+      summary: List published policy versions. Optionally filter by policy domain.
+      tags: [Policy Versions]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - name: policyDomain
+          in: query
+          schema:
+            $ref: "#/components/schemas/PolicyDomain"
+          description: Filter to a single policy domain.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      operationId: publishPolicyVersion
+      summary: |
+        Publish a new policy version. Triggers impact preview validation, updates
+        the effective policy, queues OPA bundle compilation, and opens grace periods
+        for any products that become non-compliant.
+      tags: [Policy Versions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishPolicyRequest"
+      responses:
+        "201":
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/policy-versions/{policyVersionId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/PolicyVersionId"
+
+    get:
+      operationId: getPolicyVersion
+      summary: Get a specific published policy version by ID.
+      tags: [Policy Versions]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Policy Impact Preview
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/policy-preview:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    post:
+      operationId: previewPolicyImpact
+      summary: |
+        Preview the impact of publishing proposed policy rules without committing them.
+        Returns the set of products that would become non-compliant, grouped by domain.
+        Must complete within 3 seconds (NF4.1).
+      tags: [Policy Versions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyImpactPreviewRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyImpactPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ------------------------------------------------------------------
+  # Effective Policies
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/effective-policies:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listEffectivePolicies
+      summary: List all effective policies (floor and domain extensions) for this organization.
+      tags: [Effective Policies]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - name: scopeType
+          in: query
+          schema:
+            $ref: "#/components/schemas/PolicyScopeType"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectivePolicyList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/effective-policies/{policyDomain}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - name: policyDomain
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/PolicyDomain"
+
+    get:
+      operationId: getEffectivePolicy
+      summary: Get the global floor effective policy for a specific domain.
+      tags: [Effective Policies]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectivePolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Compliance
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/compliance:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listComplianceStates
+      summary: List compliance states for all published products in the organization.
+      tags: [Compliance]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/ComplianceStateValue"
+          description: Filter by compliance state.
+        - name: domainId
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+          description: Filter to products within a specific domain.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceStateList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/compliance/evaluate:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    post:
+      operationId: triggerComplianceEvaluation
+      summary: |
+        Trigger an immediate compliance re-evaluation. If productId is provided,
+        evaluates only that product. Otherwise evaluates all published products.
+      tags: [Compliance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerEvaluationRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluationResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/compliance/{productId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/ProductId"
+
+    get:
+      operationId: getProductComplianceState
+      summary: Get the current compliance state for a specific product.
+      tags: [Compliance]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Exceptions
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/exceptions:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listExceptions
+      summary: List all compliance exceptions in the organization.
+      tags: [Exceptions]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - name: productId
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+          description: If true, return only non-revoked, non-expired exceptions.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExceptionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      operationId: grantException
+      summary: Grant a compliance exception for a specific product and policy domain.
+      tags: [Exceptions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrantExceptionRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Exception"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /organizations/{orgId}/governance/exceptions/{exceptionId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/ExceptionId"
+
+    get:
+      operationId: getException
+      summary: Get a compliance exception by ID.
+      tags: [Exceptions]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Exception"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: revokeException
+      summary: Revoke a compliance exception. Sets revokedAt and revokedBy. Returns the updated exception.
+      tags: [Exceptions]
+      responses:
+        "200":
+          description: OK — exception revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Exception"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Exception is already revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ------------------------------------------------------------------
+  # Grace Periods
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/grace-periods:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+
+    get:
+      operationId: listGracePeriods
+      summary: List grace periods in the organization.
+      tags: [Grace Periods]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - name: productId
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+        - name: outcome
+          in: query
+          schema:
+            $ref: "#/components/schemas/GracePeriodOutcome"
+          description: Filter by outcome. Use outcome=pending to find active grace periods.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GracePeriodList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /organizations/{orgId}/governance/grace-periods/{gracePeriodId}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/GracePeriodId"
+
+    get:
+      operationId: getGracePeriod
+      summary: Get a grace period by ID.
+      tags: [Grace Periods]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GracePeriod"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"

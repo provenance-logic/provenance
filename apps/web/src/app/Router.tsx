@@ -1,8 +1,8 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavShell } from '../shared/components/NavShell.js';
 import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
+import { ProductDetail } from '../features/publishing/ProductDetail.js';
 
 // Placeholder pages for Phase 1 shell — content filled in subsequent phases.
 function ComingSoon({ title }: { title: string }) {
@@ -28,6 +28,10 @@ export function AppRouter() {
           <Route
             path="dashboard/:orgId/domains/:domainId/products/new"
             element={<NewProductForm />}
+          />
+          <Route
+            path="dashboard/:orgId/domains/:domainId/products/:productId"
+            element={<ProductDetail />}
           />
           <Route path="products" element={<ComingSoon title="Data Products" />} />
           <Route path="marketplace" element={<ComingSoon title="Marketplace" />} />

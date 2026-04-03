@@ -1,0 +1,29 @@
+import { Injectable, Inject, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Kafka, Producer } from 'kafkajs';
+
+export const KAFKA_BROKERS = 'KAFKA_BROKERS';
+
+@Injectable()
+export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
+  private readonly producer: Producer;
+
+  constructor(@Inject(KAFKA_BROKERS) brokers: string[]) {
+    const kafka = new Kafka({ clientId: 'provenance-api', brokers });
+    this.producer = kafka.producer();
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.producer.connect();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.producer.disconnect();
+  }
+
+  async publish(topic: string, key: string, value: unknown): Promise<void> {
+    await this.producer.send({
+      topic,
+      messages: [{ key, value: JSON.stringify(value) }],
+    });
+  }
+}

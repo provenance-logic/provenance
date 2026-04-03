@@ -3,7 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { passportJwtSecret } from 'jwks-rsa';
 import { getConfig } from '../config.js';
-import type { JwtClaims, RequestContext, PrincipalType } from '@provenance/types';
+import type { JwtClaims, RequestContext } from '@provenance/types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -28,9 +28,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       principalId: payload.provenance_principal_id ?? payload.sub,
       orgId: payload.provenance_org_id ?? '',
-      principalType: (payload.provenance_principal_type ?? 'human_user') as PrincipalType,
+      principalType: payload.provenance_principal_type ?? 'human_user',
       roles: [],
-      agentId: payload.agent_id,
+      ...(payload.agent_id !== undefined && { agentId: payload.agent_id }),
     };
   }
 }

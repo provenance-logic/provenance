@@ -4,7 +4,7 @@
     "module": "commonjs",
     "target": "ES2022",
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "../../",
     "baseUrl": "./",
     "paths": {
       "@provenance/types": ["../../packages/types/src/index.ts"]
@@ -13,6 +13,6 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../../packages/types/src/**/*"],
   "exclude": ["dist", "node_modules", "**/*.spec.ts"]
 }

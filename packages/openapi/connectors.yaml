@@ -1,0 +1,781 @@
+openapi: 3.1.0
+info:
+  title: Provenance Connectors API
+  version: 0.1.0
+  description: |
+    Connector registration, source object management, health monitoring, and schema snapshot capture.
+    Credentials are never stored here — credentialArn holds an AWS Secrets Manager ARN reference only.
+    Raw credentials must never appear in requests or responses.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Connectors
+    description: Connector registration and lifecycle
+  - name: ConnectorHealth
+    description: Health check history for a connector
+  - name: Sources
+    description: Source object registration within a connector
+  - name: SchemaSnapshots
+    description: Point-in-time schema captures for a source
+
+paths:
+  /organizations/{orgId}/connectors:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+    get:
+      operationId: listConnectors
+      summary: List connectors for an organization
+      tags: [Connectors]
+      parameters:
+        - name: domainId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: validationStatus
+          in: query
+          schema:
+            $ref: '#/components/schemas/ValidationStatus'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of connectors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    post:
+      operationId: registerConnector
+      summary: Register a new connector
+      tags: [Connectors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterConnectorRequest'
+      responses:
+        '201':
+          description: Connector registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connector'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /organizations/{orgId}/connectors/{connectorId}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+    get:
+      operationId: getConnector
+      summary: Get a connector by ID
+      tags: [Connectors]
+      responses:
+        '200':
+          description: Connector details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connector'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      operationId: updateConnector
+      summary: Update a connector
+      tags: [Connectors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConnectorRequest'
+      responses:
+        '200':
+          description: Updated connector
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connector'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      operationId: deleteConnector
+      summary: Delete a connector
+      tags: [Connectors]
+      description: Fails with 409 if source registrations exist for this connector.
+      responses:
+        '204':
+          description: Connector deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /organizations/{orgId}/connectors/{connectorId}/validate:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+    post:
+      operationId: validateConnector
+      summary: Trigger a live validation check for a connector
+      tags: [Connectors]
+      description: |
+        Attempts a live connection to the external system. Records a health event and updates
+        the connector's validationStatus. Returns the resulting health event.
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorHealthEvent'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/connectors/{connectorId}/health:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+    get:
+      operationId: listConnectorHealthEvents
+      summary: List health check events for a connector (newest first)
+      tags: [ConnectorHealth]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of health events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorHealthEventList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/connectors/{connectorId}/sources:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+    get:
+      operationId: listSourceRegistrations
+      summary: List registered source objects for a connector
+      tags: [Sources]
+      parameters:
+        - name: sourceType
+          in: query
+          schema:
+            $ref: '#/components/schemas/SourceType'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of source registrations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistrationList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    post:
+      operationId: registerSource
+      summary: Register a source object within a connector
+      tags: [Sources]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterSourceRequest'
+      responses:
+        '201':
+          description: Source registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistration'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /organizations/{orgId}/connectors/{connectorId}/sources/{sourceId}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+      - $ref: '#/components/parameters/sourceId'
+    get:
+      operationId: getSourceRegistration
+      summary: Get a registered source by ID
+      tags: [Sources]
+      responses:
+        '200':
+          description: Source registration details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistration'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      operationId: updateSourceRegistration
+      summary: Update a source registration
+      tags: [Sources]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSourceRequest'
+      responses:
+        '200':
+          description: Updated source registration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistration'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      operationId: deleteSourceRegistration
+      summary: Delete a source registration
+      tags: [Sources]
+      description: Fails with 409 if port declarations reference this source.
+      responses:
+        '204':
+          description: Source registration deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /organizations/{orgId}/connectors/{connectorId}/sources/{sourceId}/snapshots:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/connectorId'
+      - $ref: '#/components/parameters/sourceId'
+    get:
+      operationId: listSchemaSnapshots
+      summary: List schema snapshots for a source (newest first)
+      tags: [SchemaSnapshots]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of schema snapshots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaSnapshotList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    post:
+      operationId: captureSchemaSnapshot
+      summary: Capture the current schema for a source
+      tags: [SchemaSnapshots]
+      description: |
+        Connects to the external system and captures the current schema. Creates an immutable
+        snapshot record. The latest snapshot per source is used for schema inference in port authoring.
+      responses:
+        '201':
+          description: Snapshot captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaSnapshot'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    connectorId:
+      name: connectorId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    sourceId:
+      name: sourceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Bad request — validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict — duplicate or constraint violation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ---------------------------------------------------------------------------
+    # Enumerations
+    # ---------------------------------------------------------------------------
+
+    ConnectorType:
+      type: string
+      enum:
+        - postgresql
+        - mysql
+        - snowflake
+        - bigquery
+        - redshift
+        - databricks
+        - s3
+        - gcs
+        - azure_blob
+        - kafka
+        - redpanda
+        - rest_api
+        - custom
+
+    SourceType:
+      type: string
+      enum:
+        - table
+        - view
+        - materialized_view
+        - topic
+        - s3_prefix
+        - api_endpoint
+        - custom
+
+    ValidationStatus:
+      type: string
+      enum:
+        - pending
+        - valid
+        - invalid
+        - stale
+
+    HealthStatus:
+      type: string
+      enum:
+        - healthy
+        - degraded
+        - unreachable
+        - credential_error
+        - timeout
+
+    # ---------------------------------------------------------------------------
+    # Connector
+    # ---------------------------------------------------------------------------
+
+    Connector:
+      type: object
+      required:
+        - id
+        - orgId
+        - domainId
+        - name
+        - connectorType
+        - connectionConfig
+        - validationStatus
+        - createdBy
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        domainId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          nullable: true
+        connectorType:
+          $ref: '#/components/schemas/ConnectorType'
+        connectionConfig:
+          type: object
+          description: |
+            Non-sensitive connection parameters: host, port, database name, SSL mode, etc.
+            Never contains raw credentials.
+          additionalProperties: true
+        credentialArn:
+          type: string
+          maxLength: 2048
+          nullable: true
+          description: |
+            AWS Secrets Manager ARN reference. NULL for public sources.
+            Raw credentials are never returned.
+        validationStatus:
+          $ref: '#/components/schemas/ValidationStatus'
+        lastValidatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdBy:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RegisterConnectorRequest:
+      type: object
+      required:
+        - domainId
+        - name
+        - connectorType
+      properties:
+        domainId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+        connectorType:
+          $ref: '#/components/schemas/ConnectorType'
+        connectionConfig:
+          type: object
+          additionalProperties: true
+          default: {}
+          description: Non-sensitive connection parameters only. Never include raw credentials here.
+        credentialArn:
+          type: string
+          maxLength: 2048
+          description: AWS Secrets Manager ARN for sensitive credentials.
+
+    UpdateConnectorRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+        connectionConfig:
+          type: object
+          additionalProperties: true
+        credentialArn:
+          type: string
+          maxLength: 2048
+
+    ConnectorList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Connector'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ---------------------------------------------------------------------------
+    # Connector Health Events (append-only)
+    # ---------------------------------------------------------------------------
+
+    ConnectorHealthEvent:
+      type: object
+      required:
+        - id
+        - orgId
+        - connectorId
+        - status
+        - checkedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        connectorId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        responseTimeMs:
+          type: integer
+          nullable: true
+          description: NULL if the connection did not complete.
+        errorMessage:
+          type: string
+          nullable: true
+          description: NULL on healthy checks.
+        checkedAt:
+          type: string
+          format: date-time
+
+    ConnectorHealthEventList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorHealthEvent'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ---------------------------------------------------------------------------
+    # Source Registrations
+    # ---------------------------------------------------------------------------
+
+    SourceRegistration:
+      type: object
+      required:
+        - id
+        - orgId
+        - connectorId
+        - sourceRef
+        - sourceType
+        - displayName
+        - registeredBy
+        - registeredAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        connectorId:
+          type: string
+          format: uuid
+        sourceRef:
+          type: string
+          maxLength: 500
+          description: |
+            Opaque reference to the source object within the connector.
+            Examples: "public.users", "s3://bucket/prefix/", "orders.v1"
+        sourceType:
+          $ref: '#/components/schemas/SourceType'
+        displayName:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          nullable: true
+        registeredBy:
+          type: string
+          format: uuid
+        registeredAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RegisterSourceRequest:
+      type: object
+      required:
+        - sourceRef
+        - sourceType
+        - displayName
+      properties:
+        sourceRef:
+          type: string
+          maxLength: 500
+        sourceType:
+          $ref: '#/components/schemas/SourceType'
+        displayName:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+
+    UpdateSourceRequest:
+      type: object
+      minProperties: 1
+      properties:
+        displayName:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+
+    SourceRegistrationList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceRegistration'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ---------------------------------------------------------------------------
+    # Schema Snapshots (append-only, immutable)
+    # ---------------------------------------------------------------------------
+
+    SchemaSnapshot:
+      type: object
+      required:
+        - id
+        - orgId
+        - sourceRegistrationId
+        - connectorId
+        - schemaDefinition
+        - capturedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        sourceRegistrationId:
+          type: string
+          format: uuid
+        connectorId:
+          type: string
+          format: uuid
+        schemaDefinition:
+          type: object
+          description: Inferred column/field names, types, and nullability.
+          additionalProperties: true
+        columnCount:
+          type: integer
+          nullable: true
+        rowEstimate:
+          type: integer
+          format: int64
+          nullable: true
+          description: NULL for non-tabular sources.
+        capturedBy:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for automated captures.
+        capturedAt:
+          type: string
+          format: date-time
+
+    SchemaSnapshotList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SchemaSnapshot'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'

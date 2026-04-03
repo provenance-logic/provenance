@@ -5,3 +5,7 @@ export * from './common.js';
 export * from './organizations.js';
 export * from './products.js';
 export * from './identity.js';
+export * from './governance.js';
+export * from './connectors.js';
+export * from './access.js';
+export * from './events.js';

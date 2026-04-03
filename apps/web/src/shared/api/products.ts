@@ -4,6 +4,7 @@ import type {
   DataProductList,
   CreateDataProductRequest,
   UpdateDataProductRequest,
+  PublishProductRequest,
   DataProductStatus,
   Port,
   PortList,
@@ -19,7 +20,7 @@ export const productsApi = {
   list: (orgId: string, domainId: string, status?: DataProductStatus, limit = 20, offset = 0) => {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set('status', status);
-    return api.get<DataProductList>(`${base(orgId, domainId)}?${params}`);
+    return api.get<DataProductList>(`${base(orgId, domainId)}?${params.toString()}`);
   },
 
   create: (orgId: string, domainId: string, dto: CreateDataProductRequest) =>
@@ -33,6 +34,9 @@ export const productsApi = {
 
   delete: (orgId: string, domainId: string, productId: string) =>
     api.delete(`${base(orgId, domainId)}/${productId}`),
+
+  publish: (orgId: string, domainId: string, productId: string, dto: PublishProductRequest) =>
+    api.post<DataProduct>(`${base(orgId, domainId)}/${productId}/publish`, dto),
 
   ports: {
     list: (orgId: string, domainId: string, productId: string) =>

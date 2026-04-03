@@ -21,6 +21,7 @@ import type {
   DataProductStatus,
   DeclarePortRequest,
   UpdatePortRequest,
+  PublishProductRequest,
 } from '@provenance/types';
 
 @UseGuards(JwtAuthGuard)
@@ -81,6 +82,17 @@ export class ProductsController {
     @Param('productId') productId: string,
   ) {
     return this.productsService.deleteProduct(orgId, domainId, productId);
+  }
+
+  @Post(':productId/publish')
+  publishProduct(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Param('productId') productId: string,
+    @Body() dto: PublishProductRequest,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.productsService.publishProduct(orgId, domainId, productId, dto, ctx.principalId);
   }
 
   // ---------------------------------------------------------------------------

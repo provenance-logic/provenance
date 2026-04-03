@@ -4,6 +4,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
 import { OrganizationsModule } from './organizations/organizations.module.js';
 import { ProductsModule } from './products/products.module.js';
+import { GovernanceModule } from './governance/governance.module.js';
+import { ConnectorsModule } from './connectors/connectors.module.js';
+import { SearchModule } from './search/search.module.js';
+import { AccessModule } from './access/access.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
 @Module({
@@ -13,6 +17,10 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     HealthModule,
     OrganizationsModule,
     ProductsModule,
+    GovernanceModule,
+    ConnectorsModule,
+    SearchModule,
+    AccessModule,
   ],
 })
 export class AppModule implements NestModule {

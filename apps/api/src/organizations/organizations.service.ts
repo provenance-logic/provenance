@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { OrgEntity } from './entities/org.entity.js';
 import { DomainEntity } from './entities/domain.entity.js';
+import { PrincipalEntity } from './entities/principal.entity.js';
+import { RoleAssignmentEntity } from './entities/role-assignment.entity.js';
 import type {
   Organization,
   CreateOrganizationRequest,
@@ -12,6 +14,9 @@ import type {
   CreateDomainRequest,
   UpdateDomainRequest,
   DomainList,
+  Member,
+  AddMemberRequest,
+  MemberList,
 } from '@provenance/types';
 
 @Injectable()
@@ -21,6 +26,10 @@ export class OrganizationsService {
     private readonly orgRepo: Repository<OrgEntity>,
     @InjectRepository(DomainEntity)
     private readonly domainRepo: Repository<DomainEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectRepository(RoleAssignmentEntity)
+    private readonly roleAssignmentRepo: Repository<RoleAssignmentEntity>,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -34,7 +43,7 @@ export class OrganizationsService {
       skip: offset,
     });
     return {
-      items: items.map(this.toOrganization),
+      items: items.map((i) => this.toOrganization(i)),
       meta: { total, limit, offset },
     };
   }
@@ -83,7 +92,7 @@ export class OrganizationsService {
       skip: offset,
     });
     return {
-      items: items.map(this.toDomain),
+      items: items.map((i) => this.toDomain(i)),
       meta: { total, limit, offset },
     };
   }
@@ -128,6 +137,64 @@ export class OrganizationsService {
   }
 
   // ---------------------------------------------------------------------------
+  // Members
+  // ---------------------------------------------------------------------------
+
+  async listMembers(orgId: string, limit: number, offset: number): Promise<MemberList> {
+    const [assignments, total] = await this.roleAssignmentRepo.findAndCount({
+      where: { orgId },
+      order: { grantedAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    const principalIds = [...new Set(assignments.map((a) => a.principalId))];
+    const principals = principalIds.length
+      ? await this.principalRepo.find({ where: { orgId, id: In(principalIds) } })
+      : [];
+    const principalMap = new Map(principals.map((p) => [p.id, p]));
+
+    return {
+      items: assignments.map((ra) => this.toMember(ra, principalMap.get(ra.principalId) ?? null)),
+      meta: { total, limit, offset },
+    };
+  }
+
+  async addMember(orgId: string, dto: AddMemberRequest, grantedByPrincipalId: string): Promise<Member> {
+    await this.getOrganization(orgId);
+
+    const principal = await this.principalRepo.findOne({ where: { id: dto.principalId, orgId } });
+    if (!principal) {
+      throw new NotFoundException(`Principal ${dto.principalId} not found in organization ${orgId}`);
+    }
+
+    const existing = await this.roleAssignmentRepo.findOne({
+      where: { orgId, principalId: dto.principalId, role: dto.role, domainId: IsNull() },
+    });
+    if (existing) {
+      throw new ConflictException(`Principal already has role '${dto.role}' in this organization`);
+    }
+
+    const assignment = this.roleAssignmentRepo.create({
+      orgId,
+      principalId: dto.principalId,
+      role: dto.role,
+      domainId: null,
+      grantedBy: grantedByPrincipalId,
+    });
+    const saved = await this.roleAssignmentRepo.save(assignment);
+    return this.toMember(saved, principal);
+  }
+
+  async removeMember(orgId: string, principalId: string): Promise<void> {
+    const assignments = await this.roleAssignmentRepo.find({ where: { orgId, principalId } });
+    if (assignments.length === 0) {
+      throw new NotFoundException(`Principal ${principalId} is not a member of organization ${orgId}`);
+    }
+    await this.roleAssignmentRepo.remove(assignments);
+  }
+
+  // ---------------------------------------------------------------------------
   // Mappers
   // ---------------------------------------------------------------------------
 
@@ -154,6 +221,17 @@ export class OrganizationsService {
       ownerPrincipalId: entity.ownerPrincipalId,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
+    };
+  }
+
+  private toMember(assignment: RoleAssignmentEntity, principal: PrincipalEntity | null): Member {
+    return {
+      principalId: assignment.principalId,
+      principalType: principal?.principalType ?? 'human_user',
+      role: assignment.role,
+      email: principal?.email ?? null,
+      displayName: principal?.displayName ?? null,
+      joinedAt: assignment.grantedAt.toISOString(),
     };
   }
 }

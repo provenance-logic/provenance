@@ -34,6 +34,14 @@
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.20",
     "uuid": "^9.0.0",
+    "@aws-sdk/client-s3": "^3.750.0",
+    "@aws-sdk/client-secrets-manager": "^3.750.0",
+    "@opensearch-project/opensearch": "^2.3.1",
+    "@temporalio/activity": "^1.10.0",
+    "@temporalio/client": "^1.10.0",
+    "@temporalio/worker": "^1.10.0",
+    "@temporalio/workflow": "^1.10.0",
+    "kafkajs": "^2.2.4",
     "zod": "^3.22.4"
   },
   "devDependencies": {
@@ -55,8 +63,12 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "<rootDir>/../tsconfig.spec.json" }]
     },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "setupFiles": ["<rootDir>/test.env.ts"],
     "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"

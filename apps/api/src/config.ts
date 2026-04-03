@@ -11,6 +11,21 @@ const envSchema = z.object({
   DATABASE_USER: z.string().min(1),
   DATABASE_PASSWORD: z.string().min(1),
 
+  // OPA sidecar
+  OPA_BASE_URL: z.string().url().default('http://localhost:8181'),
+
+  // Redpanda / Kafka
+  KAFKA_BROKERS: z.string().min(1).default('localhost:19092'),
+
+  // OpenSearch
+  OPENSEARCH_NODE: z.string().url().default('http://localhost:9200'),
+
+  // Temporal
+  TEMPORAL_ADDRESS: z.string().min(1).default('localhost:7233'),
+  TEMPORAL_NAMESPACE: z.string().min(1).default('default'),
+  APPROVAL_TIMEOUT_HOURS: z.coerce.number().int().positive().default(72),
+  APPROVAL_ESCALATION_TIMEOUT_HOURS: z.coerce.number().int().positive().default(24),
+
   // Keycloak
   KEYCLOAK_REALM: z.string().min(1),
   KEYCLOAK_AUTH_SERVER_URL: z.string().url(),

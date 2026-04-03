@@ -36,7 +36,7 @@ export function NewProductForm() {
       const product = await productsApi.create(orgId, domainId, {
         name,
         slug,
-        description: description || undefined,
+        ...(description !== '' ? { description } : {}),
         classification,
         ownerPrincipalId: principalId,
       });

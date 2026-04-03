@@ -2,12 +2,17 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { DataProductEntity } from './entities/data-product.entity.js';
 import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
+import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
+import { GovernanceService } from '../governance/governance.service.js';
+import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import type {
   DataProduct,
   DataProductList,
@@ -20,6 +25,8 @@ import type {
   UpdatePortRequest,
   ProductVersion,
   ProductVersionList,
+  PublishProductRequest,
+  ProductPublishedEvent,
 } from '@provenance/types';
 
 @Injectable()
@@ -31,6 +38,10 @@ export class ProductsService {
     private readonly portRepo: Repository<PortDeclarationEntity>,
     @InjectRepository(ProductVersionEntity)
     private readonly versionRepo: Repository<ProductVersionEntity>,
+    @InjectRepository(LifecycleEventEntity)
+    private readonly lifecycleEventRepo: Repository<LifecycleEventEntity>,
+    private readonly governanceService: GovernanceService,
+    private readonly kafkaProducerService: KafkaProducerService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -55,7 +66,7 @@ export class ProductsService {
       skip: offset,
     });
     return {
-      items: items.map(this.toDataProduct),
+      items: items.map((i) => this.toDataProduct(i)),
       meta: { total, limit, offset },
     };
   }
@@ -141,6 +152,120 @@ export class ProductsService {
   }
 
   // ---------------------------------------------------------------------------
+  // Publish
+  // ---------------------------------------------------------------------------
+
+  async publishProduct(
+    orgId: string,
+    domainId: string,
+    productId: string,
+    dto: PublishProductRequest,
+    triggeredBy: string,
+  ): Promise<DataProduct> {
+    // 1. Load product with ports
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId, domainId },
+      relations: ['ports'],
+    });
+    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+
+    // 2. Must be in draft status
+    if (product.status !== 'draft') {
+      throw new ConflictException(
+        `Product must be in draft status to publish; current status is '${product.status}'`,
+      );
+    }
+
+    // 3. Port presence validation
+    const ports = product.ports ?? [];
+    const outputPorts = ports.filter((p) => p.portType === 'output');
+    const discoveryPorts = ports.filter((p) => p.portType === 'discovery');
+
+    if (outputPorts.length === 0) {
+      throw new UnprocessableEntityException(
+        'Publication requires at least one output port',
+      );
+    }
+    if (discoveryPorts.length === 0) {
+      throw new UnprocessableEntityException(
+        'Publication requires at least one discovery port',
+      );
+    }
+
+    // 4. Port contract validation — every output port must have a contract schema
+    const missingContracts = outputPorts.filter((p) => !p.contractSchema);
+    if (missingContracts.length > 0) {
+      const names = missingContracts.map((p) => p.name).join(', ');
+      throw new UnprocessableEntityException(
+        `Output ports must have a contract schema: ${names}`,
+      );
+    }
+
+    // 5. Governance evaluation
+    const productDto = this.toDataProduct(product);
+    const evaluation = await this.governanceService.evaluate(orgId, productDto);
+    if (evaluation.violations.length > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Governance policy violations prevent publication',
+        violations: evaluation.violations,
+      });
+    }
+
+    // 6. Bump major version (0.1.0 → 1.0.0, 1.0.0 → 2.0.0, etc.)
+    const newVersion = this.bumpMajor(product.version);
+
+    // 7. Update product status and version
+    product.status = 'published';
+    product.version = newVersion;
+    const savedProduct = await this.productRepo.save(product);
+    savedProduct.ports = product.ports; // restore loaded relation
+
+    // 8. Write lifecycle event (append-only)
+    await this.lifecycleEventRepo.save(
+      this.lifecycleEventRepo.create({
+        orgId,
+        productId: product.id,
+        fromStatus: 'draft',
+        toStatus: 'published',
+        triggeredBy,
+        note: dto.changeDescription ?? null,
+      }),
+    );
+
+    // 9. Create immutable version snapshot
+    const snapshot = this.toDataProduct(savedProduct);
+    await this.versionRepo.save(
+      this.versionRepo.create({
+        orgId,
+        productId: product.id,
+        version: newVersion,
+        changeDescription: dto.changeDescription ?? null,
+        snapshot,
+        createdByPrincipalId: triggeredBy,
+      }),
+    );
+
+    // 10. Publish event to product.lifecycle Redpanda topic
+    const event: ProductPublishedEvent = {
+      eventId: randomUUID(),
+      schemaVersion: '1.0',
+      eventType: 'product.published',
+      orgId,
+      productId: product.id,
+      productSlug: product.slug,
+      domainId: product.domainId,
+      actorPrincipalId: triggeredBy,
+      occurredAt: new Date().toISOString(),
+      version: newVersion,
+      changeDescription: dto.changeDescription ?? null,
+      snapshot,
+    };
+    await this.kafkaProducerService.publish('product.lifecycle', product.id, event);
+
+    return snapshot;
+  }
+
+  // ---------------------------------------------------------------------------
   // Ports
   // ---------------------------------------------------------------------------
 
@@ -157,7 +282,7 @@ export class ProductsService {
       skip: offset,
     });
     return {
-      items: items.map(this.toPort),
+      items: items.map((i) => this.toPort(i)),
       meta: { total, limit, offset },
     };
   }
@@ -227,9 +352,18 @@ export class ProductsService {
       skip: offset,
     });
     return {
-      items: items.map(this.toProductVersion),
+      items: items.map((i) => this.toProductVersion(i)),
       meta: { total, limit, offset },
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private bumpMajor(version: string): string {
+    const [major] = version.split('.').map(Number);
+    return `${major + 1}.0.0`;
   }
 
   // ---------------------------------------------------------------------------
@@ -249,7 +383,7 @@ export class ProductsService {
       classification: entity.classification,
       ownerPrincipalId: entity.ownerPrincipalId,
       tags: entity.tags,
-      ports: (entity.ports ?? []).map(this.toPort),
+      ports: (entity.ports ?? []).map((p) => this.toPort(p)),
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };

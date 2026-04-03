@@ -1,4 +1,3 @@
-import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider.js';
 
@@ -47,7 +46,7 @@ export function NavShell() {
 
         <div className="px-4 py-4 border-t border-slate-700">
           <button
-            onClick={() => keycloak.logout()}
+            onClick={() => { void keycloak.logout(); }}
             className="w-full text-left text-sm text-slate-400 hover:text-white transition-colors"
           >
             Sign out

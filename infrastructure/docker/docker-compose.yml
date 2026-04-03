@@ -12,10 +12,10 @@
 #   temporal           → postgres (healthy), temporal-init (completed)
 #   temporal-ui        → temporal (healthy)
 #   api                → postgres, neo4j, redpanda, opensearch, keycloak, opa, temporal (all healthy)
-#   agent-query        → api (healthy), opa (healthy), neo4j (healthy), opensearch (healthy)
+#   agent-query        → api (healthy), opa (healthy), neo4j (healthy), opensearch (healthy)  [Phase 4 — disabled]
 #   kong-migrations    → postgres (healthy)
 #   kong               → postgres (healthy), kong-migrations (completed)
-#   embedding          → opensearch (healthy)
+#   embedding          → opensearch (healthy)  [Phase 4 — disabled]
 #   web                (no service deps — connects via Kong at runtime)
 #
 # All stateful services use named volumes.
@@ -434,8 +434,8 @@ services:
   # ---------------------------------------------------------------------------
   api:
     build:
-      context: ../../apps/api
-      dockerfile: Dockerfile
+      context: ../../
+      dockerfile: apps/api/Dockerfile
       target: development
     container_name: provenance-api
     restart: unless-stopped
@@ -472,8 +472,9 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
     volumes:
-      - ../../apps/api:/app:cached
-      - /app/node_modules
+      - ../../apps/api:/app/apps/api:cached
+      - ../../packages/types:/app/packages/types:cached
+      - /app/apps/api/node_modules
     ports:
       - "3001:3001"
     networks:
@@ -503,97 +504,99 @@ services:
   # ---------------------------------------------------------------------------
   # Agent Query Layer — separate NestJS process (non-negotiable constraint #4)
   # Built from apps/agent-query. Separate process from the control plane monolith.
+  # PHASE 4 — commented out until apps/agent-query exists. Restore to enable.
   # ---------------------------------------------------------------------------
-  agent-query:
-    build:
-      context: ../../apps/agent-query
-      dockerfile: Dockerfile
-      target: development
-    container_name: provenance-agent-query
-    restart: unless-stopped
-    environment:
-      NODE_ENV: development
-      PORT: 3002
-      # Control plane API (for authorization context)
-      API_BASE_URL: http://api:3001
-      # Neo4j (direct read for lineage traversal)
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-provenance_dev_password}
-      # OpenSearch (semantic search)
-      OPENSEARCH_NODE: http://opensearch:9200
-      # OPA (per-query policy evaluation)
-      OPA_BASE_URL: http://opa:8181
-      # Keycloak
-      KEYCLOAK_REALM: provenance
-      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_CLIENT_ID: provenance-agent-query
-      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_AGENT_CLIENT_SECRET:-}
-      # Redpanda (agent activity events)
-      KAFKA_BROKERS: redpanda:9092
-      # Claude API (NL query translation)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: claude-sonnet-4-20250514
-    volumes:
-      - ../../apps/agent-query:/app:cached
-      - /app/node_modules
-    ports:
-      - "3002:3002"   # REST / GraphQL
-      - "3003:3003"   # MCP WebSocket
-    networks:
-      - provenance
-    depends_on:
-      api:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      opensearch:
-        condition: service_healthy
-      opa:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
+  # agent-query:
+  #   build:
+  #     context: ../../apps/agent-query
+  #     dockerfile: Dockerfile
+  #     target: development
+  #   container_name: provenance-agent-query
+  #   restart: unless-stopped
+  #   environment:
+  #     NODE_ENV: development
+  #     PORT: 3002
+  #     # Control plane API (for authorization context)
+  #     API_BASE_URL: http://api:3001
+  #     # Neo4j (direct read for lineage traversal)
+  #     NEO4J_URI: bolt://neo4j:7687
+  #     NEO4J_USER: neo4j
+  #     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-provenance_dev_password}
+  #     # OpenSearch (semantic search)
+  #     OPENSEARCH_NODE: http://opensearch:9200
+  #     # OPA (per-query policy evaluation)
+  #     OPA_BASE_URL: http://opa:8181
+  #     # Keycloak
+  #     KEYCLOAK_REALM: provenance
+  #     KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+  #     KEYCLOAK_CLIENT_ID: provenance-agent-query
+  #     KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_AGENT_CLIENT_SECRET:-}
+  #     # Redpanda (agent activity events)
+  #     KAFKA_BROKERS: redpanda:9092
+  #     # Claude API (NL query translation)
+  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  #     ANTHROPIC_MODEL: claude-sonnet-4-20250514
+  #   volumes:
+  #     - ../../apps/agent-query:/app:cached
+  #     - /app/node_modules
+  #   ports:
+  #     - "3002:3002"   # REST / GraphQL
+  #     - "3003:3003"   # MCP WebSocket
+  #   networks:
+  #     - provenance
+  #   depends_on:
+  #     api:
+  #       condition: service_healthy
+  #     neo4j:
+  #       condition: service_healthy
+  #     opensearch:
+  #       condition: service_healthy
+  #     opa:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 60s
 
   # ---------------------------------------------------------------------------
   # Embedding Service — Python FastAPI (sentence-transformers)
+  # PHASE 4 — commented out until apps/embedding exists. Restore to enable.
   # ---------------------------------------------------------------------------
-  embedding:
-    build:
-      context: ../../apps/embedding
-      dockerfile: Dockerfile
-    container_name: provenance-embedding
-    restart: unless-stopped
-    environment:
-      PORT: 8000
-      OPENSEARCH_NODE: http://opensearch:9200
-      MODEL_NAME: all-MiniLM-L6-v2
-    volumes:
-      - ../../apps/embedding:/app:cached
-    ports:
-      - "8002:8000"
-    networks:
-      - provenance
-    depends_on:
-      opensearch:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 120s   # sentence-transformers model download on first start
+  # embedding:
+  #   build:
+  #     context: ../../apps/embedding
+  #     dockerfile: Dockerfile
+  #   container_name: provenance-embedding
+  #   restart: unless-stopped
+  #   environment:
+  #     PORT: 8000
+  #     OPENSEARCH_NODE: http://opensearch:9200
+  #     MODEL_NAME: all-MiniLM-L6-v2
+  #   volumes:
+  #     - ../../apps/embedding:/app:cached
+  #   ports:
+  #     - "8002:8000"
+  #   networks:
+  #     - provenance
+  #   depends_on:
+  #     opensearch:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 120s   # sentence-transformers model download on first start
 
   # ---------------------------------------------------------------------------
   # React Frontend (served via Vite dev server in development)
   # ---------------------------------------------------------------------------
   web:
     build:
-      context: ../../apps/web
-      dockerfile: Dockerfile
+      context: ../../
+      dockerfile: apps/web/Dockerfile
       target: development
     container_name: provenance-web
     restart: unless-stopped
@@ -604,8 +607,9 @@ services:
       VITE_KEYCLOAK_REALM: provenance
       VITE_KEYCLOAK_CLIENT_ID: provenance-web
     volumes:
-      - ../../apps/web:/app:cached
-      - /app/node_modules
+      - ../../apps/web:/app/apps/web:cached
+      - ../../packages/types:/app/packages/types:cached
+      - /app/apps/web/node_modules
     ports:
       - "3000:3000"
     networks:

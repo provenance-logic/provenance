@@ -1,0 +1,727 @@
+openapi: 3.1.0
+info:
+  title: Provenance Access API
+  version: 0.1.0
+  description: |
+    Consumer-product access grants, the access request workflow, and the approval audit trail.
+    Access grants are mutable — they can be revoked and may expire.
+    Access requests transition through a state machine managed by a Temporal approval workflow.
+    Approval events are append-only — every action is permanently recorded.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: AccessGrants
+    description: Active and revoked access grants
+  - name: AccessRequests
+    description: Consumer access requests and approval workflow
+  - name: ApprovalEvents
+    description: Append-only approval audit trail
+
+paths:
+  /organizations/{orgId}/access/grants:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+    get:
+      operationId: listAccessGrants
+      summary: List access grants
+      tags: [AccessGrants]
+      parameters:
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: granteePrincipalId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: activeOnly
+          in: query
+          description: When true, returns only grants that have not been revoked and have not expired.
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of access grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessGrantList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    post:
+      operationId: createAccessGrant
+      summary: Directly grant access to a data product
+      tags: [AccessGrants]
+      description: |
+        Creates an access grant without an access request. Used by domain owners to grant
+        access directly. For consumer-initiated access, use POST /access/requests instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectGrantRequest'
+      responses:
+        '201':
+          description: Access grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessGrant'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/access/grants/{grantId}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/grantId'
+    get:
+      operationId: getAccessGrant
+      summary: Get an access grant by ID
+      tags: [AccessGrants]
+      responses:
+        '200':
+          description: Access grant details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessGrant'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/access/grants/{grantId}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/grantId'
+    post:
+      operationId: revokeAccessGrant
+      summary: Revoke an access grant
+      tags: [AccessGrants]
+      description: |
+        Sets revokedAt to now and revokedBy to the calling principal.
+        Returns the updated grant. Idempotent — revoking an already-revoked grant returns 200.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeGrantRequest'
+      responses:
+        '200':
+          description: Revoked access grant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessGrant'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/access/requests:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+    get:
+      operationId: listAccessRequests
+      summary: List access requests
+      tags: [AccessRequests]
+      parameters:
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: requesterPrincipalId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccessRequestStatus'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of access requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    post:
+      operationId: submitAccessRequest
+      summary: Submit an access request for a data product
+      tags: [AccessRequests]
+      description: |
+        Creates an access request and starts a Temporal approval workflow. The domain owner
+        is notified and can approve or deny via the UI. Returns the new request in 'pending' status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAccessRequestRequest'
+      responses:
+        '201':
+          description: Access request submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /organizations/{orgId}/access/requests/{requestId}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/requestId'
+    get:
+      operationId: getAccessRequest
+      summary: Get an access request by ID
+      tags: [AccessRequests]
+      responses:
+        '200':
+          description: Access request details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/access/requests/{requestId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/requestId'
+    post:
+      operationId: approveAccessRequest
+      summary: Approve a pending access request
+      tags: [AccessRequests]
+      description: |
+        Transitions the request to 'approved', creates an access grant, and appends an
+        'approved' approval event. Only domain owners and org_admins may approve.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveAccessRequestRequest'
+      responses:
+        '200':
+          description: Approved request and the resulting access grant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestApprovalResult'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /organizations/{orgId}/access/requests/{requestId}/deny:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/requestId'
+    post:
+      operationId: denyAccessRequest
+      summary: Deny a pending access request
+      tags: [AccessRequests]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DenyAccessRequestRequest'
+      responses:
+        '200':
+          description: Denied access request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /organizations/{orgId}/access/requests/{requestId}/withdraw:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/requestId'
+    post:
+      operationId: withdrawAccessRequest
+      summary: Withdraw a pending access request
+      tags: [AccessRequests]
+      description: Only the original requester may withdraw their own request.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawAccessRequestRequest'
+      responses:
+        '200':
+          description: Withdrawn access request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /organizations/{orgId}/access/requests/{requestId}/events:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/requestId'
+    get:
+      operationId: listApprovalEvents
+      summary: List approval events for an access request (newest first)
+      tags: [ApprovalEvents]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of approval events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalEventList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    grantId:
+      name: grantId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    requestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Bad request — validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict — duplicate or constraint violation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ---------------------------------------------------------------------------
+    # Enumerations
+    # ---------------------------------------------------------------------------
+
+    AccessRequestStatus:
+      type: string
+      enum:
+        - pending
+        - approved
+        - denied
+        - withdrawn
+
+    ApprovalEventAction:
+      type: string
+      enum:
+        - submitted
+        - approved
+        - denied
+        - withdrawn
+        - escalated
+        - expired
+
+    # ---------------------------------------------------------------------------
+    # Access Scope
+    # ---------------------------------------------------------------------------
+
+    AccessScope:
+      type: object
+      description: |
+        Optional restriction of access to specific ports or fields.
+        Absent or null means full product access. Structure is product-defined.
+      additionalProperties: true
+
+    # ---------------------------------------------------------------------------
+    # Access Grants
+    # ---------------------------------------------------------------------------
+
+    AccessGrant:
+      type: object
+      required:
+        - id
+        - orgId
+        - productId
+        - granteePrincipalId
+        - grantedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        granteePrincipalId:
+          type: string
+          format: uuid
+        grantedBy:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for system-auto-approved grants.
+        grantedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL means indefinite access.
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedBy:
+          type: string
+          format: uuid
+          nullable: true
+        accessScope:
+          allOf:
+            - $ref: '#/components/schemas/AccessScope'
+          nullable: true
+        approvalRequestId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set when this grant was created via an approved access request.
+
+    DirectGrantRequest:
+      type: object
+      required:
+        - productId
+        - granteePrincipalId
+      properties:
+        productId:
+          type: string
+          format: uuid
+        granteePrincipalId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+          description: Optional expiration. Omit for indefinite access.
+        accessScope:
+          $ref: '#/components/schemas/AccessScope'
+          description: Optional restriction to specific ports/fields. Omit for full access.
+
+    RevokeGrantRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Optional reason for revocation.
+
+    AccessGrantList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessGrant'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ---------------------------------------------------------------------------
+    # Access Requests
+    # ---------------------------------------------------------------------------
+
+    AccessRequest:
+      type: object
+      required:
+        - id
+        - orgId
+        - productId
+        - requesterPrincipalId
+        - status
+        - requestedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        requesterPrincipalId:
+          type: string
+          format: uuid
+        justification:
+          type: string
+          nullable: true
+          description: Why access is needed.
+        accessScope:
+          allOf:
+            - $ref: '#/components/schemas/AccessScope'
+          nullable: true
+          description: Requested scope restriction. NULL means full access was requested.
+        status:
+          $ref: '#/components/schemas/AccessRequestStatus'
+        temporalWorkflowId:
+          type: string
+          nullable: true
+          description: Temporal workflow ID tracking the approval.
+        requestedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedBy:
+          type: string
+          format: uuid
+          nullable: true
+        resolutionNote:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+
+    SubmitAccessRequestRequest:
+      type: object
+      required:
+        - productId
+      properties:
+        productId:
+          type: string
+          format: uuid
+        justification:
+          type: string
+          description: Why access is needed.
+        accessScope:
+          $ref: '#/components/schemas/AccessScope'
+          description: Requested scope restriction. Omit for full access.
+
+    ApproveAccessRequestRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          description: Optional approval note recorded in the audit trail.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Optional expiration for the resulting grant. Omit for indefinite access.
+
+    DenyAccessRequestRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          description: Reason for denial, recorded in the audit trail.
+
+    WithdrawAccessRequestRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          description: Optional withdrawal note.
+
+    AccessRequestApprovalResult:
+      type: object
+      required: [request, grant]
+      description: Returned by the approve action — includes both the updated request and the new grant.
+      properties:
+        request:
+          $ref: '#/components/schemas/AccessRequest'
+        grant:
+          $ref: '#/components/schemas/AccessGrant'
+
+    AccessRequestList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessRequest'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ---------------------------------------------------------------------------
+    # Approval Events (append-only)
+    # ---------------------------------------------------------------------------
+
+    ApprovalEvent:
+      type: object
+      required:
+        - id
+        - orgId
+        - requestId
+        - action
+        - occurredAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        requestId:
+          type: string
+          format: uuid
+        action:
+          $ref: '#/components/schemas/ApprovalEventAction'
+        performedBy:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for system-generated events (e.g. workflow timeout or expiry).
+        note:
+          type: string
+          nullable: true
+        occurredAt:
+          type: string
+          format: date-time
+
+    ApprovalEventList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalEvent'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'

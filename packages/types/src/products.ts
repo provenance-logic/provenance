@@ -95,6 +95,10 @@ export interface UpdateDataProductRequest {
 
 export type DataProductList = PaginatedList<DataProduct>;
 
+export interface PublishProductRequest {
+  changeDescription?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Product Version (immutable snapshot)
 // ---------------------------------------------------------------------------
