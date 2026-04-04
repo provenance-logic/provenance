@@ -48,3 +48,6 @@ infrastructure/terraform/.terraform/
 infrastructure/terraform/*.tfstate
 infrastructure/terraform/*.tfstate.backup
 infrastructure/terraform/.terraform.lock.hcl
+infrastructure/terraform/dev/.terraform/
+infrastructure/terraform/dev/*.tfstate
+infrastructure/terraform/dev/*.tfstate.backup
