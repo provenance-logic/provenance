@@ -11,6 +11,7 @@ import type {
   DeclarePortRequest,
   UpdatePortRequest,
   ProductVersionList,
+  ComplianceState,
 } from '@provenance/types';
 
 const base = (orgId: string, domainId: string) =>
@@ -37,6 +38,12 @@ export const productsApi = {
 
   publish: (orgId: string, domainId: string, productId: string, dto: PublishProductRequest) =>
     api.post<DataProduct>(`${base(orgId, domainId)}/${productId}/publish`, dto),
+
+  compliance: (orgId: string, domainId: string, productId: string) =>
+    api.get<ComplianceState>(`${base(orgId, domainId)}/${productId}/compliance`),
+
+  trustScore: (orgId: string, domainId: string, productId: string) =>
+    api.get<{ score: number }>(`${base(orgId, domainId)}/${productId}/trust-score`),
 
   ports: {
     list: (orgId: string, domainId: string, productId: string) =>

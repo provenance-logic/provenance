@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { productsApi } from '../../shared/api/products.js';
 import { organizationsApi } from '../../shared/api/organizations.js';
-import { useAuth } from '../../auth/AuthProvider.js';
+import { accessApi } from '../../shared/api/access.js';
 import { ApiError } from '../../shared/api/client.js';
 import type {
   DataProduct,
@@ -12,7 +12,10 @@ import type {
   OutputPortInterfaceType,
   ProductVersion,
   ComplianceViolation,
+  ComplianceState,
+  ComplianceStateValue,
   DeclarePortRequest,
+  SubmitAccessRequestRequest,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +34,20 @@ const CLASSIFICATION_STYLES: Record<string, string> = {
   internal: 'bg-slate-100 text-slate-700',
   confidential: 'bg-amber-100 text-amber-800',
   restricted: 'bg-red-100 text-red-800',
+};
+
+const COMPLIANCE_STYLES: Record<ComplianceStateValue, string> = {
+  compliant:      'bg-green-100 text-green-800 border-green-200',
+  drift_detected: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+  grace_period:   'bg-orange-100 text-orange-800 border-orange-200',
+  non_compliant:  'bg-red-100 text-red-800 border-red-200',
+};
+
+const COMPLIANCE_LABELS: Record<ComplianceStateValue, string> = {
+  compliant:      'Compliant',
+  drift_detected: 'Drift Detected',
+  grace_period:   'Grace Period',
+  non_compliant:  'Non-Compliant',
 };
 
 const PORT_TYPE_LABELS: Record<PortType, string> = {
@@ -83,20 +100,14 @@ interface ChecklistItem {
 export function ProductDetail() {
   const { orgId, domainId, productId } =
     useParams<{ orgId: string; domainId: string; productId: string }>();
-  const { keycloak } = useAuth();
-
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [product, setProduct] = useState<DataProduct | null>(null);
   const [domain, setDomain] = useState<Domain | null>(null);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [complianceState, setComplianceState] = useState<ComplianceState | null>(null);
+  const [trustScore, setTrustScore] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  const principalId: string =
-    (keycloak.tokenParsed as { provenance_principal_id?: string } | undefined)
-      ?.provenance_principal_id ??
-    keycloak.subject ??
-    '';
 
   const load = useCallback(async () => {
     if (!orgId || !domainId || !productId) return;
@@ -111,6 +122,14 @@ export function ProductDetail() {
       setProduct(p);
       setDomain(d);
       setVersions(v.items);
+
+      // Supplementary data — silently ignore 404s (expected for draft products)
+      const [complianceResult, trustResult] = await Promise.allSettled([
+        productsApi.compliance(orgId, domainId, productId),
+        productsApi.trustScore(orgId, domainId, productId),
+      ]);
+      if (complianceResult.status === 'fulfilled') setComplianceState(complianceResult.value);
+      if (trustResult.status === 'fulfilled') setTrustScore(trustResult.value.score);
     } catch (err) {
       setLoadError((err as Error).message);
     } finally {
@@ -127,10 +146,6 @@ export function ProductDetail() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const isOwner =
-    !!product &&
-    (product.ownerPrincipalId === principalId ||
-      (!!domain && domain.ownerPrincipalId === principalId));
 
   const checklist: ChecklistItem[] = product
     ? [
@@ -168,8 +183,14 @@ export function ProductDetail() {
 
   const handlePublished = async (updated: DataProduct) => {
     setProduct(updated);
-    const versionList = await productsApi.versions.list(orgId!, domainId!, productId!);
-    setVersions(versionList.items);
+    const [versionsResult, complianceResult, trustResult] = await Promise.allSettled([
+      productsApi.versions.list(orgId!, domainId!, productId!),
+      productsApi.compliance(orgId!, domainId!, productId!),
+      productsApi.trustScore(orgId!, domainId!, productId!),
+    ]);
+    if (versionsResult.status === 'fulfilled') setVersions(versionsResult.value.items);
+    if (complianceResult.status === 'fulfilled') setComplianceState(complianceResult.value);
+    if (trustResult.status === 'fulfilled') setTrustScore(trustResult.value.score);
     setToast({ type: 'success', message: 'Product published successfully' });
   };
 
@@ -202,6 +223,8 @@ export function ProductDetail() {
           <h1 className="text-2xl font-semibold text-slate-900">{product.name}</h1>
           <StatusBadge status={product.status} />
           <ClassificationBadge classification={product.classification} />
+          {complianceState && <ComplianceBadge state={complianceState.state} />}
+          {trustScore !== null && <TrustScoreBadge score={trustScore} />}
         </div>
         <p className="mt-1 text-sm text-slate-400 font-mono">
           {product.slug} · v{product.version}
@@ -223,7 +246,7 @@ export function ProductDetail() {
         )}
       </div>
 
-      {/* Publish panel — only when draft and caller is owner */}
+      {/* Publish panel — only when draft */}
       {product.status === 'draft' && (
         <PublishPanel
           product={product}
@@ -236,6 +259,11 @@ export function ProductDetail() {
             setToast({ type: 'error', message: 'Network error — could not reach the server' })
           }
         />
+      )}
+
+      {/* Request access — only for published products */}
+      {product.status === 'published' && (
+        <RequestAccessPanel product={product} orgId={orgId!} />
       )}
 
       {/* Ports */}
@@ -294,6 +322,132 @@ function ClassificationBadge({ classification }: { classification: string }) {
     >
       {classification}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ComplianceBadge
+// ---------------------------------------------------------------------------
+
+function ComplianceBadge({ state }: { state: ComplianceStateValue }) {
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+        COMPLIANCE_STYLES[state] ?? 'bg-slate-100 text-slate-700 border-slate-200'
+      }`}
+    >
+      {COMPLIANCE_LABELS[state] ?? state}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TrustScoreBadge
+// ---------------------------------------------------------------------------
+
+function TrustScoreBadge({ score }: { score: number }) {
+  const color =
+    score >= 80 ? 'bg-green-100 text-green-800' :
+    score >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800';
+  return (
+    <span className={`inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${color}`}>
+      <span className="font-mono">{score}</span>
+      <span className="opacity-60">/100</span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RequestAccessPanel
+// ---------------------------------------------------------------------------
+
+interface RequestAccessPanelProps {
+  product: DataProduct;
+  orgId: string;
+}
+
+function RequestAccessPanel({ product, orgId }: RequestAccessPanelProps) {
+  const [showForm, setShowForm] = useState(false);
+  const [justification, setJustification] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    const dto: SubmitAccessRequestRequest = { productId: product.id };
+    if (justification.trim()) dto.justification = justification.trim();
+    try {
+      await accessApi.requests.submit(orgId, dto);
+      setSuccess(true);
+      setShowForm(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (success) {
+    return (
+      <div className="mb-8 rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+        Access request submitted. The data product owner will review your request.
+      </div>
+    );
+  }
+
+  if (!showForm) {
+    return (
+      <div className="mb-8">
+        <button
+          onClick={() => setShowForm(true)}
+          className="px-4 py-2 rounded-md border border-brand-300 text-brand-700 text-sm font-medium hover:bg-brand-50 transition-colors"
+        >
+          Request Access
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-8 rounded-lg border border-slate-200 bg-slate-50 p-5">
+      <h2 className="text-base font-semibold text-slate-900 mb-3">Request access</h2>
+      <div className="mb-3">
+        <label className="block text-sm font-medium text-slate-700 mb-1">
+          Justification <span className="font-normal text-slate-400">(optional)</span>
+        </label>
+        <textarea
+          value={justification}
+          onChange={(e) => setJustification(e.target.value)}
+          className="input min-h-[80px] resize-y"
+          placeholder="Describe how you intend to use this data product…"
+          disabled={submitting}
+        />
+      </div>
+      {error && (
+        <div className="mb-3 rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700">
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => void handleSubmit()}
+          disabled={submitting}
+          className="px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition-colors"
+        >
+          {submitting ? 'Submitting…' : 'Submit request'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setShowForm(false); setError(null); }}
+          className="px-4 py-2 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 

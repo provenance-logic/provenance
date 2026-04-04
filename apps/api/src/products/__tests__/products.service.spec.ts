@@ -416,6 +416,7 @@ describe('ProductsService', () => {
     const setupValidPublish = () => {
       const entity = makeProductEntity({ ports: validPorts() });
       productRepo.findOne.mockResolvedValue(entity);
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.save.mockImplementation((e: any) => Promise.resolve(e));
       lifecycleEventRepo.create.mockImplementation((d: any) => d);
       lifecycleEventRepo.save.mockResolvedValue({});
@@ -425,44 +426,49 @@ describe('ProductsService', () => {
     };
 
     it('throws NotFoundException when product does not exist', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'missing', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'missing', {}, mockCtx),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('throws ConflictException when product is not in draft status', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.findOne.mockResolvedValue(
         makeProductEntity({ status: 'published', ports: validPorts() }),
       );
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
       ).rejects.toThrow(ConflictException);
     });
 
     it('throws UnprocessableEntityException when there are no output ports', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.findOne.mockResolvedValue(
         makeProductEntity({ ports: [makeDiscoveryPortEntity()] }),
       );
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
     it('throws UnprocessableEntityException when there are no discovery ports', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.findOne.mockResolvedValue(
         makeProductEntity({ ports: [makeOutputPortEntity()] }),
       );
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
     it('throws UnprocessableEntityException when an output port is missing a contract schema', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       productRepo.findOne.mockResolvedValue(
         makeProductEntity({
           ports: [
@@ -473,7 +479,7 @@ describe('ProductsService', () => {
       );
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
@@ -491,7 +497,7 @@ describe('ProductsService', () => {
       });
 
       await expect(
-        service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1'),
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
@@ -499,7 +505,7 @@ describe('ProductsService', () => {
       setupValidPublish();
 
       const result = await service.publishProduct(
-        'org-1', 'domain-1', 'product-1', {}, 'principal-1',
+        'org-1', 'domain-1', 'product-1', {}, mockCtx,
       );
 
       expect(productRepo.save).toHaveBeenCalledWith(
@@ -512,7 +518,7 @@ describe('ProductsService', () => {
       setupValidPublish();
 
       const result = await service.publishProduct(
-        'org-1', 'domain-1', 'product-1', {}, 'principal-1',
+        'org-1', 'domain-1', 'product-1', {}, mockCtx,
       );
 
       expect(result.status).toBe('published');
@@ -521,7 +527,7 @@ describe('ProductsService', () => {
     it('writes an append-only lifecycle event from draft to published', async () => {
       setupValidPublish();
 
-      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1');
+      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx);
 
       expect(lifecycleEventRepo.save).toHaveBeenCalled();
       expect(lifecycleEventRepo.create).toHaveBeenCalledWith(
@@ -539,7 +545,7 @@ describe('ProductsService', () => {
       await service.publishProduct(
         'org-1', 'domain-1', 'product-1',
         { changeDescription: 'First release' },
-        'principal-1',
+        mockCtx,
       );
 
       expect(versionRepo.save).toHaveBeenCalled();
@@ -555,7 +561,7 @@ describe('ProductsService', () => {
     it('publishes a ProductPublishedEvent to the product.lifecycle Kafka topic', async () => {
       setupValidPublish();
 
-      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1');
+      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx);
 
       expect(kafkaProducerService.publish).toHaveBeenCalledWith(
         'product.lifecycle',
@@ -573,7 +579,7 @@ describe('ProductsService', () => {
     it('calls governance.evaluate with the product before publishing', async () => {
       setupValidPublish();
 
-      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, 'principal-1');
+      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx);
 
       expect(governanceService.evaluate).toHaveBeenCalledWith(
         'org-1',
@@ -587,7 +593,7 @@ describe('ProductsService', () => {
       await service.publishProduct(
         'org-1', 'domain-1', 'product-1',
         { changeDescription: 'Production ready' },
-        'principal-1',
+        mockCtx,
       );
 
       expect(lifecycleEventRepo.create).toHaveBeenCalledWith(

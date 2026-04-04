@@ -7,8 +7,10 @@ import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
 import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { ComplianceStateEntity } from '../governance/entities/compliance-state.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
+import { TrustScoreService } from '../search/trust-score.service.js';
 
 export { ProductsService };
 
@@ -20,12 +22,13 @@ export { ProductsService };
       ProductVersionEntity,
       LifecycleEventEntity,
       PrincipalEntity,
+      ComplianceStateEntity,
     ]),
     GovernanceModule,
     KafkaModule,
   ],
   controllers: [ProductsController],
-  providers: [ProductsService],
+  providers: [ProductsService, TrustScoreService],
   exports: [ProductsService],
 })
 export class ProductsModule {}

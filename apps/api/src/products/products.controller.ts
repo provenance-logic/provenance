@@ -14,6 +14,8 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { ReqContext } from '../auth/request-context.decorator.js';
 import { ProductsService } from './products.service.js';
+import { GovernanceService } from '../governance/governance.service.js';
+import { TrustScoreService } from '../search/trust-score.service.js';
 import type {
   RequestContext,
   CreateDataProductRequest,
@@ -27,7 +29,11 @@ import type {
 @UseGuards(JwtAuthGuard)
 @Controller('organizations/:orgId/domains/:domainId/products')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly governanceService: GovernanceService,
+    private readonly trustScoreService: TrustScoreService,
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Data Products
@@ -93,6 +99,23 @@ export class ProductsController {
     @ReqContext() ctx: RequestContext,
   ) {
     return this.productsService.publishProduct(orgId, domainId, productId, dto, ctx);
+  }
+
+  @Get(':productId/compliance')
+  getComplianceState(
+    @Param('orgId') orgId: string,
+    @Param('productId') productId: string,
+  ) {
+    return this.governanceService.getComplianceStateByProduct(orgId, productId);
+  }
+
+  @Get(':productId/trust-score')
+  async getTrustScore(
+    @Param('orgId') orgId: string,
+    @Param('productId') productId: string,
+  ) {
+    const raw = await this.trustScoreService.computeTrustScore(orgId, productId);
+    return { score: Math.round(raw * 100) };
   }
 
   // ---------------------------------------------------------------------------

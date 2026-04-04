@@ -33,14 +33,14 @@ export function NewProductForm() {
     try {
       const principalId = (keycloak.tokenParsed as { provenance_principal_id?: string } | undefined)
         ?.provenance_principal_id ?? keycloak.subject ?? '';
-      const product = await productsApi.create(orgId, domainId, {
+      await productsApi.create(orgId, domainId, {
         name,
         slug,
         ...(description !== '' ? { description } : {}),
         classification,
         ownerPrincipalId: principalId,
       });
-      navigate(`/dashboard/${orgId}/domains/${domainId}/products/${product.id}`);
+      navigate(`/dashboard/${orgId}/domains/${domainId}`);
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
