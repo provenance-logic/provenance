@@ -25,6 +25,14 @@ const mockDomainRepo = () => ({
 const mockPrincipalRepo = () => ({
   find: jest.fn(),
   findOne: jest.fn(),
+  findOneOrFail: jest.fn(),
+  createQueryBuilder: jest.fn().mockReturnValue({
+    insert: jest.fn().mockReturnThis(),
+    into: jest.fn().mockReturnThis(),
+    values: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({}),
+  }),
 });
 
 const mockRoleAssignmentRepo = () => ({
@@ -127,6 +135,12 @@ describe('OrganizationsService', () => {
       });
       // slug uniqueness check
       domainRepo.findOne.mockResolvedValue(null);
+      // ensurePrincipal — return existing so no insert path is hit
+      principalRepo.findOne.mockResolvedValue({
+        id: 'principal-1', orgId: 'org-1', principalType: 'human_user',
+        keycloakSubject: 'keycloak-sub-1', email: null, displayName: null,
+        createdAt: now, updatedAt: now,
+      });
       const saved = {
         id: 'dom-1', orgId: 'org-1', name: 'Analytics', slug: 'analytics',
         description: null, ownerPrincipalId: 'principal-1', createdAt: now, updatedAt: now,
@@ -134,11 +148,18 @@ describe('OrganizationsService', () => {
       domainRepo.create.mockReturnValue(saved);
       domainRepo.save.mockResolvedValue(saved);
 
+      const ctx = {
+        principalId: 'principal-1',
+        orgId: 'org-1',
+        principalType: 'human_user' as const,
+        roles: [],
+        keycloakSubject: 'keycloak-sub-1',
+      };
       const result = await service.createDomain('org-1', {
         name: 'Analytics',
         slug: 'analytics',
         ownerPrincipalId: 'principal-1',
-      });
+      }, ctx);
 
       expect(result.orgId).toBe('org-1');
       expect(result.slug).toBe('analytics');

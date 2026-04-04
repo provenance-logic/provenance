@@ -10,6 +10,7 @@ import { DataProductEntity } from '../entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../entities/product-version.entity.js';
 import { LifecycleEventEntity } from '../entities/lifecycle-event.entity.js';
+import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import type { DataClassification } from '@provenance/types';
@@ -47,6 +48,14 @@ const mockKafkaProducerService = () => ({
 // ---------------------------------------------------------------------------
 
 const now = new Date('2024-01-01T00:00:00Z');
+
+const mockCtx = {
+  principalId: 'principal-1',
+  orgId: 'org-1',
+  principalType: 'human_user' as const,
+  roles: [],
+  keycloakSubject: 'keycloak-sub-1',
+};
 
 const makeProductEntity = (
   overrides: Partial<DataProductEntity> = {},
@@ -105,12 +114,25 @@ const makeDiscoveryPortEntity = (): PortDeclarationEntity => ({
 // Test suite
 // ---------------------------------------------------------------------------
 
+const mockPrincipalRepo = () => ({
+  findOne: jest.fn(),
+  findOneOrFail: jest.fn(),
+  createQueryBuilder: jest.fn().mockReturnValue({
+    insert: jest.fn().mockReturnThis(),
+    into: jest.fn().mockReturnThis(),
+    values: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({}),
+  }),
+});
+
 describe('ProductsService', () => {
   let service: ProductsService;
   let productRepo: ReturnType<typeof mockRepo>;
   let portRepo: ReturnType<typeof mockRepo>;
   let versionRepo: ReturnType<typeof mockRepo>;
   let lifecycleEventRepo: ReturnType<typeof mockRepo>;
+  let principalRepo: ReturnType<typeof mockPrincipalRepo>;
   let governanceService: ReturnType<typeof mockGovernanceService>;
   let kafkaProducerService: ReturnType<typeof mockKafkaProducerService>;
 
@@ -122,6 +144,7 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(ProductVersionEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(LifecycleEventEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
       ],
@@ -132,6 +155,7 @@ describe('ProductsService', () => {
     portRepo = module.get(getRepositoryToken(PortDeclarationEntity));
     versionRepo = module.get(getRepositoryToken(ProductVersionEntity));
     lifecycleEventRepo = module.get(getRepositoryToken(LifecycleEventEntity));
+    principalRepo = module.get(getRepositoryToken(PrincipalEntity));
     governanceService = module.get(GovernanceService);
     kafkaProducerService = module.get(KafkaProducerService);
   });
@@ -143,6 +167,7 @@ describe('ProductsService', () => {
   describe('createProduct()', () => {
     it('creates a product in draft status at version 0.1.0', async () => {
       productRepo.findOne.mockResolvedValue(null);
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       const entity = makeProductEntity();
       productRepo.create.mockReturnValue(entity);
       productRepo.save.mockResolvedValue(entity);
@@ -158,7 +183,7 @@ describe('ProductsService', () => {
           classification: 'internal',
           ownerPrincipalId: 'principal-1',
         },
-        'principal-1',
+        mockCtx,
       );
 
       expect(result.status).toBe('draft');
@@ -168,6 +193,7 @@ describe('ProductsService', () => {
 
     it('records an initial version snapshot on creation', async () => {
       productRepo.findOne.mockResolvedValue(null);
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
       const entity = makeProductEntity();
       productRepo.create.mockReturnValue(entity);
       productRepo.save.mockResolvedValue(entity);
@@ -176,7 +202,7 @@ describe('ProductsService', () => {
 
       await service.createProduct('org-1', 'domain-1', {
         name: 'Orders', slug: 'orders', classification: 'internal', ownerPrincipalId: 'p-1',
-      }, 'p-1');
+      }, mockCtx);
 
       expect(versionRepo.save).toHaveBeenCalled();
       expect(versionRepo.create).toHaveBeenCalledWith(
@@ -190,7 +216,7 @@ describe('ProductsService', () => {
       await expect(
         service.createProduct('org-1', 'domain-1', {
           name: 'Orders', slug: 'orders', classification: 'internal', ownerPrincipalId: 'p-1',
-        }, 'p-1'),
+        }, mockCtx),
       ).rejects.toThrow(ConflictException);
     });
   });

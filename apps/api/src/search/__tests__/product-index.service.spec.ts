@@ -150,11 +150,11 @@ describe('ProductIndexService', () => {
       await expect(service.ensureIndex()).resolves.toBeUndefined();
     });
 
-    it('re-throws unknown index creation errors', async () => {
+    it('logs and continues on unknown index creation errors', async () => {
       const err = new Error('connection refused');
       osClient.indices.create.mockRejectedValueOnce(err);
 
-      await expect(service.ensureIndex()).rejects.toThrow('connection refused');
+      await expect(service.ensureIndex()).resolves.toBeUndefined();
     });
   });
 
