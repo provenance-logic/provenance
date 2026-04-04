@@ -79,8 +79,9 @@ export class OrganizationsController {
   createDomain(
     @Param('orgId') orgId: string,
     @Body() dto: CreateDomainRequest,
+    @ReqContext() ctx: RequestContext,
   ) {
-    return this.orgsService.createDomain(orgId, dto);
+    return this.orgsService.createDomain(orgId, dto, ctx);
   }
 
   @Get(':orgId/domains/:domainId')

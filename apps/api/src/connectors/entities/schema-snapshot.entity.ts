@@ -28,7 +28,7 @@ export class SchemaSnapshotEntity {
   @Column({ name: 'row_estimate', type: 'bigint', nullable: true })
   rowEstimate!: number | null;
 
-  @Column({ name: 'captured_by', nullable: true })
+  @Column({ type: 'uuid', name: 'captured_by', nullable: true })
   capturedBy!: string | null;
 
   @CreateDateColumn({ name: 'captured_at', type: 'timestamptz' })

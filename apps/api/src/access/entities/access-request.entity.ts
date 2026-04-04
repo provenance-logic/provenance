@@ -30,7 +30,7 @@ export class AccessRequestEntity {
   @Column({ length: 32, default: 'pending' })
   status!: AccessRequestStatus;
 
-  @Column({ name: 'temporal_workflow_id', length: 255, nullable: true })
+  @Column({ type: 'varchar', name: 'temporal_workflow_id', length: 255, nullable: true })
   temporalWorkflowId!: string | null;
 
   @CreateDateColumn({ name: 'requested_at', type: 'timestamptz' })
@@ -39,7 +39,7 @@ export class AccessRequestEntity {
   @Column({ name: 'resolved_at', type: 'timestamptz', nullable: true })
   resolvedAt!: Date | null;
 
-  @Column({ name: 'resolved_by', nullable: true })
+  @Column({ type: 'uuid', name: 'resolved_by', nullable: true })
   resolvedBy!: string | null;
 
   @Column({ name: 'resolution_note', type: 'text', nullable: true })

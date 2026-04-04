@@ -21,7 +21,7 @@ export class ExceptionEntity {
   @Column({ name: 'policy_domain', length: 64 })
   policyDomain!: PolicyDomain;
 
-  @Column({ name: 'policy_version_id', nullable: true })
+  @Column({ type: 'uuid', name: 'policy_version_id', nullable: true })
   policyVersionId!: string | null;
 
   @Column({ name: 'exception_reason', type: 'text' })
@@ -39,7 +39,7 @@ export class ExceptionEntity {
   @Column({ name: 'revoked_at', type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 
-  @Column({ name: 'revoked_by', nullable: true })
+  @Column({ type: 'uuid', name: 'revoked_by', nullable: true })
   revokedBy!: string | null;
 
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })

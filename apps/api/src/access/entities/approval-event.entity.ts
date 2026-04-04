@@ -22,7 +22,7 @@ export class ApprovalEventEntity {
   action!: ApprovalEventAction;
 
   /** NULL for system-generated events (e.g. workflow timeout or expiry). */
-  @Column({ name: 'performed_by', nullable: true })
+  @Column({ type: 'uuid', name: 'performed_by', nullable: true })
   performedBy!: string | null;
 
   @Column({ type: 'text', nullable: true })

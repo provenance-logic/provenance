@@ -19,11 +19,15 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
-    await this.consumer.connect();
-    await this.consumer.subscribe({ topic: 'product.lifecycle', fromBeginning: false });
-    await this.consumer.run({
-      eachMessage: (payload: EachMessagePayload) => this.handleMessage(payload),
-    });
+    try {
+      await this.consumer.connect();
+      await this.consumer.subscribe({ topic: 'product.lifecycle', fromBeginning: false });
+      await this.consumer.run({
+        eachMessage: (payload: EachMessagePayload) => this.handleMessage(payload),
+      });
+    } catch (err: unknown) {
+      this.logger.warn('Kafka broker unreachable — search indexing disabled', (err as Error).message);
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

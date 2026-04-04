@@ -52,7 +52,7 @@ export class ProductsController {
     @Body() dto: CreateDataProductRequest,
     @ReqContext() ctx: RequestContext,
   ) {
-    return this.productsService.createProduct(orgId, domainId, dto, ctx.principalId);
+    return this.productsService.createProduct(orgId, domainId, dto, ctx);
   }
 
   @Get(':productId')

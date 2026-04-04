@@ -30,7 +30,7 @@ export class PortDeclarationEntity {
   @Column({ type: 'text', nullable: true })
   description!: string | null;
 
-  @Column({ name: 'interface_type', length: 64, nullable: true })
+  @Column({ type: 'varchar', name: 'interface_type', length: 64, nullable: true })
   interfaceType!: OutputPortInterfaceType | null;
 
   @Column({ name: 'contract_schema', type: 'jsonb', nullable: true })

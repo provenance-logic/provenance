@@ -52,4 +52,4 @@ COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./
 EXPOSE 3001
 USER node
-CMD ["node", "dist/main"]
+CMD ["node", "dist/apps/api/src/main"]

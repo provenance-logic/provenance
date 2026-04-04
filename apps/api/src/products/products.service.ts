@@ -11,6 +11,7 @@ import { DataProductEntity } from './entities/data-product.entity.js';
 import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
 import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import type {
@@ -27,6 +28,7 @@ import type {
   ProductVersionList,
   PublishProductRequest,
   ProductPublishedEvent,
+  RequestContext,
 } from '@provenance/types';
 
 @Injectable()
@@ -40,6 +42,8 @@ export class ProductsService {
     private readonly versionRepo: Repository<ProductVersionEntity>,
     @InjectRepository(LifecycleEventEntity)
     private readonly lifecycleEventRepo: Repository<LifecycleEventEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
     private readonly governanceService: GovernanceService,
     private readonly kafkaProducerService: KafkaProducerService,
   ) {}
@@ -75,12 +79,13 @@ export class ProductsService {
     orgId: string,
     domainId: string,
     dto: CreateDataProductRequest,
-    createdByPrincipalId: string,
+    ctx: RequestContext,
   ): Promise<DataProduct> {
     const existing = await this.productRepo.findOne({ where: { orgId, domainId, slug: dto.slug } });
     if (existing) {
       throw new ConflictException(`Data product with slug '${dto.slug}' already exists in this domain`);
     }
+    const principal = await this.ensurePrincipal(orgId, ctx);
     const product = this.productRepo.create({
       orgId,
       domainId,
@@ -88,7 +93,7 @@ export class ProductsService {
       slug: dto.slug,
       description: dto.description ?? null,
       classification: dto.classification,
-      ownerPrincipalId: dto.ownerPrincipalId,
+      ownerPrincipalId: principal.id,
       tags: dto.tags ?? [],
       status: 'draft',
       version: '0.1.0',
@@ -103,7 +108,7 @@ export class ProductsService {
         version: saved.version,
         changeDescription: 'Initial draft',
         snapshot: this.toDataProduct({ ...saved, ports: [] }),
-        createdByPrincipalId,
+        createdByPrincipalId: principal.id,
       }),
     );
 
@@ -360,6 +365,29 @@ export class ProductsService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    const existing = await this.principalRepo.findOne({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
+    if (existing) return existing;
+    await this.principalRepo
+      .createQueryBuilder()
+      .insert()
+      .into(PrincipalEntity)
+      .values({
+        orgId,
+        principalType: ctx.principalType,
+        keycloakSubject: ctx.keycloakSubject,
+        email: ctx.email ?? null,
+        displayName: ctx.displayName ?? null,
+      })
+      .orIgnore()
+      .execute();
+    return this.principalRepo.findOneOrFail({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
+  }
 
   private bumpMajor(version: string): string {
     const [major] = version.split('.').map(Number);

@@ -17,6 +17,7 @@ import type {
   Member,
   AddMemberRequest,
   MemberList,
+  RequestContext,
 } from '@provenance/types';
 
 @Injectable()
@@ -97,21 +98,45 @@ export class OrganizationsService {
     };
   }
 
-  async createDomain(orgId: string, dto: CreateDomainRequest): Promise<Domain> {
+  async createDomain(orgId: string, dto: CreateDomainRequest, ctx: RequestContext): Promise<Domain> {
     await this.getOrganization(orgId);
     const existing = await this.domainRepo.findOne({ where: { orgId, slug: dto.slug } });
     if (existing) {
       throw new ConflictException(`Domain with slug '${dto.slug}' already exists in this organization`);
     }
+    const principal = await this.ensurePrincipal(orgId, ctx);
     const domain = this.domainRepo.create({
       orgId,
       name: dto.name,
       slug: dto.slug,
       description: dto.description ?? null,
-      ownerPrincipalId: dto.ownerPrincipalId,
+      ownerPrincipalId: principal.id,
     });
     const saved = await this.domainRepo.save(domain);
     return this.toDomain(saved);
+  }
+
+  private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    const existing = await this.principalRepo.findOne({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
+    if (existing) return existing;
+    await this.principalRepo
+      .createQueryBuilder()
+      .insert()
+      .into(PrincipalEntity)
+      .values({
+        orgId,
+        principalType: ctx.principalType,
+        keycloakSubject: ctx.keycloakSubject,
+        email: ctx.email ?? null,
+        displayName: ctx.displayName ?? null,
+      })
+      .orIgnore()
+      .execute();
+    return this.principalRepo.findOneOrFail({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
   }
 
   async getDomain(orgId: string, domainId: string): Promise<Domain> {

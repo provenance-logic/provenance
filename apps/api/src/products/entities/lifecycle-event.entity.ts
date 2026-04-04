@@ -17,13 +17,13 @@ export class LifecycleEventEntity {
   @Column({ name: 'product_id' })
   productId!: string;
 
-  @Column({ name: 'from_status', length: 32, nullable: true })
+  @Column({ type: 'varchar', name: 'from_status', length: 32, nullable: true })
   fromStatus!: DataProductStatus | null;
 
   @Column({ name: 'to_status', length: 32 })
   toStatus!: DataProductStatus;
 
-  @Column({ name: 'triggered_by', nullable: true })
+  @Column({ type: 'uuid', name: 'triggered_by', nullable: true })
   triggeredBy!: string | null;
 
   @Column({ type: 'text', nullable: true })

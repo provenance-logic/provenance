@@ -37,6 +37,6 @@ export class PolicyVersionEntity {
   publishedAt!: Date;
 
   // Set after async OPA bundle compilation; NULL until compilation completes.
-  @Column({ name: 'rego_bundle_ref', length: 2048, nullable: true })
+  @Column({ type: 'varchar', name: 'rego_bundle_ref', length: 2048, nullable: true })
   regoBundleRef!: string | null;
 }

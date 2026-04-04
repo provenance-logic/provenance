@@ -30,7 +30,7 @@ export class ConnectorEntity {
   @Column({ name: 'connection_config', type: 'jsonb', default: '{}' })
   connectionConfig!: Record<string, unknown>;
 
-  @Column({ name: 'credential_arn', length: 2048, nullable: true })
+  @Column({ type: 'varchar', name: 'credential_arn', length: 2048, nullable: true })
   credentialArn!: string | null;
 
   @Column({ name: 'validation_status', length: 32, default: 'pending' })

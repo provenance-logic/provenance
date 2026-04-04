@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { NativeConnection, Worker } from '@temporalio/worker';
+import type { NativeConnection, Worker } from '@temporalio/worker';
 import { join } from 'path';
 import { getConfig } from '../../config.js';
 import { AccessRequestEntity } from '../entities/access-request.entity.js';
@@ -26,6 +26,11 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     const config = getConfig();
     try {
+      // Dynamic import defers loading the native Rust addon until runtime so that
+      // a missing or incompatible binary (e.g. glibc vs musl on Alpine) does not
+      // crash the process at module-load time.
+      const { NativeConnection, Worker } = await import('@temporalio/worker');
+
       this.connection = await NativeConnection.connect({
         address: config.TEMPORAL_ADDRESS,
       });
@@ -50,7 +55,7 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('Temporal approval worker started');
     } catch (err) {
       // Log and continue — the app can serve read-only traffic even if Temporal is down.
-      this.logger.error('Failed to start Temporal approval worker', err);
+      this.logger.warn('Temporal approval worker disabled', (err as Error).message);
     }
   }
 

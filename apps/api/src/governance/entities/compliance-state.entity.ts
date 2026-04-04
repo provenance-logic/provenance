@@ -24,7 +24,7 @@ export class ComplianceStateEntity {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   violations!: ComplianceViolation[];
 
-  @Column({ name: 'policy_version_id', nullable: true })
+  @Column({ type: 'uuid', name: 'policy_version_id', nullable: true })
   policyVersionId!: string | null;
 
   // Explicitly set each time the evaluation runs.

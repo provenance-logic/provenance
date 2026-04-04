@@ -20,10 +20,10 @@ export class RoleAssignmentEntity {
   @Column({ length: 64 })
   role!: RoleType;
 
-  @Column({ name: 'domain_id', nullable: true })
+  @Column({ type: 'uuid', name: 'domain_id', nullable: true })
   domainId!: string | null;
 
-  @Column({ name: 'granted_by', nullable: true })
+  @Column({ type: 'uuid', name: 'granted_by', nullable: true })
   grantedBy!: string | null;
 
   @CreateDateColumn({ name: 'granted_at', type: 'timestamptz' })

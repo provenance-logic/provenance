@@ -19,7 +19,7 @@ export class AccessGrantEntity {
   @Column({ name: 'grantee_principal_id' })
   granteePrincipalId!: string;
 
-  @Column({ name: 'granted_by', nullable: true })
+  @Column({ type: 'uuid', name: 'granted_by', nullable: true })
   grantedBy!: string | null;
 
   @CreateDateColumn({ name: 'granted_at', type: 'timestamptz' })
@@ -31,13 +31,13 @@ export class AccessGrantEntity {
   @Column({ name: 'revoked_at', type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 
-  @Column({ name: 'revoked_by', nullable: true })
+  @Column({ type: 'uuid', name: 'revoked_by', nullable: true })
   revokedBy!: string | null;
 
   @Column({ name: 'access_scope', type: 'jsonb', nullable: true })
   accessScope!: Record<string, unknown> | null;
 
   /** Set when this grant was created via an approved access request. */
-  @Column({ name: 'approval_request_id', nullable: true })
+  @Column({ type: 'uuid', name: 'approval_request_id', nullable: true })
   approvalRequestId!: string | null;
 }

@@ -49,6 +49,12 @@ export interface RequestContext {
   roles: RoleType[];
   /** Present only when principalType is ai_agent */
   agentId?: Uuid;
+  /** Raw Keycloak subject (sub claim). Always the original Keycloak UUID. */
+  keycloakSubject: string;
+  /** From JWT email claim — used for first-login principal creation. */
+  email?: string;
+  /** From JWT name claims — used for first-login principal creation. */
+  displayName?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,6 @@ import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
 import { ProductDetail } from '../features/publishing/ProductDetail.js';
 
-// Placeholder pages for Phase 1 shell — content filled in subsequent phases.
 function ComingSoon({ title }: { title: string }) {
   return (
     <div className="p-8">
@@ -20,7 +19,7 @@ export function AppRouter() {
       <Routes>
         <Route path="/" element={<NavShell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<ComingSoon title="Dashboard" />} />
+          <Route path="dashboard" element={<DomainDashboard />} />
           <Route
             path="dashboard/:orgId/domains/:domainId"
             element={<DomainDashboard />}
@@ -33,7 +32,7 @@ export function AppRouter() {
             path="dashboard/:orgId/domains/:domainId/products/:productId"
             element={<ProductDetail />}
           />
-          <Route path="products" element={<ComingSoon title="Data Products" />} />
+          <Route path="products" element={<Navigate to="/dashboard" replace />} />
           <Route path="marketplace" element={<ComingSoon title="Marketplace" />} />
           <Route path="governance" element={<ComingSoon title="Governance" />} />
           <Route path="agents" element={<ComingSoon title="Agents" />} />

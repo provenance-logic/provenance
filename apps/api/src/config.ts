@@ -29,6 +29,9 @@ const envSchema = z.object({
   // Keycloak
   KEYCLOAK_REALM: z.string().min(1),
   KEYCLOAK_AUTH_SERVER_URL: z.string().url(),
+  // Public-facing issuer URL embedded in JWTs (matches KC_HOSTNAME / browser-visible URL).
+  // Defaults to KEYCLOAK_AUTH_SERVER_URL when running outside Docker.
+  KEYCLOAK_ISSUER_URL: z.string().url().optional(),
   KEYCLOAK_CLIENT_ID: z.string().min(1),
 });
 

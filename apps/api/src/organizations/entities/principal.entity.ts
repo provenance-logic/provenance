@@ -21,10 +21,10 @@ export class PrincipalEntity {
   @Column({ name: 'keycloak_subject', length: 255, unique: true })
   keycloakSubject!: string;
 
-  @Column({ length: 254, nullable: true })
+  @Column({ type: 'varchar', length: 254, nullable: true })
   email!: string | null;
 
-  @Column({ name: 'display_name', length: 255, nullable: true })
+  @Column({ type: 'varchar', name: 'display_name', length: 255, nullable: true })
   displayName!: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })

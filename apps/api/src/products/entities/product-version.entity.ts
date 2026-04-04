@@ -29,6 +29,6 @@ export class ProductVersionEntity {
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 
-  @Column({ name: 'created_by_principal_id', nullable: true })
+  @Column({ type: 'uuid', name: 'created_by_principal_id', nullable: true })
   createdByPrincipalId!: string | null;
 }

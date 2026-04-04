@@ -47,8 +47,7 @@ export class ProductIndexService implements OnModuleInit {
       // resource_already_exists_exception is expected when the service restarts
       const errType = (err as { meta?: { body?: { error?: { type?: string } } } }).meta?.body?.error?.type;
       if (errType !== 'resource_already_exists_exception') {
-        this.logger.error('Failed to ensure OpenSearch index', err);
-        throw err;
+        this.logger.warn('OpenSearch unreachable or index creation failed — search disabled', (err as Error).message);
       }
     }
   }

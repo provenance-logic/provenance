@@ -1,10 +1,11 @@
-import { Injectable, Inject, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { Kafka, Producer } from 'kafkajs';
 
 export const KAFKA_BROKERS = 'KAFKA_BROKERS';
 
 @Injectable()
 export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(KafkaProducerService.name);
   private readonly producer: Producer;
 
   constructor(@Inject(KAFKA_BROKERS) brokers: string[]) {
@@ -13,7 +14,11 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
-    await this.producer.connect();
+    try {
+      await this.producer.connect();
+    } catch (err: unknown) {
+      this.logger.warn('Kafka broker unreachable — event publishing disabled', (err as Error).message);
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

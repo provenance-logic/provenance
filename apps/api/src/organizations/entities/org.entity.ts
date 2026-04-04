@@ -30,7 +30,7 @@ export class OrgEntity {
   })
   status!: OrganizationStatus;
 
-  @Column({ name: 'contact_email', length: 254, nullable: true })
+  @Column({ type: 'varchar', name: 'contact_email', length: 254, nullable: true })
   contactEmail!: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })

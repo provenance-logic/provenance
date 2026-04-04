@@ -10,6 +10,6 @@ import { getConfig } from '../config.js';
     },
     KafkaProducerService,
   ],
-  exports: [KafkaProducerService],
+  exports: [KafkaProducerService, KAFKA_BROKERS],
 })
 export class KafkaModule {}

@@ -22,7 +22,7 @@ export class EffectivePolicyEntity {
   @Column({ name: 'scope_type', length: 32 })
   scopeType!: PolicyScopeType;
 
-  @Column({ name: 'scope_id', nullable: true })
+  @Column({ type: 'uuid', name: 'scope_id', nullable: true })
   scopeId!: string | null;
 
   @Column({ name: 'policy_version_id' })

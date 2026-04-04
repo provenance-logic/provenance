@@ -28,7 +28,7 @@ export class GracePeriodEntity {
   endsAt!: Date;
 
   // Temporal workflow ID tracking this timer. NULL until workflow is started.
-  @Column({ name: 'temporal_workflow_id', length: 255, nullable: true })
+  @Column({ type: 'varchar', name: 'temporal_workflow_id', length: 255, nullable: true })
   temporalWorkflowId!: string | null;
 
   @CreateDateColumn({ name: 'started_at', type: 'timestamptz' })

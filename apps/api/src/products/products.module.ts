@@ -6,6 +6,7 @@ import { DataProductEntity } from './entities/data-product.entity.js';
 import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
 import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 
@@ -18,6 +19,7 @@ export { ProductsService };
       PortDeclarationEntity,
       ProductVersionEntity,
       LifecycleEventEntity,
+      PrincipalEntity,
     ]),
     GovernanceModule,
     KafkaModule,
