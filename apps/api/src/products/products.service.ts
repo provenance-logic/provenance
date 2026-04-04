@@ -165,16 +165,20 @@ export class ProductsService {
     domainId: string,
     productId: string,
     dto: PublishProductRequest,
-    triggeredBy: string,
+    ctx: RequestContext,
   ): Promise<DataProduct> {
-    // 1. Load product with ports
+    // 1. Ensure principal record exists and resolve Provenance principal ID
+    const principal = await this.ensurePrincipal(orgId, ctx);
+    const triggeredBy = principal.id;
+
+    // 2. Load product with ports
     const product = await this.productRepo.findOne({
       where: { id: productId, orgId, domainId },
       relations: ['ports'],
     });
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
 
-    // 2. Must be in draft status
+    // 3. Must be in draft status
     if (product.status !== 'draft') {
       throw new ConflictException(
         `Product must be in draft status to publish; current status is '${product.status}'`,

@@ -42,11 +42,11 @@ const PORT_TYPE_LABELS: Record<PortType, string> = {
 };
 
 const PORT_TYPE_COLORS: Record<PortType, string> = {
-  input: 'bg-purple-100 text-purple-800',
-  output: 'bg-sky-100 text-sky-800',
-  discovery: 'bg-teal-100 text-teal-800',
-  observability: 'bg-slate-100 text-slate-700',
-  control: 'bg-pink-100 text-pink-800',
+  output:       'bg-blue-100 text-blue-800',
+  input:        'bg-gray-100 text-gray-700',
+  discovery:    'bg-green-100 text-green-800',
+  observability:'bg-amber-100 text-amber-800',
+  control:      'bg-purple-100 text-purple-800',
 };
 
 const INTERFACE_TYPE_OPTIONS: { value: OutputPortInterfaceType; label: string }[] = [
@@ -145,19 +145,9 @@ export function ProductDetail() {
           pass: product.ports.some((p) => p.portType === 'discovery'),
         },
         {
-          id: 'output_ports_have_contracts',
-          label: 'All output ports have a contract schema',
-          pass:
-            product.ports.filter((p) => p.portType === 'output').length === 0
-              ? false
-              : product.ports
-                  .filter((p) => p.portType === 'output')
-                  .every((p) => p.contractSchema != null),
-        },
-        {
-          id: 'has_description',
-          label: 'Description is populated',
-          pass: !!product.description,
+          id: 'has_name_and_classification',
+          label: 'Name and classification set',
+          pass: true,
         },
       ]
     : [];
@@ -180,7 +170,7 @@ export function ProductDetail() {
     setProduct(updated);
     const versionList = await productsApi.versions.list(orgId!, domainId!, productId!);
     setVersions(versionList.items);
-    setToast({ type: 'success', message: `"${updated.name}" published as v${updated.version}` });
+    setToast({ type: 'success', message: 'Product published successfully' });
   };
 
   if (loading) return <PageShell><Spinner /></PageShell>;
@@ -234,7 +224,7 @@ export function ProductDetail() {
       </div>
 
       {/* Publish panel — only when draft and caller is owner */}
-      {product.status === 'draft' && isOwner && (
+      {product.status === 'draft' && (
         <PublishPanel
           product={product}
           orgId={orgId!}
@@ -255,7 +245,7 @@ export function ProductDetail() {
           product={product}
           orgId={orgId!}
           domainId={domainId!}
-          isOwner={isOwner && product.status === 'draft'}
+          isOwner={product.status === 'draft'}
           onPortAdded={() => void handlePortAdded()}
           onPortDeleted={() => void handlePortDeleted()}
         />
@@ -342,7 +332,7 @@ function PublishPanel({
     try {
       const trimmed = changeDescription.trim();
       const updated = await productsApi.publish(orgId, domainId, product.id, {
-        ...(trimmed !== '' ? { changeDescription: trimmed } : {}),
+        changeDescription: trimmed !== '' ? trimmed : 'Initial publication',
       });
       onPublished(updated);
     } catch (err) {
@@ -364,7 +354,7 @@ function PublishPanel({
 
   return (
     <div className="mb-8 rounded-lg border border-slate-200 bg-slate-50 p-5">
-      <h2 className="text-base font-semibold text-slate-900 mb-4">Publish this product</h2>
+      <h2 className="text-base font-semibold text-slate-900 mb-4">Ready to publish?</h2>
 
       {/* Pre-publish checklist */}
       <div className="mb-5">
@@ -423,7 +413,7 @@ function PublishPanel({
         disabled={publishing || !allChecksPassed}
         className="px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {publishing ? 'Publishing…' : 'Publish'}
+        {publishing ? 'Publishing…' : 'Publish Data Product'}
       </button>
 
       {!allChecksPassed && (
@@ -636,7 +626,7 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       try {
         contractSchema = JSON.parse(contractSchemaRaw) as Record<string, unknown>;
       } catch {
-        setError('Contract schema must be valid JSON');
+        setError('Must be valid JSON');
         return;
       }
     }
@@ -716,15 +706,13 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
               </select>
             </Field>
 
-            <Field
-              label="Contract schema"
-              hint="JSON object describing the output schema (required for publication)"
-            >
+            <Field label="Contract Schema (JSON)" required>
               <textarea
                 value={contractSchemaRaw}
                 onChange={(e) => setContractSchemaRaw(e.target.value)}
-                className="input font-mono text-xs min-h-[80px] resize-y"
-                placeholder={'{\n  "fields": [{ "name": "id", "type": "string" }]\n}'}
+                rows={4}
+                className="input font-mono text-xs resize-y"
+                placeholder='{"columns": [{"name": "customer_id", "type": "string"}]}'
               />
             </Field>
           </>

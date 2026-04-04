@@ -92,7 +92,7 @@ export class ProductsController {
     @Body() dto: PublishProductRequest,
     @ReqContext() ctx: RequestContext,
   ) {
-    return this.productsService.publishProduct(orgId, domainId, productId, dto, ctx.principalId);
+    return this.productsService.publishProduct(orgId, domainId, productId, dto, ctx);
   }
 
   // ---------------------------------------------------------------------------
