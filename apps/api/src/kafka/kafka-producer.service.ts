@@ -1,5 +1,5 @@
 import { Injectable, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import { Kafka, Producer } from 'kafkajs';
+import { Kafka, Producer, KafkaJSError } from 'kafkajs';
 
 export const KAFKA_BROKERS = 'KAFKA_BROKERS';
 
@@ -26,9 +26,17 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async publish(topic: string, key: string, value: unknown): Promise<void> {
-    await this.producer.send({
-      topic,
-      messages: [{ key, value: JSON.stringify(value) }],
-    });
+    try {
+      await this.producer.send({
+        topic,
+        messages: [{ key, value: JSON.stringify(value) }],
+      });
+    } catch (err: unknown) {
+      if (err instanceof KafkaJSError) {
+        this.logger.warn(`Kafka publish skipped — broker unavailable (topic: ${topic})`, err.message);
+        return;
+      }
+      throw err;
+    }
   }
 }
