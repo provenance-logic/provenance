@@ -63,7 +63,7 @@ services:
     image: quay.io/keycloak/keycloak:24.0.3
     container_name: provenance-dev-keycloak
     restart: unless-stopped
-    command: start-dev --import-realm
+    command: start-dev --import-realm --http-enabled=true --hostname-strict=false --hostname-strict-https=false
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
