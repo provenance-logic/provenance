@@ -150,7 +150,7 @@ services:
       # Keycloak
       KEYCLOAK_REALM: provenance
       KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_ISSUER_URL: http://localhost:8080
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       # Disabled services — connections fail gracefully (see comments above)
