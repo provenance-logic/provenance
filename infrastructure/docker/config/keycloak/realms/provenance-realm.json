@@ -1,0 +1,113 @@
+{
+  "id": "provenance",
+  "realm": "provenance",
+  "displayName": "Provenance",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "org_admin",
+        "description": "Organization administrator — full control over org settings, domains, and members",
+        "composite": false
+      },
+      {
+        "name": "domain_owner",
+        "description": "Domain owner — manages a domain and its data products",
+        "composite": false
+      },
+      {
+        "name": "data_product_owner",
+        "description": "Data product owner — authors and publishes data products within a domain",
+        "composite": false
+      },
+      {
+        "name": "consumer",
+        "description": "Data consumer — discovers and requests access to data products",
+        "composite": false
+      },
+      {
+        "name": "governance_member",
+        "description": "Governance team member — authors policies and reviews compliance",
+        "composite": false
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "provenance-web",
+      "name": "Provenance Web",
+      "description": "React frontend — public PKCE client",
+      "enabled": true,
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://100.26.196.109:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://100.26.196.109:3000"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    },
+    {
+      "clientId": "provenance-api",
+      "name": "Provenance API",
+      "description": "NestJS control plane — bearer-only resource server",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "email": "test@provenance.dev",
+      "firstName": "Test",
+      "lastName": "User",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "provenance_dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "org_admin"
+      ]
+    }
+  ]
+}
