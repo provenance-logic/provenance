@@ -87,6 +87,21 @@ export class AccessController {
   // Access Requests
   // ---------------------------------------------------------------------------
 
+  @Get('requests/mine')
+  listMyRequests(
+    @ReqContext() ctx: RequestContext,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<AccessRequestList> {
+    return this.accessService.listRequests(ctx.orgId, {
+      requesterPrincipalId: ctx.principalId,
+      ...(status !== undefined && { status }),
+      limit:  limit  ? parseInt(limit,  10) : 20,
+      offset: offset ? parseInt(offset, 10) : 0,
+    });
+  }
+
   @Get('requests')
   listRequests(
     @ReqContext() ctx: RequestContext,

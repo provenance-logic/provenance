@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { ComplianceStateEntity } from '../governance/entities/compliance-state.entity.js';
+import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
+import { ProductVersionEntity } from '../products/entities/product-version.entity.js';
+import { DomainEntity } from '../organizations/entities/domain.entity.js';
+import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { opensearchClientProvider } from './opensearch.client.js';
 import { TrustScoreService } from './trust-score.service.js';
 import { ProductIndexService } from './product-index.service.js';
@@ -11,7 +16,14 @@ import { MarketplaceController } from './marketplace.controller.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ComplianceStateEntity]),
+    TypeOrmModule.forFeature([
+      ComplianceStateEntity,
+      DataProductEntity,
+      PortDeclarationEntity,
+      ProductVersionEntity,
+      DomainEntity,
+      AccessGrantEntity,
+    ]),
     KafkaModule,
   ],
   providers: [

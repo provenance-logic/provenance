@@ -9,3 +9,4 @@ export * from './governance.js';
 export * from './connectors.js';
 export * from './access.js';
 export * from './events.js';
+export * from './marketplace.js';

@@ -1,0 +1,688 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance Marketplace API
+  version: 1.0.0
+  description: |
+    Consumer-facing discovery surface for the Provenance data mesh platform.
+    Provides paginated marketplace listings with rich filtering, full product
+    detail views, schema inspection, lineage graphs, SLO summaries, and the
+    access request workflow.
+
+    All endpoints require a valid Keycloak-issued JWT in the Authorization header.
+    All resources are scoped to an organisation (orgId).
+
+    Phase 3 note: lineage graph data and SLO evaluation history are scaffolded
+    here but return placeholder responses until the lineage graph (Neo4j) and
+    observability pipeline are built in Phase 3.
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Marketplace
+    description: Consumer discovery surface — published data products
+  - name: Access Requests (Consumer)
+    description: Consumer-scoped access request management
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    SemanticVersion:
+      type: string
+      pattern: "^\\d+\\.\\d+\\.\\d+$"
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+
+    # ------------------------------------------------------------------
+    # Enumerations
+    # ------------------------------------------------------------------
+
+    DataProductStatus:
+      type: string
+      enum: [draft, published, deprecated, decommissioned]
+
+    DataClassification:
+      type: string
+      enum: [public, internal, confidential, restricted]
+
+    OutputPortInterfaceType:
+      type: string
+      enum:
+        - sql_jdbc
+        - rest_api
+        - graphql
+        - streaming_topic
+        - file_object_export
+        - semantic_query_endpoint
+
+    ComplianceStateValue:
+      type: string
+      enum: [compliant, drift_detected, grace_period, non_compliant]
+
+    SloHealthIndicator:
+      type: string
+      enum: [healthy, degraded, unknown]
+
+    MarketplaceSortOption:
+      type: string
+      enum: [trust_score_desc, name_asc, recently_published, recently_updated]
+
+    # ------------------------------------------------------------------
+    # Trust Score
+    # ------------------------------------------------------------------
+
+    TrustScoreDimension:
+      type: object
+      required: [score, weight, available]
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Normalised score 0.0–1.0 for this dimension.
+        weight:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Weight of this dimension in the composite score.
+        available:
+          type: boolean
+          description: False when the dimension is a Phase 3 placeholder.
+        phaseNote:
+          type: string
+          description: Human-readable note when available is false.
+
+    TrustScoreBreakdown:
+      type: object
+      required: [composite, dimensions]
+      properties:
+        composite:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Weighted composite score 0.0–1.0.
+        dimensions:
+          type: object
+          required:
+            - governanceCompliance
+            - lineageCompleteness
+            - sloCompliance
+            - schemaConformance
+            - freshness
+          properties:
+            governanceCompliance:
+              $ref: '#/components/schemas/TrustScoreDimension'
+            lineageCompleteness:
+              $ref: '#/components/schemas/TrustScoreDimension'
+            sloCompliance:
+              $ref: '#/components/schemas/TrustScoreDimension'
+            schemaConformance:
+              $ref: '#/components/schemas/TrustScoreDimension'
+            freshness:
+              $ref: '#/components/schemas/TrustScoreDimension'
+
+    # ------------------------------------------------------------------
+    # Marketplace product (listing card)
+    # ------------------------------------------------------------------
+
+    MarketplaceProduct:
+      type: object
+      required:
+        - id
+        - orgId
+        - domainId
+        - domainName
+        - name
+        - slug
+        - status
+        - version
+        - classification
+        - tags
+        - trustScore
+        - outputPortTypes
+        - sloHealthIndicator
+        - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        orgId:
+          $ref: '#/components/schemas/Uuid'
+        domainId:
+          $ref: '#/components/schemas/Uuid'
+        domainName:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/DataProductStatus'
+        version:
+          $ref: '#/components/schemas/SemanticVersion'
+        classification:
+          $ref: '#/components/schemas/DataClassification'
+        tags:
+          type: array
+          items:
+            type: string
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        complianceState:
+          $ref: '#/components/schemas/ComplianceStateValue'
+          nullable: true
+        outputPortTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutputPortInterfaceType'
+        sloHealthIndicator:
+          $ref: '#/components/schemas/SloHealthIndicator'
+        publishedAt:
+          $ref: '#/components/schemas/Timestamp'
+          nullable: true
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+
+    MarketplaceProductList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketplaceProduct'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # ------------------------------------------------------------------
+    # Product detail (consumer view)
+    # ------------------------------------------------------------------
+
+    Port:
+      type: object
+      required: [id, productId, orgId, portType, name, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        productId:
+          $ref: '#/components/schemas/Uuid'
+        orgId:
+          $ref: '#/components/schemas/Uuid'
+        portType:
+          type: string
+          enum: [input, output, discovery, observability, control]
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        interfaceType:
+          $ref: '#/components/schemas/OutputPortInterfaceType'
+          nullable: true
+        contractSchema:
+          type: object
+          nullable: true
+          additionalProperties: true
+        slaDescription:
+          type: string
+          nullable: true
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+
+    MarketplaceProductDetail:
+      allOf:
+        - $ref: '#/components/schemas/MarketplaceProduct'
+        - type: object
+          required:
+            - trustScoreBreakdown
+            - ports
+            - activeConsumerCount
+            - ownerPrincipalId
+            - createdAt
+          properties:
+            trustScoreBreakdown:
+              $ref: '#/components/schemas/TrustScoreBreakdown'
+            ports:
+              type: array
+              items:
+                $ref: '#/components/schemas/Port'
+            activeConsumerCount:
+              type: integer
+              minimum: 0
+            ownerPrincipalId:
+              $ref: '#/components/schemas/Uuid'
+            createdAt:
+              $ref: '#/components/schemas/Timestamp'
+
+    # ------------------------------------------------------------------
+    # Schema endpoint
+    # ------------------------------------------------------------------
+
+    SchemaField:
+      type: object
+      required: [name, type, nullable]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        nullable:
+          type: boolean
+        semanticAnnotation:
+          type: string
+          nullable: true
+
+    SchemaVersionSummary:
+      type: object
+      required: [version, createdAt]
+      properties:
+        version:
+          $ref: '#/components/schemas/SemanticVersion'
+        changeDescription:
+          type: string
+          nullable: true
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+
+    ProductSchema:
+      type: object
+      required: [productId, version, fields, versionHistory]
+      properties:
+        productId:
+          $ref: '#/components/schemas/Uuid'
+        version:
+          $ref: '#/components/schemas/SemanticVersion'
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/SchemaField'
+        rawSchema:
+          type: object
+          nullable: true
+          additionalProperties: true
+        versionHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/SchemaVersionSummary'
+
+    # ------------------------------------------------------------------
+    # Lineage endpoint (Phase 3 placeholder)
+    # ------------------------------------------------------------------
+
+    LineageNode:
+      type: object
+      required: [id, type, label]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [source, data_product, transformation, agent]
+        label:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    LineageEdge:
+      type: object
+      required: [id, source, target, label]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        label:
+          type: string
+
+    LineageGraph:
+      type: object
+      required: [productId, depth, nodes, edges, isPlaceholder]
+      properties:
+        productId:
+          $ref: '#/components/schemas/Uuid'
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 5
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineageNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineageEdge'
+        isPlaceholder:
+          type: boolean
+          description: True until Phase 3 (Neo4j lineage graph) is built.
+
+    # ------------------------------------------------------------------
+    # SLOs endpoint (Phase 3 placeholder)
+    # ------------------------------------------------------------------
+
+    SloDeclaration:
+      type: object
+      required: [portId, portName]
+      properties:
+        portId:
+          $ref: '#/components/schemas/Uuid'
+        portName:
+          type: string
+        description:
+          type: string
+          nullable: true
+
+    SloSummary:
+      type: object
+      required: [productId, declarations, overallHealth, isPlaceholder]
+      properties:
+        productId:
+          $ref: '#/components/schemas/Uuid'
+        declarations:
+          type: array
+          items:
+            $ref: '#/components/schemas/SloDeclaration'
+        overallHealth:
+          $ref: '#/components/schemas/SloHealthIndicator'
+        isPlaceholder:
+          type: boolean
+          description: True until Phase 3 (SLO evaluation pipeline) is built.
+
+# ------------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------------
+
+paths:
+
+  /organizations/{orgId}/marketplace/products:
+    get:
+      tags: [Marketplace]
+      summary: List published data products in the marketplace
+      description: |
+        Returns a paginated list of published (and optionally deprecated) data
+        products enriched with trust score, compliance state, and output port
+        type summary. Supports rich filtering and four sort options.
+        Filter state is designed to be serialised into URL query parameters.
+      operationId: listMarketplaceProducts
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: domain
+          in: query
+          description: Filter by one or more domain IDs (comma-separated).
+          schema:
+            type: string
+        - name: outputPortType
+          in: query
+          description: Filter by one or more output port interface types (comma-separated).
+          schema:
+            type: string
+        - name: compliance
+          in: query
+          description: Filter by one or more compliance states (comma-separated).
+          schema:
+            type: string
+        - name: trustScoreMin
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+        - name: trustScoreMax
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+        - name: tags
+          in: query
+          description: Filter by one or more tags (comma-separated; any-match).
+          schema:
+            type: string
+        - name: includeDeprecated
+          in: query
+          description: Include deprecated products (default false).
+          schema:
+            type: boolean
+            default: false
+        - name: sort
+          in: query
+          schema:
+            $ref: '#/components/schemas/MarketplaceSortOption'
+            default: trust_score_desc
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Marketplace product listing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceProductList'
+        '401':
+          description: Unauthorised
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /organizations/{orgId}/marketplace/products/{productId}:
+    get:
+      tags: [Marketplace]
+      summary: Get full consumer-view detail for a published product
+      operationId: getMarketplaceProduct
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceProductDetail'
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /organizations/{orgId}/marketplace/products/{productId}/schema:
+    get:
+      tags: [Marketplace]
+      summary: Get schema and version history for a product
+      description: |
+        Derives schema fields from the output port contract schemas declared
+        on the product. Returns a merged view of all output port fields plus
+        the product's version history for the schema version selector.
+      operationId: getMarketplaceProductSchema
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Product schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSchema'
+        '404':
+          description: Product not found
+
+  /organizations/{orgId}/marketplace/products/{productId}/lineage:
+    get:
+      tags: [Marketplace]
+      summary: Get upstream lineage graph (Phase 3 placeholder)
+      operationId: getMarketplaceProductLineage
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: depth
+          in: query
+          description: Traversal depth (1–5). Default 3.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+            default: 3
+      responses:
+        '200':
+          description: Lineage graph (placeholder until Phase 3)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineageGraph'
+        '404':
+          description: Product not found
+
+  /organizations/{orgId}/marketplace/products/{productId}/slos:
+    get:
+      tags: [Marketplace]
+      summary: Get SLO declarations and health summary (Phase 3 placeholder)
+      operationId: getMarketplaceProductSlos
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: SLO summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloSummary'
+        '404':
+          description: Product not found
+
+  /organizations/{orgId}/access/requests/mine:
+    get:
+      tags: [Access Requests (Consumer)]
+      summary: List the calling user's own access requests
+      operationId: listMyAccessRequests
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, denied, withdrawn]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Caller's access requests

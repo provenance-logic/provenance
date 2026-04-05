@@ -3,6 +3,8 @@ import { NavShell } from '../shared/components/NavShell.js';
 import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
 import { ProductDetail } from '../features/publishing/ProductDetail.js';
+import { MarketplacePage } from '../features/discovery/MarketplacePage.js';
+import { ProductDetailPage } from '../features/discovery/ProductDetailPage.js';
 
 function ComingSoon({ title }: { title: string }) {
   return (
@@ -33,7 +35,11 @@ export function AppRouter() {
             element={<ProductDetail />}
           />
           <Route path="products" element={<Navigate to="/dashboard" replace />} />
-          <Route path="marketplace" element={<ComingSoon title="Marketplace" />} />
+
+          {/* Marketplace */}
+          <Route path="marketplace" element={<MarketplacePage />} />
+          <Route path="marketplace/:orgId/:productId" element={<ProductDetailPage />} />
+
           <Route path="governance" element={<ComingSoon title="Governance" />} />
           <Route path="agents" element={<ComingSoon title="Agents" />} />
         </Route>
