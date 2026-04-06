@@ -173,7 +173,7 @@ services:
       keycloak:
         condition: service_healthy
       opa:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
       interval: 15s
