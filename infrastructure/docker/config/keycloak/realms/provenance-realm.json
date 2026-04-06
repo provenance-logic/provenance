@@ -56,11 +56,11 @@
       "protocol": "openid-connect",
       "redirectUris": [
         "http://localhost:3000/*",
-        "http://100.26.196.109:3000/*"
+        "http://54.83.160.49:3000/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
-        "http://100.26.196.109:3000"
+        "http://54.83.160.49:3000"
       ],
       "defaultClientScopes": [
         "web-origins",
