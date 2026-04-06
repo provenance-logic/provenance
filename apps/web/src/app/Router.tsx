@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavShell } from '../shared/components/NavShell.js';
+import { DashboardRedirect } from '../features/publishing/DashboardRedirect.js';
 import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
 import { ProductDetail } from '../features/publishing/ProductDetail.js';
@@ -21,7 +22,7 @@ export function AppRouter() {
       <Routes>
         <Route path="/" element={<NavShell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DomainDashboard />} />
+          <Route path="dashboard" element={<DashboardRedirect />} />
           <Route
             path="dashboard/:orgId/domains/:domainId"
             element={<DomainDashboard />}
