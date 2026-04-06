@@ -60,6 +60,40 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Keycloak DB init — disable SSL requirement directly in PostgreSQL
+  # Fixes the HTTPS chicken-and-egg: Keycloak requires HTTPS to access admin,
+  # but we need admin to disable HTTPS. This runs SQL before Keycloak starts.
+  # Safe to run repeatedly — UPDATE is idempotent.
+  # ---------------------------------------------------------------------------
+  keycloak-db-init:
+    image: postgres:16-alpine
+    container_name: provenance-ec2-keycloak-db-init
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "Waiting for keycloak REALM table to exist..."
+        for i in $(seq 1 30); do
+          if psql -h postgres -U provenance -d keycloak -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='realm'" 2>/dev/null | grep -q 1; then
+            echo "REALM table found. Setting ssl_required=NONE..."
+            psql -h postgres -U provenance -d keycloak -c "UPDATE realm SET ssl_required='NONE' WHERE id IN ('master', 'provenance');"
+            echo "Done. SSL requirement disabled for master and provenance realms."
+            exit 0
+          fi
+          echo "  Attempt $i/30 — REALM table not yet created, retrying in 5s..."
+          sleep 5
+        done
+        echo "WARN: REALM table never appeared (first boot?). Keycloak will create it on startup."
+        exit 0
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
   # Keycloak — OIDC identity provider
   # ---------------------------------------------------------------------------
   keycloak:
@@ -92,6 +126,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      keycloak-db-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'"]
       interval: 10s
