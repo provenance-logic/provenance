@@ -12,4 +12,4 @@ if [[ ! -f "$SCRIPT_DIR/.env.ec2" ]]; then
   exit 1
 fi
 
-exec docker compose --env-file "$SCRIPT_DIR/.env.ec2" -f "$SCRIPT_DIR/docker-compose.yml" "$@"
+exec docker compose --env-file "$SCRIPT_DIR/.env.ec2" -f "$SCRIPT_DIR/docker-compose.ec2-dev.yml" "$@"

@@ -77,7 +77,7 @@ services:
   neo4j:
     image: neo4j:5.18-community
     container_name: provenance-neo4j
-    restart: unless-stopped
+    restart: "no"
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-provenance_dev_password}
       NEO4J_PLUGINS: '["apoc"]'
@@ -108,7 +108,7 @@ services:
   redpanda:
     image: redpandadata/redpanda:v24.1.1
     container_name: provenance-redpanda
-    restart: unless-stopped
+    restart: "no"
     command:
       - redpanda
       - start
@@ -145,7 +145,7 @@ services:
   redpanda-console:
     image: redpandadata/console:v2.5.2
     container_name: provenance-redpanda-console
-    restart: unless-stopped
+    restart: "no"
     environment:
       CONFIG_FILEPATH: /etc/redpanda/redpanda-console-config.yaml
     volumes:
@@ -164,7 +164,7 @@ services:
   opensearch:
     image: opensearchproject/opensearch:2.13.0
     container_name: provenance-opensearch
-    restart: unless-stopped
+    restart: "no"
     environment:
       cluster.name: provenance-search
       node.name: provenance-opensearch-node1
@@ -200,7 +200,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-04-06T05-26-02Z
     container_name: provenance-minio
-    restart: unless-stopped
+    restart: "no"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-provenance}
@@ -320,7 +320,7 @@ services:
   temporal:
     image: temporalio/server:1.23.0
     container_name: provenance-temporal
-    restart: unless-stopped
+    restart: "no"
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -355,7 +355,7 @@ services:
   temporal-ui:
     image: temporalio/ui:2.26.2
     container_name: provenance-temporal-ui
-    restart: unless-stopped
+    restart: "no"
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: "http://localhost:3000"
@@ -395,7 +395,7 @@ services:
   kong:
     image: kong:3.6-ubuntu
     container_name: provenance-kong
-    restart: unless-stopped
+    restart: "no"
     environment:
       KONG_DATABASE: postgres
       KONG_PG_HOST: postgres
