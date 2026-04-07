@@ -27,7 +27,6 @@ import type {
   OutputPortInterfaceType,
   ComplianceStateValue,
   Port,
-  AccessRequest,
   AccessRequestList,
 } from '@provenance/types';
 
