@@ -11,6 +11,7 @@ import { ProductVersionEntity } from '../products/entities/product-version.entit
 import { ComplianceStateEntity } from '../governance/entities/compliance-state.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import type {
   MarketplaceProduct,
   MarketplaceProductList,
@@ -26,6 +27,8 @@ import type {
   OutputPortInterfaceType,
   ComplianceStateValue,
   Port,
+  AccessRequest,
+  AccessRequestList,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,8 @@ export class MarketplaceService {
     private readonly domainRepo: Repository<DomainEntity>,
     @InjectRepository(AccessGrantEntity)
     private readonly grantRepo: Repository<AccessGrantEntity>,
+    @InjectRepository(AccessRequestEntity)
+    private readonly requestRepo: Repository<AccessRequestEntity>,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -364,6 +369,47 @@ export class MarketplaceService {
       })),
       overallHealth: 'unknown',
       isPlaceholder: true,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Access requests (for global marketplace product detail)
+  // ---------------------------------------------------------------------------
+
+  async getMyAccessRequests(
+    productId: string,
+    requesterPrincipalId: string,
+    limit = 20,
+    offset = 0,
+  ): Promise<AccessRequestList> {
+    const product = await this.findProduct(productId);
+
+    const qb = this.requestRepo
+      .createQueryBuilder('req')
+      .where('req.orgId = :orgId', { orgId: product.orgId })
+      .andWhere('req.requesterPrincipalId = :requester', { requester: requesterPrincipalId })
+      .orderBy('req.requestedAt', 'DESC')
+      .take(limit)
+      .skip(offset);
+
+    const [items, total] = await qb.getManyAndCount();
+    return {
+      items: items.map((e) => ({
+        id: e.id,
+        orgId: e.orgId,
+        productId: e.productId,
+        requesterPrincipalId: e.requesterPrincipalId,
+        justification: e.justification,
+        accessScope: e.accessScope,
+        status: e.status,
+        temporalWorkflowId: e.temporalWorkflowId,
+        requestedAt: e.requestedAt.toISOString(),
+        resolvedAt: e.resolvedAt?.toISOString() ?? null,
+        resolvedBy: e.resolvedBy,
+        resolutionNote: e.resolutionNote,
+        updatedAt: e.updatedAt.toISOString(),
+      })),
+      meta: { total, limit, offset },
     };
   }
 

@@ -6,6 +6,7 @@ import type {
   ProductSchema,
   LineageGraph,
   SloSummary,
+  AccessRequestList,
 } from '@provenance/types';
 
 const base = (orgId: string) => `/organizations/${orgId}/marketplace`;
@@ -74,5 +75,10 @@ export const marketplaceApi = {
 
     slosGlobal: (productId: string): Promise<SloSummary> =>
       api.get<SloSummary>(`/marketplace/products/${productId}/slos`),
+
+    accessRequestsGlobal: (productId: string, limit = 20, offset = 0): Promise<AccessRequestList> => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      return api.get<AccessRequestList>(`/marketplace/products/${productId}/access-requests?${params.toString()}`);
+    },
   },
 };

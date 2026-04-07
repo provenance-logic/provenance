@@ -1,13 +1,16 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { ReqContext } from '../auth/request-context.decorator.js';
 import { MarketplaceService } from './marketplace.service.js';
 import type {
+  RequestContext,
   MarketplaceProductList,
   MarketplaceProductDetail,
   MarketplaceFilters,
   ProductSchema,
   LineageGraph,
   SloSummary,
+  AccessRequestList,
   OutputPortInterfaceType,
   ComplianceStateValue,
   MarketplaceSortOption,
@@ -76,5 +79,20 @@ export class MarketplaceGlobalController {
     @Param('productId') productId: string,
   ): Promise<SloSummary> {
     return this.marketplaceService.getProductSlos(undefined, productId);
+  }
+
+  @Get('products/:productId/access-requests')
+  getMyAccessRequests(
+    @ReqContext() ctx: RequestContext,
+    @Param('productId') productId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<AccessRequestList> {
+    return this.marketplaceService.getMyAccessRequests(
+      productId,
+      ctx.principalId,
+      limit  ? parseInt(limit,  10) : 20,
+      offset ? parseInt(offset, 10) : 0,
+    );
   }
 }

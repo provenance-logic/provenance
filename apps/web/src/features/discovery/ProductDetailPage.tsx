@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { marketplaceApi } from '../../shared/api/marketplace.js';
-import { accessApi } from '../../shared/api/access.js';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import { AccessRequestSlideOver } from './AccessRequestSlideOver.js';
@@ -512,7 +511,7 @@ function AccessTab({
 
   useEffect(() => {
     if (!principalId) return;
-    accessApi.requests.mine(product.orgId, undefined, 20, 0)
+    marketplaceApi.products.accessRequestsGlobal(product.id)
       .then((res) => {
         const req = res.items.find((r) => r.productId === product.id) ?? null;
         setMyRequest(req);
@@ -522,7 +521,7 @@ function AccessTab({
         setError(err instanceof ApiError ? err.message : 'Failed to load access status');
         setLoading(false);
       });
-  }, [product.orgId, product.id, principalId]);
+  }, [product.id, principalId]);
 
   if (loading) return <LoadingState label="access status" />;
   if (error)   return <ErrorState message={error} />;

@@ -7,6 +7,7 @@ import { PortDeclarationEntity } from '../products/entities/port-declaration.ent
 import { ProductVersionEntity } from '../products/entities/product-version.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { opensearchClientProvider } from './opensearch.client.js';
 import { TrustScoreService } from './trust-score.service.js';
 import { ProductIndexService } from './product-index.service.js';
@@ -24,6 +25,7 @@ import { MarketplaceGlobalController } from './marketplace-global.controller.js'
       ProductVersionEntity,
       DomainEntity,
       AccessGrantEntity,
+      AccessRequestEntity,
     ]),
     KafkaModule,
   ],
