@@ -89,20 +89,36 @@ const DIMENSION_LABELS: Record<string, string> = {
   freshness:            'Freshness',
 };
 
-const DIMENSION_DESCRIPTIONS: Record<string, string> = {
-  governanceCompliance:
-    'Whether the product satisfies all active governance policies. Compliant=1.0, Grace Period=0.75, Drift=0.50, Non-Compliant=0.25. Weight: 30%.',
-  lineageCompleteness:
-    'Fraction of upstream lineage edges that are declared and verified in the lineage graph. Weight: 25%. (Phase 3)',
-  sloCompliance:
-    'Ratio of SLO targets met in the last 90 days based on observability pipeline measurements. Weight: 20%. (Phase 3)',
-  schemaConformance:
-    'Whether schema changes have been declared semantically and pass the contract validation gate. Weight: 15%. (Phase 3)',
-  freshness:
-    'How recently the data was updated relative to the declared freshness SLO. Weight: 10%. (Phase 3)',
+const DIMENSION_INFO: Record<string, { measures: string; contribution: string; improve: string }> = {
+  governanceCompliance: {
+    measures: 'Whether the product satisfies all active governance policies. Scored as Compliant = 1.0, Grace Period = 0.75, Drift = 0.50, Non-Compliant = 0.25.',
+    contribution: '30% of the composite trust score.',
+    improve: 'Resolve all policy violations and ensure the product passes governance evaluation on every publish.',
+  },
+  lineageCompleteness: {
+    measures: 'Fraction of upstream lineage edges that are declared and verified in the lineage graph.',
+    contribution: '25% of the composite trust score. Locked at 1.0 until Phase 3.',
+    improve: 'Declare all upstream data sources and verify lineage edges using the emission SDK.',
+  },
+  sloCompliance: {
+    measures: 'Ratio of SLO targets met over the last 90 days, measured by the observability pipeline.',
+    contribution: '20% of the composite trust score. Locked at 1.0 until Phase 3.',
+    improve: 'Define SLO targets on output ports and ensure freshness, availability, and latency stay within bounds.',
+  },
+  schemaConformance: {
+    measures: 'Whether schema changes are declared semantically and pass the contract validation gate.',
+    contribution: '15% of the composite trust score. Locked at 1.0 until Phase 3.',
+    improve: 'Use semantic versioning for schema changes and ensure all output ports have a valid contract schema.',
+  },
+  freshness: {
+    measures: 'How recently the data was updated relative to the declared freshness SLO.',
+    contribution: '10% of the composite trust score. Locked at 1.0 until Phase 3.',
+    improve: 'Keep data refreshes on schedule and tighten freshness SLOs to match consumer expectations.',
+  },
 };
 
 function TrustScorePanel({ breakdown }: { breakdown: TrustScoreBreakdown }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
   const pct = Math.round(breakdown.composite * 100);
   const color =
     pct >= 80 ? 'text-green-700' : pct >= 60 ? 'text-yellow-700' : pct >= 40 ? 'text-orange-700' : 'text-red-700';
@@ -122,55 +138,70 @@ function TrustScorePanel({ breakdown }: { breakdown: TrustScoreBreakdown }) {
         </div>
 
         {/* Dimension breakdown */}
-        <div className="flex-1 space-y-2 min-w-0">
-          {Object.entries(breakdown.dimensions).map(([key, dim]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 w-44 truncate" title={DIMENSION_LABELS[key]}>
-                {DIMENSION_LABELS[key]}
-              </span>
-              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    dim.available
-                      ? dim.score >= 0.8 ? 'bg-green-500'
-                      : dim.score >= 0.6 ? 'bg-yellow-500'
-                      : dim.score >= 0.4 ? 'bg-orange-500'
-                      : 'bg-red-500'
-                      : 'bg-slate-300'
-                  }`}
-                  style={{ width: `${Math.round(dim.score * 100)}%` }}
-                  role="progressbar"
-                  aria-valuenow={Math.round(dim.score * 100)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label={DIMENSION_LABELS[key]}
-                />
+        <div className="flex-1 space-y-1 min-w-0">
+          {Object.entries(breakdown.dimensions).map(([key, dim]) => {
+            const info = DIMENSION_INFO[key];
+            const isOpen = expanded === key;
+            return (
+              <div key={key}>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-44 truncate">
+                    {DIMENSION_LABELS[key]}
+                  </span>
+                  <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        dim.available
+                          ? dim.score >= 0.8 ? 'bg-green-500'
+                          : dim.score >= 0.6 ? 'bg-yellow-500'
+                          : dim.score >= 0.4 ? 'bg-orange-500'
+                          : 'bg-red-500'
+                          : 'bg-slate-300'
+                      }`}
+                      style={{ width: `${Math.round(dim.score * 100)}%` }}
+                      role="progressbar"
+                      aria-valuenow={Math.round(dim.score * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={DIMENSION_LABELS[key]}
+                    />
+                  </div>
+                  <span className="text-xs font-medium text-slate-600 w-8 text-right">
+                    {dim.available ? `${Math.round(dim.score * 100)}` : '—'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(isOpen ? null : key)}
+                    className={`flex-shrink-0 transition-colors rounded focus:outline-none focus:ring-1 focus:ring-brand-500 ${
+                      isOpen ? 'text-brand-600' : 'text-slate-300 hover:text-slate-500'
+                    }`}
+                    aria-label={`${isOpen ? 'Hide' : 'Show'} details for ${DIMENSION_LABELS[key]}`}
+                    aria-expanded={isOpen}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+                    </svg>
+                  </button>
+                  {!dim.available && (
+                    <span className="text-xs text-slate-300 italic">Phase 3</span>
+                  )}
+                </div>
+                {isOpen && info && (
+                  <div className="ml-44 pl-2 mt-1 mb-2 border-l-2 border-brand-200 text-xs text-slate-600 space-y-1">
+                    <p><span className="font-medium text-slate-700">Measures:</span> {info.measures}</p>
+                    <p><span className="font-medium text-slate-700">Weight:</span> {info.contribution}</p>
+                    <p><span className="font-medium text-slate-700">Improve:</span> {info.improve}</p>
+                  </div>
+                )}
               </div>
-              <span className="text-xs font-medium text-slate-600 w-8 text-right">
-                {dim.available ? `${Math.round(dim.score * 100)}` : '—'}
-              </span>
-              {/* Tooltip trigger */}
-              <button
-                type="button"
-                title={DIMENSION_DESCRIPTIONS[key]}
-                className="text-slate-300 hover:text-slate-500 focus:outline-none focus:ring-1 focus:ring-brand-500 rounded"
-                aria-label={`Info for ${DIMENSION_LABELS[key]}`}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20A10 10 0 0012 2z" />
-                </svg>
-              </button>
-              {!dim.available && (
-                <span className="text-xs text-slate-300 italic">Phase 3</span>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       <p className="mt-4 text-xs text-slate-400">
-        Composite score = Σ (dimension score × weight). Hover the ⓘ icons for algorithm details.
+        Composite score = Σ (dimension score × weight). Click the ⓘ icons for details.
         Phase 3 dimensions are locked at 1.0 until real data is available.
       </p>
     </div>
