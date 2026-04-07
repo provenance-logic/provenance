@@ -9,6 +9,7 @@ import { ExceptionEntity } from './entities/exception.entity.js';
 import { GracePeriodEntity } from './entities/grace-period.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { OpaClient, OPA_BASE_URL } from './opa/opa-client.js';
 import { RegoCompiler } from './compilation/rego-compiler.js';
 import { GovernanceService } from './governance.service.js';
@@ -25,6 +26,7 @@ import { GovernanceController } from './governance.controller.js';
       GracePeriodEntity,
       DataProductEntity,
       DomainEntity,
+      PrincipalEntity,
     ]),
   ],
   providers: [

@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, MoreThan, In } from 'typeorm';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { PolicySchemaEntity } from './entities/policy-schema.entity.js';
 import { PolicyVersionEntity } from './entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from './entities/effective-policy.entity.js';
@@ -38,6 +39,7 @@ import type {
   GracePeriodList,
   GracePeriodOutcome,
   DataProduct,
+  RequestContext,
   GovernanceDashboard,
   GovernanceDashboardSummary,
   GovernanceDomainHealth,
@@ -63,6 +65,8 @@ export class GovernanceService {
     private readonly productRepo: Repository<DataProductEntity>,
     @InjectRepository(DomainEntity)
     private readonly domainRepo: Repository<DomainEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
     private readonly opaClient: OpaClient,
     private readonly regoCompiler: RegoCompiler,
   ) {}
@@ -138,8 +142,11 @@ export class GovernanceService {
   async publishPolicyVersion(
     orgId: string,
     dto: PublishPolicyRequest,
-    publishedBy: string,
+    ctx: RequestContext,
   ): Promise<PolicyVersion> {
+    const principal = await this.ensurePrincipal(orgId, ctx);
+    const publishedBy = principal.id;
+
     // Step 1: next version number
     const maxResult = await this.policyVersionRepo
       .createQueryBuilder('pv')
@@ -545,6 +552,29 @@ export class GovernanceService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    const existing = await this.principalRepo.findOne({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
+    if (existing) return existing;
+    await this.principalRepo
+      .createQueryBuilder()
+      .insert()
+      .into(PrincipalEntity)
+      .values({
+        orgId,
+        principalType: ctx.principalType,
+        keycloakSubject: ctx.keycloakSubject,
+        email: ctx.email ?? null,
+        displayName: ctx.displayName ?? null,
+      })
+      .orIgnore()
+      .execute();
+    return this.principalRepo.findOneOrFail({
+      where: { keycloakSubject: ctx.keycloakSubject },
+    });
+  }
 
   private async upsertEffectivePolicy(
     orgId: string,

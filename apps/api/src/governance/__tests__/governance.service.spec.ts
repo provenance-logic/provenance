@@ -10,9 +10,10 @@ import { ExceptionEntity } from '../entities/exception.entity.js';
 import { GracePeriodEntity } from '../entities/grace-period.entity.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { DomainEntity } from '../../organizations/entities/domain.entity.js';
+import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import { OpaClient } from '../opa/opa-client.js';
 import { RegoCompiler } from '../compilation/rego-compiler.js';
-import type { DataProduct } from '@provenance/types';
+import type { DataProduct, RequestContext } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
 // Repository mock factories
@@ -90,6 +91,14 @@ const makeComplianceStateEntity = (
   updatedAt: now,
 });
 
+const mockCtx: RequestContext = {
+  principalId: 'principal-1',
+  orgId: 'org-1',
+  principalType: 'human_user',
+  roles: [],
+  keycloakSubject: 'kc-sub-1',
+};
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -100,6 +109,7 @@ describe('GovernanceService', () => {
   let effectivePolicyRepo: ReturnType<typeof mockRepo>;
   let complianceStateRepo: ReturnType<typeof mockRepo>;
   let exceptionRepo: ReturnType<typeof mockRepo>;
+  let principalRepo: ReturnType<typeof mockRepo>;
   let opaClient: ReturnType<typeof mockOpaClient>;
 
   beforeEach(async () => {
@@ -114,6 +124,7 @@ describe('GovernanceService', () => {
         { provide: getRepositoryToken(GracePeriodEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DomainEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(PrincipalEntity), useFactory: mockRepo },
         { provide: OpaClient, useFactory: mockOpaClient },
         RegoCompiler,
       ],
@@ -124,7 +135,11 @@ describe('GovernanceService', () => {
     effectivePolicyRepo = module.get(getRepositoryToken(EffectivePolicyEntity));
     complianceStateRepo = module.get(getRepositoryToken(ComplianceStateEntity));
     exceptionRepo = module.get(getRepositoryToken(ExceptionEntity));
+    principalRepo = module.get(getRepositoryToken(PrincipalEntity));
     opaClient = module.get(OpaClient);
+
+    // Default: ensurePrincipal returns an existing principal
+    principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'kc-sub-1' });
   });
 
   // ---------------------------------------------------------------------------
@@ -334,7 +349,7 @@ describe('GovernanceService', () => {
     });
 
     it('increments the version number from the existing max', async () => {
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
       expect(policyVersionRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ versionNumber: 3 }),
       );
@@ -347,14 +362,14 @@ describe('GovernanceService', () => {
         getRawOne: jest.fn().mockResolvedValue({ max: null }),
       });
 
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
       expect(policyVersionRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ versionNumber: 1 }),
       );
     });
 
     it('uploads compiled Rego to OPA', async () => {
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
       expect(opaClient.upsertPolicy).toHaveBeenCalledWith(
         expect.stringContaining('provenance_governance_product_schema_org_'),
         expect.stringContaining('package provenance.governance.product_schema'),
@@ -362,7 +377,7 @@ describe('GovernanceService', () => {
     });
 
     it('sets rego_bundle_ref on the saved version entity', async () => {
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
       // Second save call sets rego_bundle_ref
       expect(policyVersionRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -372,7 +387,7 @@ describe('GovernanceService', () => {
     });
 
     it('upserts the effective policy for the org+domain', async () => {
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
       expect(effectivePolicyRepo.save).toHaveBeenCalled();
     });
 
@@ -391,7 +406,7 @@ describe('GovernanceService', () => {
       effectivePolicyRepo.findOne.mockResolvedValue(existing);
       effectivePolicyRepo.save.mockResolvedValue(existing);
 
-      await service.publishPolicyVersion('org-1', dto, 'principal-1');
+      await service.publishPolicyVersion('org-1', dto, mockCtx);
 
       expect(effectivePolicyRepo.create).not.toHaveBeenCalled();
       expect(effectivePolicyRepo.save).toHaveBeenCalledWith(

@@ -84,7 +84,7 @@ export class GovernanceController {
     @Body() dto: PublishPolicyRequest,
     @ReqContext() ctx: RequestContext,
   ) {
-    return this.governanceService.publishPolicyVersion(orgId, dto, ctx.principalId);
+    return this.governanceService.publishPolicyVersion(orgId, dto, ctx);
   }
 
   @Get('policy-versions/:versionId')
