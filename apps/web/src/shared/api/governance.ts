@@ -99,8 +99,10 @@ export const governanceApi = {
     grant: (orgId: string, dto: GrantExceptionRequest): Promise<Exception> =>
       api.post<Exception>(`${base(orgId)}/exceptions`, dto),
 
-    revoke: (orgId: string, exceptionId: string): Promise<Exception> =>
-      api.delete(`${base(orgId)}/exceptions/${exceptionId}`) as Promise<Exception>,
+    revoke: async (orgId: string, exceptionId: string): Promise<Exception> => {
+      await api.delete(`${base(orgId)}/exceptions/${exceptionId}`);
+      return api.get<Exception>(`${base(orgId)}/exceptions/${exceptionId}`);
+    },
   },
 
   gracePeriods: {

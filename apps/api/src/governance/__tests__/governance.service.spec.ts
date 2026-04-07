@@ -8,6 +8,8 @@ import { EffectivePolicyEntity } from '../entities/effective-policy.entity.js';
 import { ComplianceStateEntity } from '../entities/compliance-state.entity.js';
 import { ExceptionEntity } from '../entities/exception.entity.js';
 import { GracePeriodEntity } from '../entities/grace-period.entity.js';
+import { DataProductEntity } from '../../products/entities/data-product.entity.js';
+import { DomainEntity } from '../../organizations/entities/domain.entity.js';
 import { OpaClient } from '../opa/opa-client.js';
 import { RegoCompiler } from '../compilation/rego-compiler.js';
 import type { DataProduct } from '@provenance/types';
@@ -110,6 +112,8 @@ describe('GovernanceService', () => {
         { provide: getRepositoryToken(ComplianceStateEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(ExceptionEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(GracePeriodEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(DataProductEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(DomainEntity), useFactory: mockRepo },
         { provide: OpaClient, useFactory: mockOpaClient },
         RegoCompiler,
       ],

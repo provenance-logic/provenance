@@ -420,7 +420,7 @@ function AccessControlPanel({
         checked={rules.accessReviewRequired as boolean}
         onChange={(v) => onUpdate({ accessReviewRequired: v })}
       />
-      {rules.accessReviewRequired && (
+      {rules.accessReviewRequired === true && (
         <NumberField
           label="Access review frequency (days)"
           value={rules.accessReviewFrequencyDays as number}

@@ -10,6 +10,7 @@ import { ProductVersionEntity } from '../../products/entities/product-version.en
 import { ComplianceStateEntity } from '../../governance/entities/compliance-state.entity.js';
 import { DomainEntity } from '../../organizations/entities/domain.entity.js';
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../../access/entities/access-request.entity.js';
 
 // ---------------------------------------------------------------------------
 // Mock factory
@@ -87,6 +88,7 @@ describe('MarketplaceService', () => {
         { provide: getRepositoryToken(ComplianceStateEntity),          useFactory: mockRepo              },
         { provide: getRepositoryToken(DomainEntity),                   useFactory: mockRepo              },
         { provide: getRepositoryToken(AccessGrantEntity),              useFactory: mockRepo              },
+        { provide: getRepositoryToken(AccessRequestEntity),            useFactory: mockRepo              },
       ],
     }).compile();
 
