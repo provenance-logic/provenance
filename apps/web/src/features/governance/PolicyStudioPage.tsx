@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { governanceApi } from '../../shared/api/governance.js';
 import { ApiError } from '../../shared/api/client.js';
-import { useAuth } from '../../auth/AuthProvider.js';
+import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import type {
   PolicyDomain,
   PolicyImpactPreview,
@@ -788,8 +788,7 @@ function ConfirmPublishModal({
 // ---------------------------------------------------------------------------
 
 export function PolicyStudioPage() {
-  const { keycloak } = useAuth();
-  const orgId = keycloak.tokenParsed?.provenance_org_id as string | undefined;
+  const orgId = useOrgId();
 
   const [activeDomain, setActiveDomain] = useState<PolicyDomain>('product_schema');
   const [loading, setLoading] = useState(true);

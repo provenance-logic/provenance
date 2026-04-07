@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { governanceApi } from '../../shared/api/governance.js';
 import { ApiError } from '../../shared/api/client.js';
-import { useAuth } from '../../auth/AuthProvider.js';
+import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import type {
   GovernanceDashboard,
   GovernanceDashboardSummary,
@@ -280,8 +280,7 @@ function DomainHealth({ domains }: { domains: GovernanceDomainHealth[] }) {
 // ---------------------------------------------------------------------------
 
 export function CommandCenterPage() {
-  const { keycloak } = useAuth();
-  const orgId = keycloak.tokenParsed?.provenance_org_id as string | undefined;
+  const orgId = useOrgId();
   const navigate = useNavigate();
 
   const [dashboard, setDashboard] = useState<GovernanceDashboard | null>(null);

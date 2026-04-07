@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { governanceApi } from '../../shared/api/governance.js';
 import { api } from '../../shared/api/client.js';
 import { ApiError } from '../../shared/api/client.js';
-import { useAuth } from '../../auth/AuthProvider.js';
+import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import type {
   ComplianceState,
   ComplianceStateValue,
@@ -115,8 +115,7 @@ function SortIndicator({ field, sortField, sortDir }: { field: SortField; sortFi
 // ---------------------------------------------------------------------------
 
 export function ComplianceMonitorPage() {
-  const { keycloak } = useAuth();
-  const orgId = keycloak.tokenParsed?.provenance_org_id as string | undefined;
+  const orgId = useOrgId();
 
   // Data
   const [complianceStates, setComplianceStates] = useState<ComplianceState[]>([]);

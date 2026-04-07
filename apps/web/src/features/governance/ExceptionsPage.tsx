@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { governanceApi } from '../../shared/api/governance.js';
 import { ApiError } from '../../shared/api/client.js';
-import { useAuth } from '../../auth/AuthProvider.js';
+import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import type {
   Exception as GovException,
   GrantExceptionRequest,
@@ -125,8 +125,7 @@ function CreateExceptionModal({
 // ---------------------------------------------------------------------------
 
 export function ExceptionsPage() {
-  const { keycloak } = useAuth();
-  const orgId = keycloak.tokenParsed?.provenance_org_id as string | undefined;
+  const orgId = useOrgId();
 
   const [exceptions, setExceptions] = useState<GovException[]>([]);
   const [loading, setLoading] = useState(true);

@@ -34,8 +34,8 @@ export class GovernanceController {
   // ---------------------------------------------------------------------------
 
   @Get('dashboard')
-  getDashboard(@ReqContext() ctx: RequestContext) {
-    return this.governanceService.getDashboard(ctx.orgId);
+  getDashboard(@Param('orgId') orgId: string) {
+    return this.governanceService.getDashboard(orgId);
   }
 
   // ---------------------------------------------------------------------------
