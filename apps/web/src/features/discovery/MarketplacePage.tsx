@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { marketplaceApi } from '../../shared/api/marketplace.js';
 import { ApiError } from '../../shared/api/client.js';
-import { useAuth } from '../../auth/AuthProvider.js';
 import type {
   MarketplaceProduct,
   MarketplaceFilters,
@@ -144,7 +143,7 @@ function TrustBadge({ score }: { score: number }) {
 // Product card
 // ---------------------------------------------------------------------------
 
-function ProductCard({ product, orgId, view }: { product: MarketplaceProduct; orgId: string; view: 'grid' | 'list' }) {
+function ProductCard({ product, view }: { product: MarketplaceProduct; view: 'grid' | 'list' }) {
   const navigate = useNavigate();
   const desc = product.description
     ? product.description.length > 140
@@ -201,7 +200,7 @@ function ProductCard({ product, orgId, view }: { product: MarketplaceProduct; or
     return (
       <button
         type="button"
-        onClick={() => navigate(`/marketplace/${orgId}/${product.id}`)}
+        onClick={() => navigate(`/marketplace/${product.orgId}/${product.id}`)}
         className="w-full text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-brand-500"
         aria-label={`View details for ${product.name}`}
       >
@@ -213,7 +212,7 @@ function ProductCard({ product, orgId, view }: { product: MarketplaceProduct; or
   return (
     <button
       type="button"
-      onClick={() => navigate(`/marketplace/${orgId}/${product.id}`)}
+      onClick={() => navigate(`/marketplace/${product.orgId}/${product.id}`)}
       className="w-full text-left bg-white border border-slate-200 rounded-xl p-5 hover:border-brand-400 hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-brand-500 flex flex-col"
       aria-label={`View details for ${product.name}`}
     >
@@ -389,10 +388,7 @@ function FilterPanel({ filters, onChange }: FilterPanelProps) {
 // ---------------------------------------------------------------------------
 
 export function MarketplacePage() {
-  const { keycloak } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-
-  const orgId = keycloak.tokenParsed?.org_id as string | undefined;
 
   const { filters, sort, page } = paramsToFilters(searchParams);
 
@@ -409,11 +405,10 @@ export function MarketplacePage() {
     _s: MarketplaceSortOption,
     p: number,
   ) => {
-    if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await marketplaceApi.products.list(orgId, f, p, ITEMS_PER_PAGE);
+      const res = await marketplaceApi.products.listAll(f, p, ITEMS_PER_PAGE);
       setProducts(res.items);
       setTotal(res.meta.total);
     } catch (err) {
@@ -421,11 +416,11 @@ export function MarketplacePage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, []);
 
   useEffect(() => {
     void load(filters, sort, page);
-  }, [searchParams, orgId]); // load is stable; filters/sort/page are derived from searchParams
+  }, [searchParams]); // load is stable; filters/sort/page are derived from searchParams
 
   function applyFilters(newFilters: MarketplaceFilters) {
     setSearchParams(filtersToParams(newFilters, sort, 1));
@@ -456,21 +451,13 @@ export function MarketplacePage() {
 
   const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
-  if (!orgId) {
-    return (
-      <div className="p-8 text-sm text-slate-500">
-        No organisation context. Please select a domain first.
-      </div>
-    );
-  }
-
   return (
     <div className="p-6 max-w-screen-xl mx-auto">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Data Product Marketplace</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Discover published data products across your organisation.
+          Discover published data products across the platform.
         </p>
       </div>
 
@@ -577,7 +564,7 @@ export function MarketplacePage() {
                 : 'flex flex-col gap-3'}
             >
               {products.map((p) => (
-                <ProductCard key={p.id} product={p} orgId={orgId} view={view} />
+                <ProductCard key={p.id} product={p} view={view} />
               ))}
             </div>
           )}

@@ -10,26 +10,44 @@ import type {
 
 const base = (orgId: string) => `/organizations/${orgId}/marketplace`;
 
+function buildFilterParams(
+  filters: MarketplaceFilters,
+  page: number,
+  limit: number,
+): URLSearchParams {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+  });
+  if (filters.domain?.length)          params.set('domain',           filters.domain.join(','));
+  if (filters.outputPortType?.length)  params.set('outputPortType',   filters.outputPortType.join(','));
+  if (filters.compliance?.length)      params.set('compliance',       filters.compliance.join(','));
+  if (filters.trustScoreMin !== undefined) params.set('trustScoreMin', String(filters.trustScoreMin));
+  if (filters.trustScoreMax !== undefined) params.set('trustScoreMax', String(filters.trustScoreMax));
+  if (filters.tags?.length)            params.set('tags',             filters.tags.join(','));
+  if (filters.includeDeprecated)       params.set('includeDeprecated','true');
+  if (filters.sort)                    params.set('sort',             filters.sort);
+  return params;
+}
+
 export const marketplaceApi = {
   products: {
+    listAll: (
+      filters: MarketplaceFilters = {},
+      page = 1,
+      limit = 20,
+    ): Promise<MarketplaceProductList> => {
+      const params = buildFilterParams(filters, page, limit);
+      return api.get<MarketplaceProductList>(`/marketplace/products?${params.toString()}`);
+    },
+
     list: (
       orgId: string,
       filters: MarketplaceFilters = {},
       page = 1,
       limit = 20,
     ): Promise<MarketplaceProductList> => {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-      });
-      if (filters.domain?.length)          params.set('domain',           filters.domain.join(','));
-      if (filters.outputPortType?.length)  params.set('outputPortType',   filters.outputPortType.join(','));
-      if (filters.compliance?.length)      params.set('compliance',       filters.compliance.join(','));
-      if (filters.trustScoreMin !== undefined) params.set('trustScoreMin', String(filters.trustScoreMin));
-      if (filters.trustScoreMax !== undefined) params.set('trustScoreMax', String(filters.trustScoreMax));
-      if (filters.tags?.length)            params.set('tags',             filters.tags.join(','));
-      if (filters.includeDeprecated)       params.set('includeDeprecated','true');
-      if (filters.sort)                    params.set('sort',             filters.sort);
+      const params = buildFilterParams(filters, page, limit);
       return api.get<MarketplaceProductList>(`${base(orgId)}/products?${params.toString()}`);
     },
 
