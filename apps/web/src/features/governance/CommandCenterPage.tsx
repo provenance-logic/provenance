@@ -128,7 +128,7 @@ function ComplianceTrend({ summary }: { summary: GovernanceDashboardSummary }) {
 // Recent events feed
 // ---------------------------------------------------------------------------
 
-function RecentEvents({ events }: { events: GovernanceComplianceEvent[] }) {
+function RecentEvents({ events, orgId }: { events: GovernanceComplianceEvent[]; orgId: string }) {
   const navigate = useNavigate();
 
   if (events.length === 0) {
@@ -148,7 +148,7 @@ function RecentEvents({ events }: { events: GovernanceComplianceEvent[] }) {
           <button
             key={`${e.productId}-${i}`}
             type="button"
-            onClick={() => navigate(`/governance/compliance`)}
+            onClick={() => navigate(`/marketplace/${orgId}/${e.productId}`)}
             className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors"
           >
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATE_COLORS[e.newState]}`}>
@@ -302,7 +302,7 @@ export function CommandCenterPage() {
     if (state) {
       navigate(`/governance/compliance?state=${state}`);
     } else {
-      navigate('/governance/compliance');
+      navigate('/marketplace');
     }
   }
 
@@ -360,7 +360,7 @@ export function CommandCenterPage() {
       <ComplianceTrend summary={dashboard.summary} />
 
       <div className="grid grid-cols-2 gap-6">
-        <RecentEvents events={dashboard.recentEvents} />
+        <RecentEvents events={dashboard.recentEvents} orgId={orgId!} />
         <DomainHealth domains={dashboard.domainHealth} />
       </div>
 
