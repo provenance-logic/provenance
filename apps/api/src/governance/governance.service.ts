@@ -3,7 +3,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, MoreThan, In } from 'typeorm';
+import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { PolicySchemaEntity } from './entities/policy-schema.entity.js';
 import { PolicyVersionEntity } from './entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from './entities/effective-policy.entity.js';
@@ -36,6 +38,10 @@ import type {
   GracePeriodList,
   GracePeriodOutcome,
   DataProduct,
+  GovernanceDashboard,
+  GovernanceDashboardSummary,
+  GovernanceDomainHealth,
+  GovernanceComplianceEvent,
 } from '@provenance/types';
 
 @Injectable()
@@ -53,6 +59,10 @@ export class GovernanceService {
     private readonly exceptionRepo: Repository<ExceptionEntity>,
     @InjectRepository(GracePeriodEntity)
     private readonly gracePeriodRepo: Repository<GracePeriodEntity>,
+    @InjectRepository(DataProductEntity)
+    private readonly productRepo: Repository<DataProductEntity>,
+    @InjectRepository(DomainEntity)
+    private readonly domainRepo: Repository<DomainEntity>,
     private readonly opaClient: OpaClient,
     private readonly regoCompiler: RegoCompiler,
   ) {}
@@ -432,6 +442,104 @@ export class GovernanceService {
     const entity = await this.gracePeriodRepo.findOne({ where: { id: gracePeriodId, orgId } });
     if (!entity) throw new NotFoundException(`Grace period ${gracePeriodId} not found`);
     return this.toGracePeriod(entity);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dashboard (Command Center aggregate)
+  // ---------------------------------------------------------------------------
+
+  async getDashboard(orgId: string): Promise<GovernanceDashboard> {
+    // 1. Published product count
+    const totalPublished = await this.productRepo.count({
+      where: { orgId, status: 'published' },
+    });
+
+    // 2. Compliance state counts
+    const states = await this.complianceStateRepo.find({ where: { orgId } });
+    const summary: GovernanceDashboardSummary = {
+      totalPublished,
+      compliant: states.filter((s) => s.state === 'compliant').length,
+      driftDetected: states.filter((s) => s.state === 'drift_detected').length,
+      gracePeriod: states.filter((s) => s.state === 'grace_period').length,
+      nonCompliant: states.filter((s) => s.state === 'non_compliant').length,
+    };
+
+    // 3. Per-domain health
+    const allDomains: PolicyDomain[] = [
+      'product_schema', 'classification_taxonomy', 'versioning_deprecation',
+      'access_control', 'lineage', 'slo', 'agent_access', 'interoperability',
+    ];
+    const domainHealth: GovernanceDomainHealth[] = allDomains.map((pd) => {
+      const domainViolations = states.filter(
+        (s) => s.state !== 'compliant' && s.violations.some((v) => v.policyDomain === pd),
+      );
+      const compliantCount = totalPublished - domainViolations.length;
+      const pct = totalPublished > 0 ? (compliantCount / totalPublished) * 100 : 100;
+      return {
+        policyDomain: pd,
+        totalProducts: totalPublished,
+        compliantCount,
+        status: pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red',
+      };
+    });
+
+    // 4. Recent compliance events (products with compliance state updates in last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentStates = await this.complianceStateRepo
+      .createQueryBuilder('cs')
+      .where('cs.orgId = :orgId', { orgId })
+      .andWhere('cs.updatedAt >= :since', { since: sevenDaysAgo })
+      .orderBy('cs.updatedAt', 'DESC')
+      .take(20)
+      .getMany();
+
+    // Resolve product names and domain names
+    const productIds = recentStates.map((s) => s.productId);
+    const products = productIds.length
+      ? await this.productRepo.find({ where: { orgId, id: In(productIds) } })
+      : [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    const domainIds = [...new Set(products.map((p) => p.domainId))];
+    const domains = domainIds.length
+      ? await this.domainRepo.find({ where: { orgId, id: In(domainIds) } })
+      : [];
+    const domainMap = new Map(domains.map((d) => [d.id, d.name]));
+
+    const recentEvents: GovernanceComplianceEvent[] = recentStates.map((s) => {
+      const product = productMap.get(s.productId);
+      return {
+        productId: s.productId,
+        productName: product?.name ?? 'Unknown',
+        domainName: product ? (domainMap.get(product.domainId) ?? 'Unknown') : 'Unknown',
+        previousState: null,
+        newState: s.state,
+        changedAt: s.updatedAt.toISOString(),
+      };
+    });
+
+    // 5. Active exceptions (not revoked, not expired)
+    const activeExceptionEntities = await this.exceptionRepo.find({
+      where: { orgId, revokedAt: IsNull(), expiresAt: MoreThan(new Date()) },
+      order: { expiresAt: 'ASC' },
+      take: 20,
+    });
+
+    // 6. Active grace periods (pending outcome)
+    const activeGracePeriodEntities = await this.gracePeriodRepo.find({
+      where: { orgId, outcome: 'pending' as GracePeriodOutcome },
+      order: { endsAt: 'ASC' },
+      take: 20,
+    });
+
+    return {
+      summary,
+      domainHealth,
+      recentEvents,
+      activeExceptions: activeExceptionEntities.map((e) => this.toException(e)),
+      activeGracePeriods: activeGracePeriodEntities.map((g) => this.toGracePeriod(g)),
+    };
   }
 
   // ---------------------------------------------------------------------------

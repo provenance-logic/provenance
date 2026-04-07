@@ -30,6 +30,15 @@ export class GovernanceController {
   constructor(private readonly governanceService: GovernanceService) {}
 
   // ---------------------------------------------------------------------------
+  // Dashboard
+  // ---------------------------------------------------------------------------
+
+  @Get('dashboard')
+  getDashboard(@ReqContext() ctx: RequestContext) {
+    return this.governanceService.getDashboard(ctx.orgId);
+  }
+
+  // ---------------------------------------------------------------------------
   // Policy Schemas
   // ---------------------------------------------------------------------------
 

@@ -191,3 +191,40 @@ export interface GracePeriod {
 }
 
 export type GracePeriodList = PaginatedList<GracePeriod>;
+
+// ---------------------------------------------------------------------------
+// Governance Dashboard (Command Center aggregate)
+// ---------------------------------------------------------------------------
+
+export interface GovernanceDashboardSummary {
+  totalPublished: number;
+  compliant: number;
+  driftDetected: number;
+  gracePeriod: number;
+  nonCompliant: number;
+}
+
+export interface GovernanceDomainHealth {
+  policyDomain: PolicyDomain;
+  totalProducts: number;
+  compliantCount: number;
+  /** 'green' >= 90%, 'amber' >= 70%, 'red' < 70% */
+  status: 'green' | 'amber' | 'red';
+}
+
+export interface GovernanceComplianceEvent {
+  productId: Uuid;
+  productName: string;
+  domainName: string;
+  previousState: ComplianceStateValue | null;
+  newState: ComplianceStateValue;
+  changedAt: IsoTimestamp;
+}
+
+export interface GovernanceDashboard {
+  summary: GovernanceDashboardSummary;
+  domainHealth: GovernanceDomainHealth[];
+  recentEvents: GovernanceComplianceEvent[];
+  activeExceptions: Exception[];
+  activeGracePeriods: GracePeriod[];
+}

@@ -6,6 +6,10 @@ import { NewProductForm } from '../features/publishing/NewProductForm.js';
 import { ProductDetail } from '../features/publishing/ProductDetail.js';
 import { MarketplacePage } from '../features/discovery/MarketplacePage.js';
 import { ProductDetailPage } from '../features/discovery/ProductDetailPage.js';
+import { CommandCenterPage } from '../features/governance/CommandCenterPage.js';
+import { PolicyStudioPage } from '../features/governance/PolicyStudioPage.js';
+import { ComplianceMonitorPage } from '../features/governance/ComplianceMonitorPage.js';
+import { ExceptionsPage } from '../features/governance/ExceptionsPage.js';
 
 function ComingSoon({ title }: { title: string }) {
   return (
@@ -41,7 +45,10 @@ export function AppRouter() {
           <Route path="marketplace" element={<MarketplacePage />} />
           <Route path="marketplace/:orgId/:productId" element={<ProductDetailPage />} />
 
-          <Route path="governance" element={<ComingSoon title="Governance" />} />
+          <Route path="governance" element={<CommandCenterPage />} />
+          <Route path="governance/policies" element={<PolicyStudioPage />} />
+          <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
+          <Route path="governance/exceptions" element={<ExceptionsPage />} />
           <Route path="agents" element={<ComingSoon title="Agents" />} />
         </Route>
       </Routes>

@@ -593,7 +593,102 @@ components:
         minimum: 0
         default: 0
 
+    # ------------------------------------------------------------------
+    # Governance Dashboard
+    # ------------------------------------------------------------------
+    GovernanceDashboardSummary:
+      type: object
+      required: [totalPublished, compliant, driftDetected, gracePeriod, nonCompliant]
+      properties:
+        totalPublished:
+          type: integer
+        compliant:
+          type: integer
+        driftDetected:
+          type: integer
+        gracePeriod:
+          type: integer
+        nonCompliant:
+          type: integer
+
+    GovernanceDomainHealth:
+      type: object
+      required: [policyDomain, totalProducts, compliantCount, status]
+      properties:
+        policyDomain:
+          $ref: "#/components/schemas/PolicyDomain"
+        totalProducts:
+          type: integer
+        compliantCount:
+          type: integer
+        status:
+          type: string
+          enum: [green, amber, red]
+
+    GovernanceComplianceEvent:
+      type: object
+      required: [productId, productName, domainName, newState, changedAt]
+      properties:
+        productId:
+          $ref: "#/components/schemas/Uuid"
+        productName:
+          type: string
+        domainName:
+          type: string
+        previousState:
+          $ref: "#/components/schemas/ComplianceStateValue"
+          nullable: true
+        newState:
+          $ref: "#/components/schemas/ComplianceStateValue"
+        changedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    GovernanceDashboard:
+      type: object
+      required: [summary, domainHealth, recentEvents, activeExceptions, activeGracePeriods]
+      properties:
+        summary:
+          $ref: "#/components/schemas/GovernanceDashboardSummary"
+        domainHealth:
+          type: array
+          items:
+            $ref: "#/components/schemas/GovernanceDomainHealth"
+        recentEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/GovernanceComplianceEvent"
+        activeExceptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Exception"
+        activeGracePeriods:
+          type: array
+          items:
+            $ref: "#/components/schemas/GracePeriod"
+
 paths:
+  # ------------------------------------------------------------------
+  # Governance Dashboard
+  # ------------------------------------------------------------------
+  /organizations/{orgId}/governance/dashboard:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: getGovernanceDashboard
+      summary: Aggregate dashboard data for the Governance Command Center.
+      tags: [Compliance]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GovernanceDashboard"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ------------------------------------------------------------------
   # Policy Schemas
   # ------------------------------------------------------------------
