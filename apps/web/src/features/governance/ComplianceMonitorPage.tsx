@@ -152,7 +152,7 @@ export function ComplianceMonitorPage() {
 
     Promise.all([
       governanceApi.compliance.list(orgId, complianceFilter, undefined, 200, 0),
-      api.get<MarketplaceProductList>('/api/v1/marketplace/products?limit=200'),
+      api.get<MarketplaceProductList>('/marketplace/products?limit=200'),
     ])
       .then(([complianceList, productList]) => {
         setComplianceStates(complianceList.items);
