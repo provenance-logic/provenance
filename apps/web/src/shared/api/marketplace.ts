@@ -54,13 +54,25 @@ export const marketplaceApi = {
     get: (orgId: string, productId: string): Promise<MarketplaceProductDetail> =>
       api.get<MarketplaceProductDetail>(`${base(orgId)}/products/${productId}`),
 
+    getGlobal: (productId: string): Promise<MarketplaceProductDetail> =>
+      api.get<MarketplaceProductDetail>(`/marketplace/products/${productId}`),
+
     schema: (orgId: string, productId: string): Promise<ProductSchema> =>
       api.get<ProductSchema>(`${base(orgId)}/products/${productId}/schema`),
+
+    schemaGlobal: (productId: string): Promise<ProductSchema> =>
+      api.get<ProductSchema>(`/marketplace/products/${productId}/schema`),
 
     lineage: (orgId: string, productId: string, depth = 3): Promise<LineageGraph> =>
       api.get<LineageGraph>(`${base(orgId)}/products/${productId}/lineage?depth=${depth}`),
 
+    lineageGlobal: (productId: string, depth = 3): Promise<LineageGraph> =>
+      api.get<LineageGraph>(`/marketplace/products/${productId}/lineage?depth=${depth}`),
+
     slos: (orgId: string, productId: string): Promise<SloSummary> =>
       api.get<SloSummary>(`${base(orgId)}/products/${productId}/slos`),
+
+    slosGlobal: (productId: string): Promise<SloSummary> =>
+      api.get<SloSummary>(`/marketplace/products/${productId}/slos`),
   },
 };

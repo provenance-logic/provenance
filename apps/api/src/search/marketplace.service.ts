@@ -250,15 +250,7 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   async getProductDetail(orgId: string | undefined, productId: string): Promise<MarketplaceProductDetail> {
-    const where: Record<string, string> = { id: productId };
-    if (orgId) where.orgId = orgId;
-
-    const product = await this.productRepo.findOne({
-      where,
-      relations: ['ports'],
-    });
-    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
-
+    const product = await this.findProduct(productId, orgId, ['ports']);
     const resolvedOrgId = product.orgId;
 
     const [complianceMap, domainMap, trustScoreMap, activeConsumerCount] = await Promise.all([
@@ -285,17 +277,17 @@ export class MarketplaceService {
   // Schema
   // ---------------------------------------------------------------------------
 
-  async getProductSchema(orgId: string, productId: string): Promise<ProductSchema> {
-    const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
-    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+  async getProductSchema(orgId: string | undefined, productId: string): Promise<ProductSchema> {
+    const product = await this.findProduct(productId, orgId);
+    const resolvedOrgId = product.orgId;
 
     const [outputPorts, versions] = await Promise.all([
       this.portRepo.find({
-        where: { orgId, productId, portType: 'output' },
+        where: { orgId: resolvedOrgId, productId, portType: 'output' },
         order: { createdAt: 'ASC' },
       }),
       this.versionRepo.find({
-        where: { orgId, productId },
+        where: { orgId: resolvedOrgId, productId },
         order: { createdAt: 'DESC' },
         take: 20,
       }),
@@ -324,12 +316,11 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   async getProductLineage(
-    orgId: string,
+    orgId: string | undefined,
     productId: string,
     depth: number,
   ): Promise<LineageGraph> {
-    const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
-    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    const product = await this.findProduct(productId, orgId);
 
     // Phase 3: return a minimal placeholder graph containing only this product node.
     // Real lineage traversal will query Neo4j in Phase 3.
@@ -353,12 +344,12 @@ export class MarketplaceService {
   // SLOs (Phase 3 placeholder)
   // ---------------------------------------------------------------------------
 
-  async getProductSlos(orgId: string, productId: string): Promise<SloSummary> {
-    const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
-    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+  async getProductSlos(orgId: string | undefined, productId: string): Promise<SloSummary> {
+    const product = await this.findProduct(productId, orgId);
+    const resolvedOrgId = product.orgId;
 
     const outputPorts = await this.portRepo.find({
-      where: { orgId, productId, portType: 'output' },
+      where: { orgId: resolvedOrgId, productId, portType: 'output' },
       order: { createdAt: 'ASC' },
     });
 
@@ -439,6 +430,18 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async findProduct(
+    productId: string,
+    orgId?: string,
+    relations?: string[],
+  ): Promise<DataProductEntity> {
+    const where: Record<string, string> = { id: productId };
+    if (orgId) where.orgId = orgId;
+    const product = await this.productRepo.findOne({ where, relations });
+    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    return product;
+  }
 
   private async fetchComplianceMap(
     orgId: string,

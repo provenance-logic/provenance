@@ -5,6 +5,9 @@ import type {
   MarketplaceProductList,
   MarketplaceProductDetail,
   MarketplaceFilters,
+  ProductSchema,
+  LineageGraph,
+  SloSummary,
   OutputPortInterfaceType,
   ComplianceStateValue,
   MarketplaceSortOption,
@@ -50,5 +53,28 @@ export class MarketplaceGlobalController {
     @Param('productId') productId: string,
   ): Promise<MarketplaceProductDetail> {
     return this.marketplaceService.getProductDetail(undefined, productId);
+  }
+
+  @Get('products/:productId/schema')
+  getProductSchema(
+    @Param('productId') productId: string,
+  ): Promise<ProductSchema> {
+    return this.marketplaceService.getProductSchema(undefined, productId);
+  }
+
+  @Get('products/:productId/lineage')
+  getProductLineage(
+    @Param('productId') productId: string,
+    @Query('depth') depth?: string,
+  ): Promise<LineageGraph> {
+    const d = depth ? Math.min(5, Math.max(1, parseInt(depth, 10))) : 3;
+    return this.marketplaceService.getProductLineage(undefined, productId, d);
+  }
+
+  @Get('products/:productId/slos')
+  getProductSlos(
+    @Param('productId') productId: string,
+  ): Promise<SloSummary> {
+    return this.marketplaceService.getProductSlos(undefined, productId);
   }
 }

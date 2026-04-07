@@ -240,17 +240,17 @@ function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
   );
 }
 
-function SchemaTab({ orgId, productId }: { orgId: string; productId: string }) {
+function SchemaTab({ productId }: { productId: string }) {
   const [schema, setSchema] = useState<ProductSchema | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    marketplaceApi.products.schema(orgId, productId)
+    marketplaceApi.products.schemaGlobal(productId)
       .then((s) => { setSchema(s); setSelectedVersion(s.version); setLoading(false); })
       .catch((err) => { setError(err instanceof ApiError ? err.message : 'Failed to load schema'); setLoading(false); });
-  }, [orgId, productId]);
+  }, [productId]);
 
   if (loading) return <LoadingState label="schema" />;
   if (error)   return <ErrorState message={error} />;
@@ -360,7 +360,7 @@ function PortsTab({ ports }: { ports: Port[] }) {
   );
 }
 
-function LineageTab({ orgId, productId }: { orgId: string; productId: string }) {
+function LineageTab({ productId }: { productId: string }) {
   const [lineage, setLineage]   = useState<LineageGraph | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -369,10 +369,10 @@ function LineageTab({ orgId, productId }: { orgId: string; productId: string }) 
   const load = useCallback((d: number) => {
     setLoading(true);
     setError(null);
-    marketplaceApi.products.lineage(orgId, productId, d)
+    marketplaceApi.products.lineageGlobal(productId, d)
       .then((g) => { setLineage(g); setLoading(false); })
       .catch((err) => { setError(err instanceof ApiError ? err.message : 'Failed to load lineage'); setLoading(false); });
-  }, [orgId, productId]);
+  }, [productId]);
 
   useEffect(() => { load(depth); }, [load, depth]);
 
@@ -447,16 +447,16 @@ function LineageTab({ orgId, productId }: { orgId: string; productId: string }) 
   );
 }
 
-function SlosTab({ orgId, productId }: { orgId: string; productId: string }) {
+function SlosTab({ productId }: { productId: string }) {
   const [slos, setSlos]   = useState<SloSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    marketplaceApi.products.slos(orgId, productId)
+    marketplaceApi.products.slosGlobal(productId)
       .then((s) => { setSlos(s); setLoading(false); })
       .catch((err) => { setError(err instanceof ApiError ? err.message : 'Failed to load SLOs'); setLoading(false); });
-  }, [orgId, productId]);
+  }, [productId]);
 
   if (loading) return <LoadingState label="SLOs" />;
   if (error)   return <ErrorState message={error} />;
@@ -497,11 +497,9 @@ function SlosTab({ orgId, productId }: { orgId: string; productId: string }) {
 }
 
 function AccessTab({
-  orgId,
   product,
   onRequestAccess,
 }: {
-  orgId: string;
   product: MarketplaceProductDetail;
   onRequestAccess: () => void;
 }) {
@@ -514,7 +512,7 @@ function AccessTab({
 
   useEffect(() => {
     if (!principalId) return;
-    accessApi.requests.mine(orgId, undefined, 20, 0)
+    accessApi.requests.mine(product.orgId, undefined, 20, 0)
       .then((res) => {
         const req = res.items.find((r) => r.productId === product.id) ?? null;
         setMyRequest(req);
@@ -524,7 +522,7 @@ function AccessTab({
         setError(err instanceof ApiError ? err.message : 'Failed to load access status');
         setLoading(false);
       });
-  }, [orgId, product.id, principalId]);
+  }, [product.orgId, product.id, principalId]);
 
   if (loading) return <LoadingState label="access status" />;
   if (error)   return <ErrorState message={error} />;
@@ -644,7 +642,7 @@ function PageSkeleton() {
 // ---------------------------------------------------------------------------
 
 export function ProductDetailPage() {
-  const { orgId, productId } = useParams<{ orgId: string; productId: string }>();
+  const { productId } = useParams<{ orgId: string; productId: string }>();
   const [product, setProduct]           = useState<MarketplaceProductDetail | null>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
@@ -653,18 +651,18 @@ export function ProductDetailPage() {
   const [submittedRequest, setSubmittedRequest]   = useState<AccessRequest | null>(null);
 
   useEffect(() => {
-    if (!orgId || !productId) return;
+    if (!productId) return;
     setLoading(true);
     setError(null);
-    marketplaceApi.products.get(orgId, productId)
+    marketplaceApi.products.getGlobal(productId)
       .then((p) => { setProduct(p); setLoading(false); })
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : 'Failed to load product');
         setLoading(false);
       });
-  }, [orgId, productId]);
+  }, [productId]);
 
-  if (!orgId || !productId) {
+  if (!productId) {
     return <div className="p-6 text-sm text-red-600">Invalid URL parameters.</div>;
   }
 
@@ -769,13 +767,12 @@ export function ProductDetailPage() {
       {/* Tab panels */}
       <div id={`tabpanel-${activeTab}`} role="tabpanel" aria-label={activeTab}>
         {activeTab === 'overview' && <OverviewTab product={product} />}
-        {activeTab === 'schema'   && <SchemaTab   orgId={orgId} productId={productId} />}
+        {activeTab === 'schema'   && <SchemaTab   productId={productId} />}
         {activeTab === 'ports'    && <PortsTab    ports={product.ports} />}
-        {activeTab === 'lineage'  && <LineageTab  orgId={orgId} productId={productId} />}
-        {activeTab === 'slos'     && <SlosTab     orgId={orgId} productId={productId} />}
+        {activeTab === 'lineage'  && <LineageTab  productId={productId} />}
+        {activeTab === 'slos'     && <SlosTab     productId={productId} />}
         {activeTab === 'access'   && (
           <AccessTab
-            orgId={orgId}
             product={product}
             onRequestAccess={() => setShowAccessRequest(true)}
           />
@@ -785,7 +782,7 @@ export function ProductDetailPage() {
       {/* Access request slide-over */}
       {showAccessRequest && (
         <AccessRequestSlideOver
-          orgId={orgId}
+          orgId={product.orgId}
           productId={productId}
           productName={product.name}
           outputPorts={outputPorts}
