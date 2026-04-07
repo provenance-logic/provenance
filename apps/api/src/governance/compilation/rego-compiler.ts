@@ -80,7 +80,7 @@ export class RegoCompiler {
     return [
       `package ${packageName}`,
       '',
-      'import future.keywords.in',
+      'import rego.v1',
       '',
       body,
     ].join('\n');
@@ -170,7 +170,11 @@ export class RegoCompiler {
   private emptyViolations(policyDomain: PolicyDomain): string {
     return [
       `# No rules defined — policy domain '${policyDomain}' has no constraints.`,
-      `violations := set()`,
+      `# Empty set: the partial rule below never fires, so violations is always empty.`,
+      `violations contains v if {`,
+      `    v := {"rule_id": "unreachable", "detail": "unreachable", "policyDomain": "${policyDomain}"}`,
+      `    false`,
+      `}`,
     ].join('\n');
   }
 

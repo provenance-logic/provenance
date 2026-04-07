@@ -35,9 +35,9 @@ describe('RegoCompiler', () => {
       expect(rego).toContain('package provenance.governance.product_schema.org_abcdef123');
     });
 
-    it('imports future.keywords.in for the "in" keyword', () => {
+    it('imports rego.v1 for Rego v1 syntax', () => {
       const rego = compiler.compile('abc', 'product_schema', { rules: [] });
-      expect(rego).toContain('import future.keywords.in');
+      expect(rego).toContain('import rego.v1');
     });
   });
 
@@ -46,14 +46,16 @@ describe('RegoCompiler', () => {
   // ---------------------------------------------------------------------------
 
   describe('compile() — empty rules', () => {
-    it('emits a default violations := set() when rules array is empty', () => {
+    it('emits a never-matching partial rule when rules array is empty', () => {
       const rego = compiler.compile('org-1', 'product_schema', { rules: [] });
-      expect(rego).toContain('violations := set()');
+      expect(rego).toContain('violations contains v if {');
+      expect(rego).toContain('false');
     });
 
-    it('emits default violations when rules key is absent', () => {
+    it('emits a never-matching partial rule when rules key is absent', () => {
       const rego = compiler.compile('org-1', 'product_schema', {});
-      expect(rego).toContain('violations := set()');
+      expect(rego).toContain('violations contains v if {');
+      expect(rego).toContain('false');
     });
   });
 
@@ -181,9 +183,9 @@ describe('RegoCompiler', () => {
       expect(rego).toContain('"rule_id": "require_description"');
     });
 
-    it('does NOT emit violations := set() when rules are present', () => {
+    it('does NOT emit the empty-rules fallback when rules are present', () => {
       const rego = compiler.compile('org-1', 'product_schema', rules);
-      expect(rego).not.toContain('violations := set()');
+      expect(rego).not.toContain('unreachable');
     });
   });
 
@@ -201,14 +203,15 @@ describe('RegoCompiler', () => {
       expect(() => compiler.compile('org-1', 'product_schema', rules)).not.toThrow();
     });
 
-    it('emits violations := set() when all rules are of unknown type', () => {
+    it('emits the empty-rules fallback when all rules are of unknown type', () => {
       const rules = {
         rules: [
           { id: 'future_rule', type: 'some_future_rule_type', config: {} },
         ],
       };
       const rego = compiler.compile('org-1', 'product_schema', rules);
-      expect(rego).toContain('violations := set()');
+      expect(rego).toContain('violations contains v if {');
+      expect(rego).toContain('false');
     });
   });
 
