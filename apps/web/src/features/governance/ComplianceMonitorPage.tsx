@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { governanceApi } from '../../shared/api/governance.js';
 import { api } from '../../shared/api/client.js';
 import { ApiError } from '../../shared/api/client.js';
@@ -114,8 +115,11 @@ function SortIndicator({ field, sortField, sortDir }: { field: SortField; sortFi
 // Main component
 // ---------------------------------------------------------------------------
 
+const VALID_STATES: ComplianceStateValue[] = ['compliant', 'drift_detected', 'grace_period', 'non_compliant'];
+
 export function ComplianceMonitorPage() {
   const orgId = useOrgId();
+  const [searchParams] = useSearchParams();
 
   // Data
   const [complianceStates, setComplianceStates] = useState<ComplianceState[]>([]);
@@ -123,8 +127,11 @@ export function ComplianceMonitorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
-  const [stateFilter, setStateFilter] = useState<ComplianceStateValue | ''>('');
+  // Filters — initialise from URL ?state= if present
+  const initialState = searchParams.get('state') as ComplianceStateValue | null;
+  const [stateFilter, setStateFilter] = useState<ComplianceStateValue | ''>(
+    initialState && VALID_STATES.includes(initialState) ? initialState : '',
+  );
   const [search, setSearch] = useState('');
 
   // Sort
