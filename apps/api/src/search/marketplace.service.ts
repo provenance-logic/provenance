@@ -249,18 +249,23 @@ export class MarketplaceService {
   // Product detail
   // ---------------------------------------------------------------------------
 
-  async getProductDetail(orgId: string, productId: string): Promise<MarketplaceProductDetail> {
+  async getProductDetail(orgId: string | undefined, productId: string): Promise<MarketplaceProductDetail> {
+    const where: Record<string, string> = { id: productId };
+    if (orgId) where.orgId = orgId;
+
     const product = await this.productRepo.findOne({
-      where: { id: productId, orgId },
+      where,
       relations: ['ports'],
     });
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
 
+    const resolvedOrgId = product.orgId;
+
     const [complianceMap, domainMap, trustScoreMap, activeConsumerCount] = await Promise.all([
-      this.fetchComplianceMap(orgId, [productId]),
-      this.fetchDomainMap(orgId, [product.domainId]),
-      this.fetchTrustScoreMap(orgId, [productId]),
-      this.countActiveConsumers(orgId, productId),
+      this.fetchComplianceMap(resolvedOrgId, [productId]),
+      this.fetchDomainMap(resolvedOrgId, [product.domainId]),
+      this.fetchTrustScoreMap(resolvedOrgId, [productId]),
+      this.countActiveConsumers(resolvedOrgId, productId),
     ]);
 
     const base = this.toMarketplaceProduct(product, complianceMap, domainMap, trustScoreMap);

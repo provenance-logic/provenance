@@ -1,8 +1,9 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { MarketplaceService } from './marketplace.service.js';
 import type {
   MarketplaceProductList,
+  MarketplaceProductDetail,
   MarketplaceFilters,
   OutputPortInterfaceType,
   ComplianceStateValue,
@@ -42,5 +43,12 @@ export class MarketplaceGlobalController {
       page  ? parseInt(page,  10) : 1,
       limit ? parseInt(limit, 10) : 20,
     );
+  }
+
+  @Get('products/:productId')
+  getProductDetail(
+    @Param('productId') productId: string,
+  ): Promise<MarketplaceProductDetail> {
+    return this.marketplaceService.getProductDetail(undefined, productId);
   }
 }
