@@ -438,7 +438,9 @@ export class MarketplaceService {
   ): Promise<DataProductEntity> {
     const where: Record<string, string> = { id: productId };
     if (orgId) where.orgId = orgId;
-    const product = await this.productRepo.findOne({ where, relations });
+    const opts: { where: Record<string, string>; relations?: string[] } = { where };
+    if (relations) opts.relations = relations;
+    const product = await this.productRepo.findOne(opts);
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
     return product;
   }
