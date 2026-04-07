@@ -13,6 +13,7 @@ import { ProductIndexService } from './product-index.service.js';
 import { KafkaConsumerService } from './kafka-consumer.service.js';
 import { MarketplaceService } from './marketplace.service.js';
 import { MarketplaceController } from './marketplace.controller.js';
+import { MarketplaceGlobalController } from './marketplace-global.controller.js';
 
 @Module({
   imports: [
@@ -33,6 +34,6 @@ import { MarketplaceController } from './marketplace.controller.js';
     KafkaConsumerService,
     MarketplaceService,
   ],
-  controllers: [MarketplaceController],
+  controllers: [MarketplaceController, MarketplaceGlobalController],
 })
 export class SearchModule {}

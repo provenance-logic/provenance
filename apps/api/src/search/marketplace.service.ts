@@ -99,8 +99,25 @@ export class MarketplaceService {
   // Marketplace listing (PostgreSQL-first)
   // ---------------------------------------------------------------------------
 
+  async listAllProducts(
+    filters: MarketplaceFilters = {},
+    page = 1,
+    limit = 20,
+  ): Promise<MarketplaceProductList> {
+    return this.queryProducts(undefined, filters, page, limit);
+  }
+
   async listProducts(
     orgId: string,
+    filters: MarketplaceFilters = {},
+    page = 1,
+    limit = 20,
+  ): Promise<MarketplaceProductList> {
+    return this.queryProducts(orgId, filters, page, limit);
+  }
+
+  private async queryProducts(
+    orgId: string | undefined,
     filters: MarketplaceFilters = {},
     page = 1,
     limit = 20,
@@ -113,12 +130,15 @@ export class MarketplaceService {
     const qb = this.productRepo
       .createQueryBuilder('p')
       .leftJoinAndSelect('p.ports', 'port')
-      .where('p.orgId = :orgId', { orgId })
-      .andWhere(
+      .where(
         filters.includeDeprecated
           ? "p.status IN ('published', 'deprecated')"
           : "p.status = 'published'",
       );
+
+    if (orgId) {
+      qb.andWhere('p.orgId = :orgId', { orgId });
+    }
 
     // Domain filter
     if (filters.domain?.length) {
@@ -164,12 +184,31 @@ export class MarketplaceService {
     const products = await qb.getMany();
 
     // Enrich: compliance state, domain names, trust scores.
-    const productIds = products.map((p) => p.id);
-    const [complianceMap, domainMap, trustScoreMap] = await Promise.all([
-      this.fetchComplianceMap(orgId, productIds),
-      this.fetchDomainMap(orgId, products.map((p) => p.domainId)),
-      this.fetchTrustScoreMap(orgId, productIds),
-    ]);
+    // Group by orgId for cross-org queries.
+    const byOrg = new Map<string, string[]>();
+    for (const p of products) {
+      const list = byOrg.get(p.orgId) ?? [];
+      list.push(p.id);
+      byOrg.set(p.orgId, list);
+    }
+
+    const complianceMap = new Map<string, ComplianceStateValue>();
+    const domainMap = new Map<string, string>();
+    const trustScoreMap = new Map<string, number>();
+
+    await Promise.all(
+      [...byOrg.entries()].map(async ([org, ids]) => {
+        const domainIds = products.filter((p) => p.orgId === org).map((p) => p.domainId);
+        const [cm, dm, tm] = await Promise.all([
+          this.fetchComplianceMap(org, ids),
+          this.fetchDomainMap(org, domainIds),
+          this.fetchTrustScoreMap(org, ids),
+        ]);
+        for (const [k, v] of cm) complianceMap.set(k, v);
+        for (const [k, v] of dm) domainMap.set(k, v);
+        for (const [k, v] of tm) trustScoreMap.set(k, v);
+      }),
+    );
 
     let items: MarketplaceProduct[] = products.map((p) =>
       this.toMarketplaceProduct(p, complianceMap, domainMap, trustScoreMap),
