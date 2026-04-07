@@ -3,6 +3,12 @@ import keycloak from '../../auth/keycloak.js';
 const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Ensure the Keycloak token is fresh before every request. updateToken is a
+  // no-op when the token still has > 30 s of validity; otherwise it silently
+  // refreshes. This prevents 401s caused by stale tokens between background
+  // refresh intervals.
+  try { await keycloak.updateToken(30); } catch { /* refresh failed — proceed with current token, guard will 401 */ }
+
   const token = keycloak.token;
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
