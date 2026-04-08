@@ -23,6 +23,8 @@ import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { ApprovalEventEntity } from '../access/entities/approval-event.entity.js';
 import { EmissionLogEntity } from '../lineage/entities/emission-log.entity.js';
+import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
 
 @Module({
   imports: [
@@ -59,6 +61,8 @@ import { EmissionLogEntity } from '../lineage/entities/emission-log.entity.js';
             AccessRequestEntity,
             ApprovalEventEntity,
             EmissionLogEntity,
+            SloDeclarationEntity,
+            SloEvaluationEntity,
           ],
           // Migrations are managed by Flyway — TypeORM never runs them.
           synchronize: false,

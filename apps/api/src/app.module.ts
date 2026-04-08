@@ -9,6 +9,7 @@ import { ConnectorsModule } from './connectors/connectors.module.js';
 import { SearchModule } from './search/search.module.js';
 import { AccessModule } from './access/access.module.js';
 import { LineageModule } from './lineage/lineage.module.js';
+import { ObservabilityModule } from './observability/observability.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
 @Module({
@@ -23,6 +24,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     SearchModule,
     AccessModule,
     LineageModule,
+    ObservabilityModule,
   ],
 })
 export class AppModule implements NestModule {

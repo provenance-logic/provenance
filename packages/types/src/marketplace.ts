@@ -96,14 +96,12 @@ export interface ProductSchema {
 }
 
 // ---------------------------------------------------------------------------
-// Lineage endpoint (Phase 3 placeholder)
+// Lineage endpoint (Phase 3 — marketplace view types, kept for backward compat)
 // ---------------------------------------------------------------------------
-
-export type LineageNodeType = 'source' | 'data_product' | 'transformation' | 'agent';
 
 export interface LineageNode {
   id: string;
-  type: LineageNodeType;
+  type: string;
   label: string;
   metadata: Record<string, unknown>;
 }

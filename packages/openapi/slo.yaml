@@ -1,0 +1,409 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance SLO API
+  version: 1.0.0
+  description: |
+    Service Level Objective declarations and evaluation tracking.
+    Domain teams declare SLOs on their data products; external systems
+    post evaluation results. The trust score engine reads pass_rate_7d
+    from the summary endpoint as its SLO input (30% weight).
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: SLO Declarations
+    description: CRUD for SLO declarations on data products
+  - name: SLO Evaluations
+    description: Evaluation results posted by external systems
+  - name: SLO Summary
+    description: Aggregate SLO health per product (trust score input)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreateSloDeclarationDto:
+      type: object
+      required: [name, slo_type, metric_name, threshold_operator, threshold_value]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        slo_type:
+          type: string
+          enum: [freshness, null_rate, latency, completeness, custom]
+        metric_name:
+          type: string
+        threshold_operator:
+          type: string
+          enum: [lt, lte, gt, gte, eq]
+        threshold_value:
+          type: number
+        threshold_unit:
+          type: string
+        evaluation_window_hours:
+          type: integer
+          default: 24
+        external_system:
+          type: string
+
+    SloDeclarationDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        slo_type:
+          type: string
+        metric_name:
+          type: string
+        threshold_operator:
+          type: string
+        threshold_value:
+          type: number
+        threshold_unit:
+          type: string
+        evaluation_window_hours:
+          type: integer
+        external_system:
+          type: string
+        active:
+          type: boolean
+        pass_rate_7d:
+          type: number
+          nullable: true
+        pass_rate_30d:
+          type: number
+          nullable: true
+        last_evaluated_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSloEvaluationDto:
+      type: object
+      required: [measured_value, passed, evaluated_at, evaluated_by]
+      properties:
+        measured_value:
+          type: number
+        passed:
+          type: boolean
+        evaluated_at:
+          type: string
+          format: date-time
+        evaluated_by:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    SloEvaluationDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slo_id:
+          type: string
+          format: uuid
+        measured_value:
+          type: number
+        passed:
+          type: boolean
+        evaluated_at:
+          type: string
+          format: date-time
+        evaluated_by:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    SloSummaryDto:
+      type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        total_slos:
+          type: integer
+        active_slos:
+          type: integer
+        pass_rate_7d:
+          type: number
+        pass_rate_30d:
+          type: number
+        slos_with_no_data:
+          type: integer
+        last_evaluated_at:
+          type: string
+          format: date-time
+          nullable: true
+        slo_health:
+          type: string
+          enum: [green, yellow, red]
+
+paths:
+  /organizations/{orgId}/products/{productId}/slos:
+    post:
+      tags: [SLO Declarations]
+      summary: Create an SLO declaration
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSloDeclarationDto'
+      responses:
+        '201':
+          description: SLO declaration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloDeclarationDto'
+
+    get:
+      tags: [SLO Declarations]
+      summary: List SLO declarations for a product
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, inactive, all], default: active }
+      responses:
+        '200':
+          description: List of SLO declarations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SloDeclarationDto'
+
+  /organizations/{orgId}/products/{productId}/slos/{sloId}:
+    get:
+      tags: [SLO Declarations]
+      summary: Get SLO declaration with recent evaluations
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sloId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: SLO declaration with evaluations
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SloDeclarationDto'
+                  - type: object
+                    properties:
+                      evaluations:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SloEvaluationDto'
+
+    patch:
+      tags: [SLO Declarations]
+      summary: Update an SLO declaration
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sloId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                threshold_value:
+                  type: number
+                active:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated SLO declaration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloDeclarationDto'
+
+    delete:
+      tags: [SLO Declarations]
+      summary: Soft-delete an SLO declaration
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sloId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: SLO declaration deactivated
+
+  /organizations/{orgId}/products/{productId}/slos/{sloId}/evaluations:
+    post:
+      tags: [SLO Evaluations]
+      summary: Post an evaluation result
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sloId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSloEvaluationDto'
+      responses:
+        '201':
+          description: Evaluation recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloEvaluationDto'
+
+    get:
+      tags: [SLO Evaluations]
+      summary: List evaluation history for an SLO
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sloId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: List of evaluations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SloEvaluationDto'
+
+  /organizations/{orgId}/products/{productId}/slo-summary:
+    get:
+      tags: [SLO Summary]
+      summary: Aggregate SLO summary for trust score computation
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: SLO summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloSummaryDto'
