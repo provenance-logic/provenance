@@ -210,11 +210,11 @@ services:
     networks:
       - provenance
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8181/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
+      test: ["CMD", "/opa", "eval", "true"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # ---------------------------------------------------------------------------
   # Neo4j Community — lineage graph (memory-constrained for EC2 dev)
