@@ -1,9 +1,12 @@
 import {
   Injectable,
   NotFoundException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, MoreThan, In } from 'typeorm';
+import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
@@ -69,6 +72,8 @@ export class GovernanceService {
     private readonly principalRepo: Repository<PrincipalEntity>,
     private readonly opaClient: OpaClient,
     private readonly regoCompiler: RegoCompiler,
+    @Inject(forwardRef(() => TrustScoreService))
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -632,6 +637,9 @@ export class GovernanceService {
         }),
       );
     }
+
+    // Fire-and-forget trust score recompute
+    this.trustScoreService.recompute(orgId, productId).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------

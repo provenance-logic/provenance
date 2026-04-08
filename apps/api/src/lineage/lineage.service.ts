@@ -1,8 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import { EmissionLogEntity } from './entities/emission-log.entity.js';
+import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import type {
   EmitLineageEventRequest,
   LineageGraphDto,
@@ -23,6 +24,8 @@ export class LineageService {
   constructor(
     @InjectRepository(EmissionLogEntity)
     private readonly emissionLogRepo: Repository<EmissionLogEntity>,
+    @Inject(forwardRef(() => TrustScoreService))
+    private readonly trustScoreService: TrustScoreService,
   ) {
     this.initNeo4j();
   }
@@ -76,6 +79,11 @@ export class LineageService {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Neo4j sync failed for ${saved.id}: ${msg}`);
     });
+
+    // Fire-and-forget trust score recompute for the target product
+    if (targetNode.node_id) {
+      this.trustScoreService.recompute(orgId, targetNode.node_id).catch(() => {});
+    }
 
     return saved;
   }

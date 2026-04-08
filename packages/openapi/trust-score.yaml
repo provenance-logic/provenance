@@ -1,0 +1,168 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance Trust Score API
+  version: 1.0.0
+  description: |
+    Computes and tracks product trust scores. The trust score is a weighted
+    composite of five inputs: governance compliance (35%), SLO pass rate (30%),
+    lineage completeness (20%), usage activity (10%), and exception history (5%).
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Trust Score
+    description: Product trust score computation and history
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TrustScoreComponentDto:
+      type: object
+      properties:
+        raw_value:
+          type: number
+        component_score:
+          type: number
+        weight:
+          type: number
+        weighted_score:
+          type: number
+
+    TrustScoreComponentsDto:
+      type: object
+      properties:
+        governance_compliance:
+          $ref: '#/components/schemas/TrustScoreComponentDto'
+        slo_pass_rate:
+          $ref: '#/components/schemas/TrustScoreComponentDto'
+        lineage_completeness:
+          $ref: '#/components/schemas/TrustScoreComponentDto'
+        usage_activity:
+          $ref: '#/components/schemas/TrustScoreComponentDto'
+        exception_history:
+          $ref: '#/components/schemas/TrustScoreComponentDto'
+
+    TrustScoreDto:
+      type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        score:
+          type: number
+        band:
+          type: string
+          enum: [excellent, good, fair, poor, critical]
+        components:
+          $ref: '#/components/schemas/TrustScoreComponentsDto'
+        computed_at:
+          type: string
+          format: date-time
+
+    TrustScoreHistoryDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        score:
+          type: number
+        band:
+          type: string
+        components:
+          $ref: '#/components/schemas/TrustScoreComponentsDto'
+        computed_at:
+          type: string
+          format: date-time
+
+paths:
+  /organizations/{orgId}/products/{productId}/trust-score:
+    get:
+      tags: [Trust Score]
+      summary: Get current trust score
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current trust score
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustScoreDto'
+
+  /organizations/{orgId}/products/{productId}/trust-score/history:
+    get:
+      tags: [Trust Score]
+      summary: Get trust score history
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 30, maximum: 90 }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Trust score history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrustScoreHistoryDto'
+
+  /organizations/{orgId}/products/{productId}/trust-score/recompute:
+    post:
+      tags: [Trust Score]
+      summary: Trigger immediate trust score recomputation
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Recomputation triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustScoreDto'

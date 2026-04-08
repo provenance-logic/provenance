@@ -1,4 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -10,10 +11,12 @@ import { SearchModule } from './search/search.module.js';
 import { AccessModule } from './access/access.module.js';
 import { LineageModule } from './lineage/lineage.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
+import { TrustScoreModule } from './trust-score/trust-score.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     DatabaseModule,
     AuthModule,
     HealthModule,
@@ -25,6 +28,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     AccessModule,
     LineageModule,
     ObservabilityModule,
+    TrustScoreModule,
   ],
 })
 export class AppModule implements NestModule {

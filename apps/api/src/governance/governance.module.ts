@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { getConfig } from '../config.js';
 import { PolicySchemaEntity } from './entities/policy-schema.entity.js';
@@ -14,6 +14,7 @@ import { OpaClient, OPA_BASE_URL } from './opa/opa-client.js';
 import { RegoCompiler } from './compilation/rego-compiler.js';
 import { GovernanceService } from './governance.service.js';
 import { GovernanceController } from './governance.controller.js';
+import { TrustScoreModule } from '../trust-score/trust-score.module.js';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { GovernanceController } from './governance.controller.js';
       DomainEntity,
       PrincipalEntity,
     ]),
+    forwardRef(() => TrustScoreModule),
   ],
   providers: [
     {

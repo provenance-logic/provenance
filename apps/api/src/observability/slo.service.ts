@@ -2,12 +2,15 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { SloDeclarationEntity } from './entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from './entities/slo-evaluation.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { TrustScoreService } from '../trust-score/trust-score.service.js';
 
 // ---------------------------------------------------------------------------
 // DTO interfaces (used by controller and trust score engine)
@@ -64,6 +67,8 @@ export class SloService {
     private readonly evaluationRepo: Repository<SloEvaluationEntity>,
     @InjectRepository(DataProductEntity)
     private readonly productRepo: Repository<DataProductEntity>,
+    @Inject(forwardRef(() => TrustScoreService))
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -165,6 +170,10 @@ export class SloService {
     });
 
     const saved = await this.evaluationRepo.save(entity);
+
+    // Fire-and-forget trust score recompute
+    this.trustScoreService.recompute(orgId, decl.productId).catch(() => {});
+
     return this.toEvaluationDto(saved);
   }
 
