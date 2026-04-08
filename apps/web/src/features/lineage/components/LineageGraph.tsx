@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
+import dagre from 'cytoscape-dagre';
 import type { LineageGraphDto, LineageGraphNode } from '@provenance/types';
+
+cytoscape.use(dagre);
 
 const NODE_COLORS: Record<string, string> = {
   Source:         '#6366f1',
@@ -22,14 +25,19 @@ interface Props {
 export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
+  // Keep a lookup so we can return proper LineageGraphNode on click
+  const nodeMapRef = useRef<Map<string, LineageGraphNode>>(new Map());
 
   useEffect(() => {
     if (!containerRef.current || isLoading) return;
     if (graph.nodes.length === 0) return;
 
+    // Build node lookup for click handler
+    const nodeMap = new Map<string, LineageGraphNode>();
     const elements: cytoscape.ElementDefinition[] = [];
 
     for (const node of graph.nodes) {
+      nodeMap.set(node.id, node);
       const isCentral = node.id === centralProductId;
       elements.push({
         data: {
@@ -37,10 +45,10 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
           label: node.label,
           nodeType: node.type,
           isCentral,
-          metadata: node.metadata,
         },
       });
     }
+    nodeMapRef.current = nodeMap;
 
     for (const edge of graph.edges) {
       elements.push({
@@ -65,18 +73,27 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
             'text-valign': 'bottom',
             'text-halign': 'center',
             'font-size': '11px',
-            'text-margin-y': 6,
-            'width': 40,
-            'height': 40,
+            'text-margin-y': 8,
+            'width': 45,
+            'height': 45,
             'background-color': (ele: cytoscape.NodeSingular) =>
               NODE_COLORS[ele.data('nodeType') as string] ?? NODE_COLORS.Unknown,
-            'border-width': (ele: cytoscape.NodeSingular) =>
-              ele.data('isCentral') ? 4 : 1,
-            'border-color': (ele: cytoscape.NodeSingular) =>
-              ele.data('isCentral') ? '#1e40af' : '#cbd5e1',
+            'border-width': 1,
+            'border-color': '#cbd5e1',
             'color': '#334155',
             'text-wrap': 'ellipsis',
-            'text-max-width': '90px',
+            'text-max-width': '100px',
+          } as cytoscape.Css.Node,
+        },
+        {
+          selector: 'node[?isCentral]',
+          style: {
+            'width': 60,
+            'height': 60,
+            'border-width': 4,
+            'border-color': '#1e40af',
+            'font-size': '12px',
+            'font-weight': 'bold',
           } as cytoscape.Css.Node,
         },
         {
@@ -103,19 +120,21 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
         },
       ],
       layout: {
-        name: 'breadthfirst',
-        directed: true,
-        spacingFactor: 1.5,
-        roots: [`#${CSS.escape(centralProductId)}`],
-      },
+        name: 'dagre',
+        rankDir: 'LR',
+        nodeSep: 80,
+        rankSep: 120,
+        padding: 40,
+      } as cytoscape.LayoutOptions,
       userZoomingEnabled: true,
       userPanningEnabled: true,
       boxSelectionEnabled: false,
     });
 
     cy.on('tap', 'node', (evt) => {
-      const nodeData = evt.target.data() as LineageGraphNode;
-      onNodeClick?.(nodeData);
+      const id = evt.target.id() as string;
+      const node = nodeMapRef.current.get(id);
+      if (node) onNodeClick?.(node);
     });
 
     cyRef.current = cy;

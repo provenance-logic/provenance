@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Component } from 'react';
+import type { ReactNode } from 'react';
 import type { LineageGraphDto, LineageGraphNode } from '@provenance/types';
 import { LineageGraph } from './components/LineageGraph.js';
 import { NodeDetailPanel } from './components/NodeDetailPanel.js';
@@ -9,6 +10,42 @@ import {
   fetchUpstreamLineage,
   fetchDownstreamLineage,
 } from './api/lineage-api.js';
+
+// ---------------------------------------------------------------------------
+// Error boundary for debugging NodeDetailPanel crash
+// ---------------------------------------------------------------------------
+
+interface EBProps { fallback: ReactNode; children: ReactNode }
+interface EBState { hasError: boolean; error: Error | null }
+
+class ErrorBoundary extends Component<EBProps, EBState> {
+  constructor(props: EBProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error) {
+    console.error('ErrorBoundary caught:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="absolute top-0 right-0 w-80 bg-red-50 border-l border-red-200 p-4 z-10">
+          <p className="text-sm font-medium text-red-700">Panel render error</p>
+          <pre className="mt-2 text-xs text-red-600 whitespace-pre-wrap">{this.state.error?.message}</pre>
+          <pre className="mt-1 text-xs text-red-400 whitespace-pre-wrap">{this.state.error?.stack}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 interface Props {
   productId: string;
@@ -70,6 +107,7 @@ export function LineageExplorer({ productId, orgId }: Props) {
   useEffect(() => { void load(); }, [load]);
 
   const handleNodeClick = useCallback((node: LineageGraphNode) => {
+    console.log('Node clicked, data:', JSON.stringify(node, null, 2));
     setSelectedNode(node);
   }, []);
 
@@ -105,10 +143,11 @@ export function LineageExplorer({ productId, orgId }: Props) {
             onNodeClick={handleNodeClick}
             isLoading={isLoading}
           />
-          <NodeDetailPanel
-            node={selectedNode}
-            onClose={() => setSelectedNode(null)}
-          />
+          {selectedNode && (
+            <ErrorBoundary fallback={<div className="absolute top-0 right-0 w-80 bg-red-50 p-4 z-10">Panel error - check console</div>}>
+              <NodeDetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+            </ErrorBoundary>
+          )}
         </div>
       )}
 
