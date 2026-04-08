@@ -55,4 +55,24 @@ export class LineageController {
     const d = Math.min(Math.max(Number(depth) || 3, 1), 5);
     return this.lineageService.getUpstreamLineage(orgId, productNodeId, d);
   }
+
+  @Get('products/:productNodeId/downstream')
+  async getDownstream(
+    @Param('orgId') orgId: string,
+    @Param('productNodeId') productNodeId: string,
+    @Query('depth') depth = '3',
+  ): Promise<LineageGraphDto> {
+    const d = Math.min(Math.max(Number(depth) || 3, 1), 5);
+    return this.lineageService.getDownstreamLineage(orgId, productNodeId, d);
+  }
+
+  @Get('products/:productNodeId/impact')
+  async getImpact(
+    @Param('orgId') orgId: string,
+    @Param('productNodeId') productNodeId: string,
+    @Query('depth') depth = '3',
+  ): Promise<LineageGraphDto> {
+    const d = Math.min(Math.max(Number(depth) || 3, 1), 5);
+    return this.lineageService.getImpactAnalysis(orgId, productNodeId, d);
+  }
 }

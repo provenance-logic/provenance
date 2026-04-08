@@ -338,4 +338,223 @@ export class LineageService {
 
     return { productId: productNodeId, depth, nodes, edges };
   }
+
+  // ---------------------------------------------------------------------------
+  // Query downstream lineage from Neo4j
+  // ---------------------------------------------------------------------------
+
+  async getDownstreamLineage(
+    orgId: string,
+    productNodeId: string,
+    depth: number,
+  ): Promise<LineageGraphDto> {
+    if (!this.driver) {
+      return { productId: productNodeId, depth, nodes: [], edges: [] };
+    }
+
+    const session: Session = this.driver.session();
+    try {
+      const result = await session.run(
+        `
+        MATCH (start {node_id: $nodeId, org_id: $orgId})
+        CALL apoc.path.subgraphAll(start, {
+          relationshipFilter: 'LINEAGE_EDGE>',
+          maxLevel: $depth
+        })
+        YIELD nodes, relationships
+        RETURN nodes, relationships
+        `,
+        { nodeId: productNodeId, orgId, depth: neo4j.int(depth) },
+      );
+
+      return this.parseGraphResult(result, productNodeId, depth);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`APOC downstream query failed, trying simple traversal: ${msg}`);
+      return this.getDownstreamLineageSimple(session, orgId, productNodeId, depth);
+    } finally {
+      await session.close();
+    }
+  }
+
+  private async getDownstreamLineageSimple(
+    session: Session,
+    orgId: string,
+    productNodeId: string,
+    depth: number,
+  ): Promise<LineageGraphDto> {
+    const result = await session.run(
+      `
+      MATCH path = (start {node_id: $nodeId, org_id: $orgId})-[r:LINEAGE_EDGE*1..${depth}]->(downstream)
+      WHERE downstream.org_id = $orgId
+      UNWIND nodes(path) AS n
+      UNWIND relationships(path) AS rel
+      RETURN DISTINCT
+        n.node_id AS nodeId, n.node_type AS nodeType, n.display_name AS displayName, n.metadata AS metadata,
+        startNode(rel).node_id AS srcId, endNode(rel).node_id AS tgtId,
+        rel.emission_id AS emissionId, rel.edge_type AS edgeType, rel.confidence AS confidence
+      `,
+      { nodeId: productNodeId, orgId },
+    );
+
+    return this.parseSimpleResult(result, productNodeId, depth);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Impact analysis — both directions
+  // ---------------------------------------------------------------------------
+
+  async getImpactAnalysis(
+    orgId: string,
+    productNodeId: string,
+    depth: number = 3,
+  ): Promise<LineageGraphDto> {
+    if (!this.driver) {
+      return { productId: productNodeId, depth, nodes: [], edges: [] };
+    }
+
+    const session: Session = this.driver.session();
+    try {
+      const result = await session.run(
+        `
+        MATCH (start {node_id: $nodeId, org_id: $orgId})
+        CALL apoc.path.subgraphAll(start, {
+          relationshipFilter: 'LINEAGE_EDGE',
+          maxLevel: $depth
+        })
+        YIELD nodes, relationships
+        RETURN nodes, relationships
+        `,
+        { nodeId: productNodeId, orgId, depth: neo4j.int(depth) },
+      );
+
+      return this.parseGraphResult(result, productNodeId, depth);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`APOC impact query failed, trying simple traversal: ${msg}`);
+
+      // Fetch both directions and merge
+      const [up, down] = await Promise.all([
+        this.getUpstreamLineageSimple(session, orgId, productNodeId, depth),
+        this.getDownstreamLineageSimple(session, orgId, productNodeId, depth),
+      ]);
+
+      const seenNodes = new Set<string>();
+      const seenEdges = new Set<string>();
+      const nodes: LineageGraphNode[] = [];
+      const edges: LineageGraphEdge[] = [];
+
+      for (const g of [up, down]) {
+        for (const n of g.nodes) {
+          if (!seenNodes.has(n.id)) { seenNodes.add(n.id); nodes.push(n); }
+        }
+        for (const e of g.edges) {
+          if (!seenEdges.has(e.id)) { seenEdges.add(e.id); edges.push(e); }
+        }
+      }
+
+      return { productId: productNodeId, depth, nodes, edges };
+    } finally {
+      await session.close();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared result parsers
+  // ---------------------------------------------------------------------------
+
+  private parseGraphResult(
+    result: { records: Array<{ get(key: string): unknown }> },
+    productNodeId: string,
+    depth: number,
+  ): LineageGraphDto {
+    const nodes: LineageGraphNode[] = [];
+    const edges: LineageGraphEdge[] = [];
+    const seenNodes = new Set<string>();
+    const seenEdges = new Set<string>();
+
+    for (const record of result.records) {
+      const rawNodes = record.get('nodes') as Array<{ properties: Record<string, unknown>; elementId: string }>;
+      const rawRels = record.get('relationships') as Array<{
+        properties: Record<string, unknown>;
+        elementId: string;
+        startNodeElementId: string;
+        endNodeElementId: string;
+      }>;
+
+      const elementIdToNodeId = new Map<string, string>();
+
+      for (const n of rawNodes) {
+        const nodeId = n.properties.node_id as string;
+        elementIdToNodeId.set(n.elementId, nodeId);
+        if (!seenNodes.has(nodeId)) {
+          seenNodes.add(nodeId);
+          nodes.push({
+            id: nodeId,
+            type: (n.properties.node_type as string) ?? 'Unknown',
+            label: (n.properties.display_name as string) ?? nodeId,
+            metadata: n.properties.metadata
+              ? JSON.parse(n.properties.metadata as string)
+              : {},
+          });
+        }
+      }
+
+      for (const r of rawRels) {
+        const edgeId = r.properties.emission_id as string ?? r.elementId;
+        if (!seenEdges.has(edgeId)) {
+          seenEdges.add(edgeId);
+          edges.push({
+            id: edgeId,
+            source: elementIdToNodeId.get(r.startNodeElementId) ?? 'unknown',
+            target: elementIdToNodeId.get(r.endNodeElementId) ?? 'unknown',
+            edgeType: (r.properties.edge_type as string) ?? 'DERIVES_FROM',
+            confidence: (r.properties.confidence as number) ?? 1.0,
+          });
+        }
+      }
+    }
+
+    return { productId: productNodeId, depth, nodes, edges };
+  }
+
+  private parseSimpleResult(
+    result: { records: Array<{ get(key: string): unknown }> },
+    productNodeId: string,
+    depth: number,
+  ): LineageGraphDto {
+    const nodes: LineageGraphNode[] = [];
+    const edges: LineageGraphEdge[] = [];
+    const seenNodes = new Set<string>();
+    const seenEdges = new Set<string>();
+
+    for (const record of result.records) {
+      const nodeId = record.get('nodeId') as string;
+      if (!seenNodes.has(nodeId)) {
+        seenNodes.add(nodeId);
+        nodes.push({
+          id: nodeId,
+          type: (record.get('nodeType') as string) ?? 'Unknown',
+          label: (record.get('displayName') as string) ?? nodeId,
+          metadata: record.get('metadata')
+            ? JSON.parse(record.get('metadata') as string)
+            : {},
+        });
+      }
+
+      const emissionId = record.get('emissionId') as string;
+      if (emissionId && !seenEdges.has(emissionId)) {
+        seenEdges.add(emissionId);
+        edges.push({
+          id: emissionId,
+          source: record.get('srcId') as string,
+          target: record.get('tgtId') as string,
+          edgeType: (record.get('edgeType') as string) ?? 'DERIVES_FROM',
+          confidence: (record.get('confidence') as number) ?? 1.0,
+        });
+      }
+    }
+
+    return { productId: productNodeId, depth, nodes, edges };
+  }
 }

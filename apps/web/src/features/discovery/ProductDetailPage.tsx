@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { marketplaceApi } from '../../shared/api/marketplace.js';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import { AccessRequestSlideOver } from './AccessRequestSlideOver.js';
+import { LineageExplorer } from '../lineage/LineageExplorer.js';
 import type {
   MarketplaceProductDetail,
   ProductSchema,
-  LineageGraph,
   SloSummary,
   TrustScoreBreakdown,
   Port,
@@ -390,93 +390,6 @@ function PortsTab({ ports }: { ports: Port[] }) {
   );
 }
 
-function LineageTab({ productId }: { productId: string }) {
-  const [lineage, setLineage]   = useState<LineageGraph | null>(null);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState<string | null>(null);
-  const [depth, setDepth]       = useState(3);
-
-  const load = useCallback((d: number) => {
-    setLoading(true);
-    setError(null);
-    marketplaceApi.products.lineageGlobal(productId, d)
-      .then((g) => { setLineage(g); setLoading(false); })
-      .catch((err) => { setError(err instanceof ApiError ? err.message : 'Failed to load lineage'); setLoading(false); });
-  }, [productId]);
-
-  useEffect(() => { load(depth); }, [load, depth]);
-
-  if (loading) return <LoadingState label="lineage graph" />;
-  if (error)   return <ErrorState message={error} />;
-  if (!lineage) return null;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <label htmlFor="lineageDepth" className="text-sm text-slate-600 font-medium">Traversal depth</label>
-        <select
-          id="lineageDepth"
-          value={depth}
-          onChange={(e) => setDepth(parseInt(e.target.value, 10))}
-          className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-        >
-          {[1, 2, 3, 4, 5].map((d) => <option key={d} value={d}>{d} hop{d !== 1 ? 's' : ''}</option>)}
-        </select>
-      </div>
-
-      {lineage.isPlaceholder ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
-          <p className="text-sm font-medium text-amber-800">Lineage graph coming in Phase 3</p>
-          <p className="mt-1 text-xs text-amber-600">
-            The Neo4j lineage graph will be wired up in Phase 3. Once live, this view will show
-            upstream source systems, transformations, and downstream consumers with configurable
-            traversal depth.
-          </p>
-          <div className="mt-4 flex justify-center">
-            {/* Minimal placeholder graph: one node */}
-            <div className="flex flex-col items-center gap-1">
-              <div className="w-32 h-10 rounded-lg bg-brand-100 border border-brand-300 flex items-center justify-center">
-                <span className="text-xs font-medium text-brand-700 truncate px-2">{lineage.nodes[0]?.label}</span>
-              </div>
-              <span className="text-xs text-slate-400">← this product</span>
-            </div>
-          </div>
-        </div>
-      ) : (
-        // Real lineage data (Phase 3): render node/edge list until react-flow is wired.
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
-          <div>
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Nodes ({lineage.nodes.length})</h3>
-            <div className="flex flex-wrap gap-2">
-              {lineage.nodes.map((n) => (
-                <span key={n.id} className="px-2 py-1 bg-slate-100 rounded text-xs text-slate-700">
-                  {n.label} <span className="text-slate-400">({n.type})</span>
-                </span>
-              ))}
-            </div>
-          </div>
-          {lineage.edges.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Edges ({lineage.edges.length})</h3>
-              <div className="space-y-1">
-                {lineage.edges.map((e) => (
-                  <p key={e.id} className="text-xs text-slate-600">
-                    <span className="font-mono">{e.source}</span>
-                    {' → '}
-                    <span className="text-slate-400 italic">{e.label}</span>
-                    {' → '}
-                    <span className="font-mono">{e.target}</span>
-                  </p>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SlosTab({ productId }: { productId: string }) {
   const [slos, setSlos]   = useState<SloSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -799,7 +712,7 @@ export function ProductDetailPage() {
         {activeTab === 'overview' && <OverviewTab product={product} />}
         {activeTab === 'schema'   && <SchemaTab   productId={productId} />}
         {activeTab === 'ports'    && <PortsTab    ports={product.ports} />}
-        {activeTab === 'lineage'  && <LineageTab  productId={productId} />}
+        {activeTab === 'lineage'  && <LineageExplorer productId={productId} orgId={product.orgId} />}
         {activeTab === 'slos'     && <SlosTab     productId={productId} />}
         {activeTab === 'access'   && (
           <AccessTab
