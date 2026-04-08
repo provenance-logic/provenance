@@ -1,0 +1,21 @@
+{
+  "name": "@provenance/sdk-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provenance Lineage TypeScript SDK — zero-dependency client for emitting lineage events",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.12",
+    "ts-jest": "^29.1.2"
+  }
+}

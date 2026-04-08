@@ -1,18 +1,16 @@
 # Provenance — EC2 Development Stack
 #
-# Lightweight compose for EC2 dev instances. Includes only the 5 services
-# needed for basic UI and API development:
+# Lightweight compose for EC2 dev instances. Includes the core services
+# plus Neo4j and Redpanda for lineage and event streaming:
 #
-#   postgres, keycloak, opa, api, web
+#   postgres, keycloak, opa, neo4j, redpanda, redpanda-init, api, web
 #
-# Excluded (not needed for Phase 1 dev): neo4j, redpanda, opensearch, minio,
+# Excluded (not needed for Phase 1 dev): opensearch, minio,
 # temporal, kong, and all init/setup containers.
 #
 # Disabled features when running this stack:
-#   - Event publishing (REDPANDA_ENABLED=false)
 #   - Product search/indexing (OPENSEARCH_ENABLED=false)
 #   - Access workflows (TEMPORAL_ENABLED=false)
-#   - Lineage graph (NEO4J_ENABLED=false)
 #
 # Usage:
 #   ./start-ec2.sh up -d
@@ -30,6 +28,11 @@ volumes:
   postgres_data:
   keycloak_data:
   opa_policies:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
+  redpanda_data:
 
 services:
 
@@ -58,6 +61,33 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Flyway — schema migrations
+  # Runs all SQL migrations (V1–V9) before the API starts.
+  # Uses the official Flyway Docker image — no Java needed in the API container.
+  # ---------------------------------------------------------------------------
+  flyway-migrate:
+    image: flyway/flyway:10-alpine
+    container_name: provenance-ec2-flyway-migrate
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        flyway -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql baseline && \
+        flyway -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/provenance
+      FLYWAY_USER: provenance
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+    volumes:
+      - ../../apps/api/flyway.conf:/flyway/conf/flyway.conf:ro
+      - ../../apps/api/migrations:/flyway/sql:ro
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
   # Keycloak DB init — disable SSL requirement directly in PostgreSQL
@@ -187,6 +217,99 @@ services:
       start_period: 15s
 
   # ---------------------------------------------------------------------------
+  # Neo4j Community — lineage graph (memory-constrained for EC2 dev)
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5.18-community
+    container_name: provenance-ec2-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-provenance_dev_password}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt protocol
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Redpanda — Kafka-compatible message broker (memory-constrained for EC2 dev)
+  # ---------------------------------------------------------------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    container_name: provenance-ec2-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    ports:
+      - "19092:19092"   # External Kafka
+      - "18082:18082"   # External Pandaproxy (REST)
+      - "18081:18081"   # Schema Registry
+      - "9644:9644"     # Admin API
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy.+true' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Redpanda init — create topics on first boot
+  # ---------------------------------------------------------------------------
+  redpanda-init:
+    image: redpandadata/redpanda:v24.1.1
+    container_name: provenance-ec2-redpanda-init
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "Creating Redpanda topics..."
+        rpk topic create product.lifecycle --brokers redpanda:9092 -r 1 -p 1 2>/dev/null || true
+        rpk topic create connector.health  --brokers redpanda:9092 -r 1 -p 1 2>/dev/null || true
+        rpk topic create lineage.events    --brokers redpanda:9092 -r 1 -p 1 2>/dev/null || true
+        rpk topic create lineage.events.dlq --brokers redpanda:9092 -r 1 -p 1 2>/dev/null || true
+        echo "Topics created:"
+        rpk topic list --brokers redpanda:9092
+    networks:
+      - provenance
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
   # NestJS API — control plane monolith
   # ---------------------------------------------------------------------------
   api:
@@ -213,11 +336,17 @@ services:
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      # Neo4j
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-provenance_dev_password}
+      NEO4J_ENABLED: "true"
+      # Redpanda / Kafka
+      KAFKA_BROKERS: redpanda:9092
+      REDPANDA_ENABLED: "true"
       # Disabled services — connections fail gracefully
-      REDPANDA_ENABLED: "false"
       OPENSEARCH_ENABLED: "false"
       TEMPORAL_ENABLED: "false"
-      NEO4J_ENABLED: "false"
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached
@@ -229,12 +358,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flyway-migrate:
+        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
       opa:
         condition: service_started
+      neo4j:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/v1/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

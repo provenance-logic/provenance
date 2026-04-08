@@ -22,6 +22,7 @@ import { GracePeriodEntity } from '../governance/entities/grace-period.entity.js
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { ApprovalEventEntity } from '../access/entities/approval-event.entity.js';
+import { EmissionLogEntity } from '../lineage/entities/emission-log.entity.js';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { ApprovalEventEntity } from '../access/entities/approval-event.entity.js
             AccessGrantEntity,
             AccessRequestEntity,
             ApprovalEventEntity,
+            EmissionLogEntity,
           ],
           // Migrations are managed by Flyway — TypeORM never runs them.
           synchronize: false,

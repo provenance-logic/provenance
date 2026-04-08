@@ -10,3 +10,4 @@ export * from './connectors.js';
 export * from './access.js';
 export * from './events.js';
 export * from './marketplace.js';
+export * from './lineage.js';
