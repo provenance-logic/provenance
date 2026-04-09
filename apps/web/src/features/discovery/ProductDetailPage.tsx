@@ -6,10 +6,10 @@ import { useAuth } from '../../auth/AuthProvider.js';
 import { AccessRequestSlideOver } from './AccessRequestSlideOver.js';
 import { LineageExplorer } from '../lineage/LineageExplorer.js';
 import { TrustScorePanel } from '../trust-score/TrustScorePanel.js';
+import { ObservabilityDashboard } from '../observability/ObservabilityDashboard.js';
 import type {
   MarketplaceProductDetail,
   ProductSchema,
-  SloSummary,
   Port,
   AccessRequest,
   DataClassification,
@@ -255,55 +255,6 @@ function PortsTab({ ports }: { ports: Port[] }) {
           )}
         </div>
       ))}
-    </div>
-  );
-}
-
-function SlosTab({ productId }: { productId: string }) {
-  const [slos, setSlos]   = useState<SloSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    marketplaceApi.products.slosGlobal(productId)
-      .then((s) => { setSlos(s); setLoading(false); })
-      .catch((err) => { setError(err instanceof ApiError ? err.message : 'Failed to load SLOs'); setLoading(false); });
-  }, [productId]);
-
-  if (loading) return <LoadingState label="SLOs" />;
-  if (error)   return <ErrorState message={error} />;
-  if (!slos)   return null;
-
-  return (
-    <div className="space-y-4">
-      {slos.isPlaceholder && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-700">
-          SLO evaluation history is a Phase 3 feature. The declarations below come from port
-          SLA descriptions; actual compliance metrics will be computed by the observability
-          pipeline in Phase 3.
-        </div>
-      )}
-      {slos.declarations.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 text-sm text-slate-500">
-          No SLOs declared on output ports. Add an SLA description to an output port to populate this view.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {slos.declarations.map((d) => (
-            <div key={d.portId} className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-800">{d.portName}</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-500">unknown</span>
-              </div>
-              {d.description ? (
-                <p className="mt-1 text-xs text-slate-600">{d.description}</p>
-              ) : (
-                <p className="mt-1 text-xs text-slate-400 italic">No SLA description provided.</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -582,7 +533,7 @@ export function ProductDetailPage() {
         {activeTab === 'schema'   && <SchemaTab   productId={productId} />}
         {activeTab === 'ports'    && <PortsTab    ports={product.ports} />}
         {activeTab === 'lineage'  && <LineageExplorer productId={productId} orgId={product.orgId} />}
-        {activeTab === 'slos'     && <SlosTab     productId={productId} />}
+        {activeTab === 'slos'     && <ObservabilityDashboard productId={productId} orgId={product.orgId} />}
         {activeTab === 'access'   && (
           <AccessTab
             product={product}
