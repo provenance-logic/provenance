@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import type { LineageGraphDto, LineageGraphNode } from '@provenance/types';
@@ -23,13 +23,23 @@ interface Props {
 }
 
 export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const cyContainerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
-  // Keep a lookup so we can return proper LineageGraphNode on click
   const nodeMapRef = useRef<Map<string, LineageGraphNode>>(new Map());
+  // Store onNodeClick in a ref so the Cytoscape tap handler always sees the
+  // latest callback without being in the effect dependency array.
+  const onNodeClickRef = useRef(onNodeClick);
+  onNodeClickRef.current = onNodeClick;
 
-  useEffect(() => {
-    if (!containerRef.current || isLoading) return;
+  const buildAndRender = useCallback(() => {
+    if (!cyContainerRef.current) return;
+
+    // Always tear down the previous instance before creating a new one
+    if (cyRef.current) {
+      cyRef.current.destroy();
+      cyRef.current = null;
+    }
+
     if (graph.nodes.length === 0) return;
 
     // Build node lookup for click handler
@@ -57,13 +67,13 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
           source: edge.source,
           target: edge.target,
           label: edge.edgeType,
-          confidence: edge.confidence,
+          confidence: Number(edge.confidence),
         },
       });
     }
 
     const cy = cytoscape({
-      container: containerRef.current,
+      container: cyContainerRef.current,
       elements,
       style: [
         {
@@ -134,45 +144,56 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
     cy.on('tap', 'node', (evt) => {
       const id = evt.target.id() as string;
       const node = nodeMapRef.current.get(id);
-      if (node) onNodeClick?.(node);
+      if (node) onNodeClickRef.current?.(node);
     });
 
     cyRef.current = cy;
+  }, [graph, centralProductId]);
 
+  // Create / recreate Cytoscape when graph data or central product changes
+  useEffect(() => {
+    if (isLoading) return;
+    buildAndRender();
     return () => {
-      cy.destroy();
-      cyRef.current = null;
+      if (cyRef.current) {
+        cyRef.current.destroy();
+        cyRef.current = null;
+      }
     };
-  }, [graph, centralProductId, onNodeClick, isLoading]);
+  }, [buildAndRender, isLoading]);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96 bg-slate-50 rounded-xl border border-slate-200">
-        <div className="flex flex-col items-center gap-2">
-          <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-slate-500">Loading lineage graph...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (graph.nodes.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-slate-50 rounded-xl border border-slate-200">
-        <div className="text-center px-6">
-          <p className="text-sm font-medium text-slate-600">No lineage data yet</p>
-          <p className="mt-1 text-xs text-slate-400">
-            Emit lineage events using the SDK to populate this graph.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const hasNodes = graph.nodes.length > 0;
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-96 bg-white rounded-xl border border-slate-200"
-    />
+    <div className="relative">
+      {/* Loading overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-50/80 rounded-xl">
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-slate-500">Loading lineage graph...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state overlay */}
+      {!isLoading && !hasNodes && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-50 rounded-xl border border-slate-200">
+          <div className="text-center px-6">
+            <p className="text-sm font-medium text-slate-600">No lineage data yet</p>
+            <p className="mt-1 text-xs text-slate-400">
+              Emit lineage events using the SDK to populate this graph.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Cytoscape container — always mounted, never unmounted by React */}
+      <div
+        ref={cyContainerRef}
+        style={{ width: '100%', height: '384px' }}
+        className="bg-white rounded-xl border border-slate-200"
+      />
+    </div>
   );
 }

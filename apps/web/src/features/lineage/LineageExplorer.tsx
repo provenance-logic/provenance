@@ -77,34 +77,40 @@ export function LineageExplorer({ productId, orgId }: Props) {
   const [selectedNode, setSelectedNode] = useState<LineageGraphNode | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      let result: LineageGraphDto;
+  useEffect(() => {
+    let cancelled = false;
 
-      if (direction === 'upstream') {
-        result = await fetchUpstreamLineage(orgId, productId, depth);
-      } else if (direction === 'downstream') {
-        result = await fetchDownstreamLineage(orgId, productId, depth);
-      } else {
-        const [up, down] = await Promise.all([
-          fetchUpstreamLineage(orgId, productId, depth),
-          fetchDownstreamLineage(orgId, productId, depth),
-        ]);
-        result = mergeGraphs(up, down);
+    async function fetchLineage() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        let result: LineageGraphDto;
+
+        if (direction === 'upstream') {
+          result = await fetchUpstreamLineage(orgId, productId, depth);
+        } else if (direction === 'downstream') {
+          result = await fetchDownstreamLineage(orgId, productId, depth);
+        } else {
+          const [up, down] = await Promise.all([
+            fetchUpstreamLineage(orgId, productId, depth),
+            fetchDownstreamLineage(orgId, productId, depth),
+          ]);
+          result = mergeGraphs(up, down);
+        }
+
+        if (!cancelled) setGraph(result);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load lineage');
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-
-      setGraph(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load lineage');
-    } finally {
-      setIsLoading(false);
     }
-  }, [orgId, productId, depth, direction]);
 
-  useEffect(() => { void load(); }, [load]);
+    void fetchLineage();
+    return () => { cancelled = true; };
+  }, [orgId, productId, depth, direction, retryKey]);
 
   const handleNodeClick = useCallback((node: LineageGraphNode) => {
     console.log('Node clicked, data:', JSON.stringify(node, null, 2));
@@ -126,7 +132,7 @@ export function LineageExplorer({ productId, orgId }: Props) {
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
           <p className="text-sm text-red-700">{error}</p>
           <button
-            onClick={() => void load()}
+            onClick={() => setRetryKey((k) => k + 1)}
             className="mt-2 text-xs text-red-600 underline hover:text-red-800"
           >
             Retry
