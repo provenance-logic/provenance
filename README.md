@@ -7,7 +7,7 @@ Provenance is an open-source, cloud-native platform that makes data mesh real �
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PRD](https://img.shields.io/badge/docs-PRD%20v1.0-teal.svg)](./documents/prd)
 [![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.0-teal.svg)](./documents/architecture)
-[![Status](https://img.shields.io/badge/status-Phase%203%20active-green.svg)]()
+[![Status](https://img.shields.io/badge/status-Phase%203%20complete-green.svg)]()
 
 ---
 
@@ -103,8 +103,8 @@ Provenance is in active development. Phases 1 and 2 are complete and running in 
 |---|---|---|
 | **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | Complete |
 | **Phase 2 — Governance & Marketplace** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | Complete |
-| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI | In progress (17/20) |
-| **Phase 4 — Agent Integration** | MCP server, federated query layer, agent identity, semantic search | Not started |
+| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | Complete |
+| **Phase 4 — Agent Integration** | MCP server, federated query layer, agent identity, semantic search | Planned |
 | **Phase 5 — Production Hardening** | Microservices split, managed services migration, security hardening | Not started |
 
 ### What's Live Today
@@ -127,12 +127,14 @@ Provenance is in active development. Phases 1 and 2 are complete and running in 
 - Product detail pages with full tab navigation (schema, lineage, SLOs, access)
 - Access request workflow with approval tracking
 
-**Lineage & Observability** (Phase 3 — in progress)
+**Lineage & Observability**
 - Neo4j lineage graph with emission API and async Redpanda pipeline
 - TypeScript SDK for lineage emission from external pipelines
 - SLO declarations and evaluation engine
-- Trust score engine with 5-component weighted formula (lineage completeness, SLO compliance, governance compliance, schema conformance, freshness)
+- Trust score engine with 5-component weighted formula (governance compliance, SLO pass rate, lineage completeness, usage activity, exception history)
+- Trust score panel on product detail page with score badge, sparkline trend, component breakdown, and recompute
 - Interactive Lineage Explorer UI with Cytoscape.js graph visualization and dagre layout
+- Observability Dashboard with SLO declarations, evaluation history, health summary, and inline SLO creation
 
 ---
 
