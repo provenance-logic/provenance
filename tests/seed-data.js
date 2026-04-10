@@ -13,7 +13,7 @@
  *   - Node.js 18+ (for native fetch)
  *
  * What it creates:
- *   - 1 organization: Acme Corporation
+ *   - 1 organization: Acme Corp
  *   - 3 domains: Finance, Marketing, Operations
  *   - 4 data products across those domains
  *   - Lineage graph connecting products to sources
@@ -78,17 +78,17 @@ async function seedOrganization(token) {
   section('Organization');
   // Try to find existing org first
   const orgs = await api('GET', '/organizations', null, token);
-  const existing = orgs?.items?.find(o => o.name === 'Acme Corporation');
+  const existing = orgs?.items?.find(o => o.name === 'Acme Corp');
   if (existing) {
-    log(`✓ Org exists: Acme Corporation (${existing.id})`);
+    log(`✓ Org exists: Acme Corp (${existing.id})`);
     return existing;
   }
   const org = await api('POST', '/organizations', {
-    name: 'Acme Corporation',
+    name: 'Acme Corp',
     slug: 'acme-corp',
     description: 'A fictional enterprise for Provenance testing',
   }, token);
-  log(`✓ Created org: Acme Corporation (${org.id})`);
+  log(`✓ Created org: Acme Corp (${org.id})`);
   return org;
 }
 
@@ -115,21 +115,21 @@ async function seedDomains(token, orgId) {
     },
   ];
 
+  // Fetch all existing domains once and filter client-side (API has no slug filter)
+  let existingDomains = [];
+  try {
+    const resp = await api('GET', `/organizations/${orgId}/domains`, null, token);
+    existingDomains = resp?.items || [];
+  } catch (_) {}
+
   const created = [];
   for (const d of domains) {
-    try {
-      const existing = await api(
-        'GET',
-        `/organizations/${orgId}/domains?slug=${d.slug}`,
-        null,
-        token
-      );
-      if (existing?.items?.length > 0) {
-        log(`✓ Domain exists: ${d.name} (${existing.items[0].id})`);
-        created.push(existing.items[0]);
-        continue;
-      }
-    } catch (_) {}
+    const found = existingDomains.find(e => e.slug === d.slug);
+    if (found) {
+      log(`✓ Domain exists: ${d.name} (${found.id})`);
+      created.push(found);
+      continue;
+    }
     const domain = await api(
       'POST',
       `/organizations/${orgId}/domains`,
@@ -157,6 +157,7 @@ async function seedProducts(token, orgId, domains) {
         'Aggregated daily revenue by product line, region, and channel. ' +
         'Refreshed every 24 hours from the orders database.',
       domain_id: financeId,
+      classification: 'internal',
       tags: ['revenue', 'finance', 'daily'],
     },
     {
@@ -166,6 +167,7 @@ async function seedProducts(token, orgId, domains) {
         'Marketing funnel metrics from first touch to closed deal. ' +
         'Includes conversion rates by channel and campaign.',
       domain_id: marketingId,
+      classification: 'internal',
       tags: ['marketing', 'funnel', 'acquisition'],
     },
     {
@@ -175,6 +177,7 @@ async function seedProducts(token, orgId, domains) {
         'Order fulfillment metrics including pick/pack/ship times and ' +
         'SLA compliance rates by warehouse and carrier.',
       domain_id: opsId,
+      classification: 'internal',
       tags: ['operations', 'orders', 'sla'],
     },
     {
@@ -184,21 +187,24 @@ async function seedProducts(token, orgId, domains) {
         'Unified customer profile combining purchase history, marketing ' +
         'touchpoints, and support interactions.',
       domain_id: marketingId,
+      classification: 'confidential',
       tags: ['customer', 'unified', '360'],
     },
   ];
 
   const created = [];
   for (const p of products) {
+    const domainId = p.domain_id;
     try {
       const existing = await api(
         'GET',
-        `/organizations/${orgId}/products?search=${encodeURIComponent(p.name)}`,
+        `/organizations/${orgId}/domains/${domainId}/products`,
         null,
         token
       );
       if (existing?.items?.find(x => x.name === p.name)) {
         const found = existing.items.find(x => x.name === p.name);
+        found.domain_id = found.domain_id || found.domainId || domainId;
         log(`✓ Product exists: ${p.name} (${found.id})`);
         created.push(found);
         continue;
@@ -206,27 +212,84 @@ async function seedProducts(token, orgId, domains) {
     } catch (_) {}
     const product = await api(
       'POST',
-      `/organizations/${orgId}/products`,
+      `/organizations/${orgId}/domains/${domainId}/products`,
       p,
       token
     );
+    product.domain_id = product.domain_id || product.domainId || domainId;
     log(`✓ Created product: ${p.name} (${product.id})`);
     created.push(product);
   }
   return created;
 }
 
+async function ensurePorts(token, orgId, products) {
+  section('Ports (output + discovery)');
+  for (const p of products) {
+    const basePath = `/organizations/${orgId}/domains/${p.domain_id}/products/${p.id}/ports`;
+    let existingPorts = [];
+    try {
+      const resp = await api('GET', basePath, null, token);
+      existingPorts = resp?.items || [];
+    } catch (_) {}
+
+    const hasOutput = existingPorts.some(port => port.portType === 'output');
+    const hasDiscovery = existingPorts.some(port => port.portType === 'discovery');
+
+    if (!hasOutput) {
+      await api('POST', basePath, {
+        name: `${p.slug}-output`,
+        portType: 'output',
+        interfaceType: 'sql_jdbc',
+        description: `Primary output port for ${p.name}`,
+        contractSchema: {
+          type: 'object',
+          description: `Schema for ${p.name}`,
+          properties: { id: { type: 'string' } },
+        },
+      }, token);
+      log(`✓ Created output port: ${p.name}`);
+    } else {
+      // Ensure existing output port has a contract schema
+      const outPort = existingPorts.find(port => port.portType === 'output');
+      if (outPort && !outPort.contractSchema) {
+        await api('PATCH', `${basePath}/${outPort.id}`, {
+          contractSchema: {
+            type: 'object',
+            description: `Schema for ${p.name}`,
+            properties: { id: { type: 'string' } },
+          },
+        }, token);
+        log(`✓ Patched output port contract: ${p.name}`);
+      } else {
+        log(`✓ Output port exists: ${p.name}`);
+      }
+    }
+
+    if (!hasDiscovery) {
+      await api('POST', basePath, {
+        name: `${p.slug}-discovery`,
+        portType: 'discovery',
+        description: `Discovery port for ${p.name}`,
+      }, token);
+      log(`✓ Created discovery port: ${p.name}`);
+    } else {
+      log(`✓ Discovery port exists: ${p.name}`);
+    }
+  }
+}
+
 async function publishProducts(token, orgId, products) {
   section('Publishing Products');
   for (const p of products) {
-    if (p.lifecycle_state === 'published') {
+    if (p.status === 'published') {
       log(`✓ Already published: ${p.name}`);
       continue;
     }
     try {
       await api(
         'POST',
-        `/organizations/${orgId}/products/${p.id}/publish`,
+        `/organizations/${orgId}/domains/${p.domain_id}/products/${p.id}/publish`,
         { version: '1.0.0', change_summary: 'Initial release' },
         token
       );
@@ -675,6 +738,7 @@ async function main() {
 
     const domains = await seedDomains(token, orgId);
     const products = await seedProducts(token, orgId, domains);
+    await ensurePorts(token, orgId, products);
     await publishProducts(token, orgId, products);
     await seedLineage(token, orgId, products);
     await seedSlos(token, orgId, products);
