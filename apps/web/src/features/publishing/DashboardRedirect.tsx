@@ -1,14 +1,21 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { organizationsApi } from '../../shared/api/organizations.js';
+import { productsApi } from '../../shared/api/products.js';
+import type { Domain, Organization } from '@provenance/types';
 
-type RedirectState = 'loading' | 'no-org' | 'no-domain' | 'error';
+interface DomainWithCount extends Domain {
+  productCount: number;
+}
+
+type PageState = 'loading' | 'no-org' | 'no-domain' | 'ready' | 'error';
 
 export function DashboardRedirect() {
   const navigate = useNavigate();
-  const [state, setState] = useState<RedirectState>('loading');
+  const [state, setState] = useState<PageState>('loading');
   const [error, setError] = useState('');
-  const [orgId, setOrgId] = useState('');
+  const [org, setOrg] = useState<Organization | null>(null);
+  const [domains, setDomains] = useState<DomainWithCount[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,18 +30,32 @@ export function DashboardRedirect() {
           return;
         }
 
-        const org = orgs.items[0];
-        setOrgId(org.id);
+        const orgData = orgs.items[0];
+        setOrg(orgData);
 
-        const domains = await organizationsApi.domains.list(org.id, 1, 0);
+        const domainList = await organizationsApi.domains.list(orgData.id);
         if (cancelled) return;
 
-        if (domains.items.length === 0) {
+        if (domainList.items.length === 0) {
           setState('no-domain');
           return;
         }
 
-        navigate(`/dashboard/${org.id}/domains/${domains.items[0].id}`, { replace: true });
+        // Fetch product counts for each domain in parallel
+        const domainsWithCounts = await Promise.all(
+          domainList.items.map(async (d) => {
+            try {
+              const products = await productsApi.list(orgData.id, d.id, undefined, 1, 0);
+              return { ...d, productCount: products.meta.total };
+            } catch {
+              return { ...d, productCount: 0 };
+            }
+          }),
+        );
+        if (cancelled) return;
+
+        setDomains(domainsWithCounts);
+        setState('ready');
       } catch (err: unknown) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to load organizations');
@@ -88,24 +109,60 @@ export function DashboardRedirect() {
     );
   }
 
-  // state === 'no-domain'
+  if (state === 'no-domain') {
+    return (
+      <Shell>
+        <div className="text-center py-16">
+          <div className="text-4xl mb-4">📂</div>
+          <h2 className="text-lg font-semibold text-slate-900">No domains yet</h2>
+          <p className="mt-2 text-sm text-slate-500 max-w-md mx-auto">
+            Your organization exists but has no domains. Create a domain to start
+            organizing your data products.
+          </p>
+          <button
+            onClick={() => navigate(`/onboarding/domain?orgId=${org?.id}`)}
+            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+          >
+            Create Domain
+          </button>
+        </div>
+      </Shell>
+    );
+  }
+
+  // state === 'ready' — show all domains
   return (
     <Shell>
-      <div className="text-center py-16">
-        <div className="text-4xl mb-4">📂</div>
-        <h2 className="text-lg font-semibold text-slate-900">No domains yet</h2>
-        <p className="mt-2 text-sm text-slate-500 max-w-md mx-auto">
-          Your organization exists but has no domains. Create a domain to start
-          organizing your data products.
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900">Data Products</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Browse domains and their data products across your organization.
         </p>
-        <button
-          onClick={() => navigate(`/onboarding/domain?orgId=${orgId}`)}
-          className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
-        >
-          Create Domain
-        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {domains.map((domain) => (
+          <DomainCard key={domain.id} domain={domain} orgId={org!.id} />
+        ))}
       </div>
     </Shell>
+  );
+}
+
+function DomainCard({ domain, orgId }: { domain: DomainWithCount; orgId: string }) {
+  return (
+    <Link
+      to={`/dashboard/${orgId}/domains/${domain.id}`}
+      className="block p-5 bg-white rounded-lg border border-slate-200 hover:border-brand-500 hover:shadow-sm transition-all"
+    >
+      <h3 className="font-medium text-slate-900">{domain.name}</h3>
+      {domain.description && (
+        <p className="mt-1 text-sm text-slate-500 line-clamp-2">{domain.description}</p>
+      )}
+      <div className="mt-3 text-xs text-slate-400">
+        {domain.productCount} {domain.productCount === 1 ? 'product' : 'products'}
+      </div>
+    </Link>
   );
 }
 
