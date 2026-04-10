@@ -343,7 +343,7 @@ export class TrustScoreService {
             JOIN observability.slo_declarations sd ON se.slo_id = sd.id
             WHERE se.created_at >= $1
           UNION
-          SELECT target_node->>'node_id' AS product_id, org_id FROM lineage.emission_log WHERE created_at >= $1
+          SELECT (target_node->>'node_id')::uuid AS product_id, org_id FROM lineage.emission_log WHERE created_at >= $1 AND (target_node->>'node_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
           UNION
           SELECT product_id, org_id FROM access.access_grants WHERE granted_at >= $1
           UNION
