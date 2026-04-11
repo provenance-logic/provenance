@@ -2,7 +2,7 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.0.md` and `documents/architecture/Provenance_Architecture_v1.0.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.1.md` and `documents/architecture/Provenance_Architecture_v1.0.md`.
 
 ---
 
@@ -13,11 +13,12 @@ Provenance is an open source, cloud-native, multi-tenant self-service data mesh 
 Provenance is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 **What it is not:**
-- A data warehouse or data lake
-- A pipeline orchestrator or ETL engine
-- A centralized query engine for human consumers
-- A traditional data catalog
-- A data quality computation engine
+
+* A data warehouse or data lake
+* A pipeline orchestrator or ETL engine
+* A centralized query engine for human consumers
+* A traditional data catalog
+* A data quality computation engine
 
 ---
 
@@ -35,13 +36,9 @@ Provenance is the first platform purpose-built to treat AI agents as first-class
 These are hard constraints. Do not work around them.
 
 1. **The lineage graph must be a native graph database.** Neo4j for MVP. The query patterns (arbitrary depth traversal, impact analysis, path queries, time travel) are pathological for relational databases.
-
 2. **The policy engine must be a hot-reloadable independent runtime.** Open Policy Agent (OPA). Policy changes cannot require platform redeployment.
-
 3. **Control plane and data plane must be architecturally separated from day one.** The platform stores metadata and contracts. Data stays in domain infrastructure. This boundary is never blurred.
-
 4. **The agent query layer is a distinct service.** Deployed as a separate NestJS process even in MVP. Latency, concurrency, and MCP protocol requirements are incompatible with the control plane monolith.
-
 5. **MCP compliance is a native protocol implementation.** Use the official `@modelcontextprotocol/sdk` TypeScript package. Never wrap MCP around a REST API.
 
 ---
@@ -49,7 +46,7 @@ These are hard constraints. Do not work around them.
 ## Technology Stack
 
 | Component | MVP | Production |
-|---|---|---|
+| --- | --- | --- |
 | Backend API | TypeScript / NestJS (modular monolith) | NestJS microservices on EKS |
 | Frontend | TypeScript / React + TailwindCSS | Same |
 | Graph Database | Neo4j Community (self-hosted) | Amazon Neptune or Neo4j AuraDB |
@@ -76,7 +73,7 @@ provenance-platform/
 │   │   └── src/
 │   │       ├── organizations/      # Org and domain management
 │   │       ├── products/           # Data product lifecycle
-│   │       ├── connectors/         # Connector framework
+│   │       ├── connectors/         # Connector framework + discovery engine
 │   │       ├── governance/         # Policy engine integration
 │   │       ├── lineage/            # Lineage graph service
 │   │       ├── observability/      # Metrics and trust score
@@ -123,11 +120,11 @@ provenance-platform/
 ## Database Schemas (PostgreSQL)
 
 | Schema | Key Tables | Notes |
-|---|---|---|
+| --- | --- | --- |
 | organizations | orgs, domains, domain_extensions, governance_configs | org_id on all tables for tenant isolation |
 | identity | principals, roles, role_assignments, agent_identities, agent_trust_classifications | Keycloak is auth source; PostgreSQL stores platform-specific metadata |
 | products | data_products, product_versions, port_declarations, port_contracts, lifecycle_events | Versions are immutable records |
-| connectors | connectors, connector_health_events, source_registrations, schema_snapshots | Credentials stored as Secrets Manager ARN only — never raw values |
+| connectors | connectors, connector_health_events, source_registrations, schema_snapshots, **capability_manifests, discovery_crawl_events, discovery_coverage_scores** | Credentials stored as Secrets Manager ARN only — never raw values |
 | governance | policy_schemas, policy_versions, effective_policies, compliance_states, exceptions, grace_periods | Policy artifacts stored as JSONB |
 | access | access_grants, access_requests, approval_events | Consumer-product access with expiration tracking |
 | observability | slo_declarations, slo_evaluations, trust_score_history, observability_snapshots | Partitioned by org_id and time |
@@ -153,23 +150,55 @@ provenance-platform/
 
 **Lineage edge types:** Derives From, Transforms, Consumes, Depends On, Supersedes
 
+**Connector discovery modes:** Active discovery (crawls on registration + re-crawl schedule), Passive emission only (no discovery mode declared in capability manifest)
+
+**Discovery metadata categories:** Structural, Descriptive, Operational, Quality, Governance
+
+**Lineage source markers:** system-discovered (from connector crawl), declared (by domain team), emitted (by pipeline at runtime)
+
+---
+
+## Connector Discovery Architecture
+
+Connectors that implement discovery mode perform two types of crawling:
+
+**Registration crawl** — triggered automatically on successful connector registration. Crawls the connected system for all metadata and lineage the connector is capable of providing per its capability manifest. Results ingested into the metadata store and lineage graph immediately.
+
+**Re-crawl (delta)** — runs on a governance-configurable schedule (platform default: 24 hours). Detects new objects, changed metadata, and updated lineage since the last crawl. Merges delta results without overwriting domain-declared metadata.
+
+**Priority connectors with discovery mode at MVP:**
+
+| Connector | Discovery Sources | Lineage Granularity | Metadata Coverage |
+| --- | --- | --- | --- |
+| Databricks | Unity Catalog API | Column-level | High (where Unity Catalog adopted) |
+| dbt | manifest.json + catalog.json | Column-level | High |
+| Snowflake | Information Schema + Access History | Asset-level (column best-effort) | Medium |
+| Fivetran | Metadata API | Asset-level (best-effort upstream) | Low-Medium |
+
+**Conflict resolution:** Domain-declared metadata takes precedence over discovered metadata unless the governance layer has configured automatic discovery override. Conflicts surfaced to domain team for resolution. Discovered lineage that supplements (does not conflict with) declared lineage is merged automatically and flagged as system-discovered.
+
+**Coverage scoring:** Each connector reports a discovery coverage score per metadata category after each crawl. Scores calculated only against fields the connector's capability manifest declares it can provide — not against the full governance-extended taxonomy.
+
 ---
 
 ## Build Phases
 
 | Phase | Scope | Key Deliverable |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Organization model, domain management, basic product authoring, identity | Running platform — org onboarding, domain creation, product drafting |
 | 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access |
 | 3 | Lineage graph, emission API, trust score, observability dashboard | Trust infrastructure live — lineage, SLOs, trust score |
 | 4 | MCP server, federated query layer, agent identity, semantic search | Data 3.0 milestone — agents as first-class participants |
 | 5 | Microservices split, managed services migration, security hardening | Production-grade platform |
 
+**Connector discovery is a Phase 3 deliverable** — the connector framework is built in Phase 1/2; discovery mode implementation for priority connectors ships with Phase 3 alongside the lineage graph.
+
 ---
 
 ## Phase 1 Build Targets (Start Here)
 
 The goal of Phase 1 is a running platform where a user can:
+
 1. Create an organization
 2. Create domains within it
 3. Start defining a data product (Draft state)
@@ -205,36 +234,45 @@ The goal of Phase 1 is a running platform where a user can:
 
 **Audit log is append-only.** No UPDATE or DELETE permissions on the audit_log table at any level.
 
+**Connector capability manifests are immutable per version.** Never mutate a capability manifest in place — create a new connector version.
+
+**Discovery results never auto-override domain-declared metadata** unless governance has explicitly configured auto-override. Always check conflict resolution policy before merging discovered metadata.
+
 ---
 
 ## What to Build vs. What to Configure
 
 **Build from scratch (this is our differentiation):**
-- Governance policy UI (Policy Authoring Studio)
-- Trust score computation algorithm
-- Data product definition validation logic
-- Port contract enforcement engine
-- Semantic change declaration model
-- Agent provenance envelope builder
-- Provenance-specific MCP tools and prompts
-- Federated query planner and executor
+
+* Governance policy UI (Policy Authoring Studio)
+* Trust score computation algorithm
+* Data product definition validation logic
+* Port contract enforcement engine
+* Semantic change declaration model
+* Agent provenance envelope builder
+* Provenance-specific MCP tools and prompts
+* Federated query planner and executor
+* Connector discovery engine (crawl orchestration, delta detection, conflict resolution)
+* Capability manifest validation and enforcement
+* Discovery coverage scoring per metadata category
 
 **Configure from open source (do not reinvent):**
-- OPA Rego policy evaluation
-- Neo4j graph schema and Cypher queries
-- Keycloak realm configuration and OIDC flows
-- Temporal workflow definitions
-- OpenSearch index mapping and query DSL
-- Kong plugin configuration
-- Redpanda topic configuration
-- Docker Compose and Terraform infrastructure
+
+* OPA Rego policy evaluation
+* Neo4j graph schema and Cypher queries
+* Keycloak realm configuration and OIDC flows
+* Temporal workflow definitions
+* OpenSearch index mapping and query DSL
+* Kong plugin configuration
+* Redpanda topic configuration
+* Docker Compose and Terraform infrastructure
 
 ---
 
 ## Performance Targets (Non-Functional Requirements)
 
 | Operation | Target |
-|---|---|
+| --- | --- |
 | Definition validation at publication | Under 2 seconds |
 | Policy evaluation at publication | Under 3 seconds |
 | Lineage emission p99 latency | Under 100ms |
@@ -247,17 +285,20 @@ The goal of Phase 1 is a running platform where a user can:
 | 10-product federated agent query p95 | Under 10 seconds |
 | MCP endpoint availability | 99.99% |
 | Control plane availability | 99.99% |
+| Discovery crawl completion (≤10k objects) | Within 30 minutes |
+| Discovery coverage score availability | Within 60 seconds of crawl completion |
 
 ---
 
 ## Security Rules (Never Violate)
 
-- `org_id` on every PostgreSQL table with row-level security enforced at database level
-- Credentials stored as ARN references only — never logged, never cached beyond connection lifetime
-- Audit log is append-only — no UPDATE or DELETE at any level
-- Agent access scope enforced at infrastructure level, not application policy check only
-- TLS 1.3 enforced at Kong for all external traffic
-- All agent tokens carry `principal_type=agent` and `agent_id` claims validated on every request
+* `org_id` on every PostgreSQL table with row-level security enforced at database level
+* Credentials stored as ARN references only — never logged, never cached beyond connection lifetime
+* Audit log is append-only — no UPDATE or DELETE at any level
+* Agent access scope enforced at infrastructure level, not application policy check only
+* TLS 1.3 enforced at Kong for all external traffic
+* All agent tokens carry `principal_type=agent` and `agent_id` claims validated on every request
+* Discovery crawl credentials use the same secrets manager pattern as connector credentials — never stored raw
 
 ---
 
@@ -286,7 +327,7 @@ The goal of Phase 1 is a running platform where a user can:
 
 ## Full Documentation
 
-- Product Requirements Document: `documents/prd/Provenance_PRD_v1.0.md`
-- Architecture Document: `documents/architecture/Provenance_Architecture_v1.0.md`
-- Architecture Decision Records: `documents/architecture/adr/`
-- API Reference: `documents/api/` (generated from OpenAPI specs)
+* Product Requirements Document: `documents/prd/Provenance_PRD_v1.1.md`
+* Architecture Document: `documents/architecture/Provenance_Architecture_v1.0.md`
+* Architecture Decision Records: `documents/architecture/adr/`
+* API Reference: `documents/api/` (generated from OpenAPI specs)
