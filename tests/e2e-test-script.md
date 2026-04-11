@@ -3,6 +3,8 @@
 Manual verification commands for the Provenance API.
 Run after `node tests/seed-data.js` has completed successfully.
 
+All commands and field names verified against the live API on 2026-04-11.
+
 ## Prerequisites
 
 ```bash
@@ -35,8 +37,6 @@ get_domain_id() {
 }
 
 # Helper: get product ID by name (searches across all domains)
-# Uses a for loop over an array to avoid subshell/SIGPIPE issues
-# with piped while-read.
 get_product_id() {
   local name="$1"
   local domain_ids
@@ -55,24 +55,20 @@ get_product_id() {
 }
 ```
 
-## Setup — Pre-fetched Product IDs
+## Setup — Pre-fetched IDs
 
-Avoids repeated API lookups during testing. Run once after setting
-up shell variables above.
+Run once after setting up shell variables above.
 
 ```bash
-# Fetch domain IDs
 export FINANCE_DOMAIN_ID=$(get_domain_id "finance")
 export MARKETING_DOMAIN_ID=$(get_domain_id "marketing")
 export OPS_DOMAIN_ID=$(get_domain_id "operations")
 
-# Fetch product IDs
 export REVENUE_PRODUCT_ID=$(get_product_id "Daily Revenue Report")
 export FUNNEL_PRODUCT_ID=$(get_product_id "Customer Acquisition Funnel")
 export FULFILLMENT_PRODUCT_ID=$(get_product_id "Order Fulfillment SLA")
 export C360_PRODUCT_ID=$(get_product_id "Customer 360")
 
-# Verify all IDs resolved
 echo "Finance domain:  $FINANCE_DOMAIN_ID"
 echo "Marketing domain: $MARKETING_DOMAIN_ID"
 echo "Ops domain:       $OPS_DOMAIN_ID"
@@ -92,7 +88,7 @@ echo "Customer 360:     $C360_PRODUCT_ID"
 curl -s "$API/health" | jq .
 ```
 
-**Expected:** `{"status":"ok","info":{"database":{"status":"up"}}}`
+**Expected:** `{"status":"ok","info":{"database":{"status":"up"}},...}`
 
 ---
 
@@ -100,17 +96,15 @@ curl -s "$API/health" | jq .
 
 **Verify:** All seeded products are visible, organized by domain.
 
+Response shape: `{items: [{id, name, slug, status, ...}], meta: {total, limit, offset}}`
+
 ```bash
-# Fetch all domains
 DOMAINS=$(curl -s "$API/organizations/$ORG_ID/domains" \
   -H "Authorization: Bearer $TOKEN")
-echo "$DOMAINS" | jq -r '.items[] | "\(.name) (\(.id))"'
 
-# For each domain, list its products
 echo "$DOMAINS" | jq -r '.items[].id' | while read domain_id; do
   DNAME=$(echo "$DOMAINS" | jq -r --arg id "$domain_id" \
     '.items[] | select(.id == $id) | .name')
-  echo ""
   echo "=== $DNAME ==="
   curl -s "$API/organizations/$ORG_ID/domains/$domain_id/products" \
     -H "Authorization: Bearer $TOKEN" | \
@@ -118,7 +112,7 @@ echo "$DOMAINS" | jq -r '.items[].id' | while read domain_id; do
 done
 ```
 
-**Expected:** 4 seed products across Finance, Marketing, Operations:
+**Expected:** 4 seed products, all published:
 - [Finance] Daily Revenue Report — published
 - [Marketing] Customer Acquisition Funnel — published
 - [Marketing] Customer 360 — published
@@ -128,18 +122,17 @@ done
 
 ## TC-03 — Get Single Product Detail
 
-**Verify:** Product detail endpoint returns full product with ports.
+**Verify:** Product detail returns full object with ports.
+
+Response shape: `{id, name, slug, status, version, classification, domainId, orgId, tags, ports: [{portType, name, interfaceType, ...}], ...}`
 
 ```bash
-DOMAIN_ID=$(get_domain_id "finance")
-PRODUCT_ID=$(get_product_id "Daily Revenue Report")
-
-curl -s "$API/organizations/$ORG_ID/domains/$DOMAIN_ID/products/$PRODUCT_ID" \
+curl -s "$API/organizations/$ORG_ID/domains/$FINANCE_DOMAIN_ID/products/$REVENUE_PRODUCT_ID" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '{ name, slug, status, version, classification, ports: [.ports[].portType] }'
+jq '{ name, slug, status, version, classification, ports: [.ports[] | {portType, name}] }'
 ```
 
-**Expected:** status=published, version=1.0.0, ports include "output" and "discovery".
+**Expected:** status=published, version=1.0.0, ports include output and discovery types.
 
 ---
 
@@ -147,24 +140,26 @@ jq '{ name, slug, status, version, classification, ports: [.ports[].portType] }'
 
 **Verify:** SLOs are attached to products and have evaluations.
 
+SLO list shape: `{items: [{id, name, slo_type, metric_name, threshold_operator, threshold_value, threshold_unit, pass_rate_7d, pass_rate_30d, ...}]}`
+
+SLO evaluations shape: raw array `[{id, slo_id, measured_value, passed, evaluated_at, evaluated_by, ...}]`
+
 ```bash
-PRODUCT_ID=$(get_product_id "Daily Revenue Report")
-
 # List SLOs
-curl -s "$API/organizations/$ORG_ID/products/$PRODUCT_ID/slos?status=active" \
+curl -s "$API/organizations/$ORG_ID/products/$REVENUE_PRODUCT_ID/slos?status=active" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.items[] | { name, slo_type, threshold_value }'
+jq '.items[] | { name, slo_type, metric_name, threshold_value }'
 
-# Get evaluations for first SLO
-SLO_ID=$(curl -s "$API/organizations/$ORG_ID/products/$PRODUCT_ID/slos?status=active" \
+# Get evaluations for first SLO (response is a raw array, not {items:[]})
+SLO_ID=$(curl -s "$API/organizations/$ORG_ID/products/$REVENUE_PRODUCT_ID/slos?status=active" \
   -H "Authorization: Bearer $TOKEN" | jq -r '.items[0].id')
 
-curl -s "$API/organizations/$ORG_ID/products/$PRODUCT_ID/slos/$SLO_ID/evaluations" \
+curl -s "$API/organizations/$ORG_ID/products/$REVENUE_PRODUCT_ID/slos/$SLO_ID/evaluations" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.items | length, [.[] | { measured_value, passed }]'
+jq '{ count: length, sample: [limit(3; .[]) | { measured_value, passed, evaluated_at }] }'
 ```
 
-**Expected:** 2 SLOs on Daily Revenue Report. Each SLO has 7+ evaluations.
+**Expected:** 2 SLOs on Daily Revenue Report. Each has 7+ evaluations.
 
 ---
 
@@ -172,13 +167,20 @@ jq '.items | length, [.[] | { measured_value, passed }]'
 
 **Verify:** Trust scores are computed for all products.
 
+Response shape: `{product_id, org_id, score, band, components: {...}, computed_at}`
+Score is a 0–1 decimal (e.g. 0.895 = 89.5%).
+
 ```bash
-for name in "Daily Revenue Report" "Customer Acquisition Funnel" \
-            "Order Fulfillment SLA" "Customer 360"; do
-  PRODUCT_ID=$(get_product_id "$name")
-  SCORE=$(curl -s "$API/organizations/$ORG_ID/products/$PRODUCT_ID/trust-score" \
-    -H "Authorization: Bearer $TOKEN")
-  echo "$name: $(echo $SCORE | jq -r '"score=\(.score) band=\(.band)"')"
+for pid_name in \
+  "$REVENUE_PRODUCT_ID|Daily Revenue Report" \
+  "$FUNNEL_PRODUCT_ID|Customer Acquisition Funnel" \
+  "$FULFILLMENT_PRODUCT_ID|Order Fulfillment SLA" \
+  "$C360_PRODUCT_ID|Customer 360"; do
+  PID=$(echo "$pid_name" | cut -d'|' -f1)
+  PNAME=$(echo "$pid_name" | cut -d'|' -f2)
+  curl -s "$API/organizations/$ORG_ID/products/$PID/trust-score" \
+    -H "Authorization: Bearer $TOKEN" | \
+  jq -r --arg name "$PNAME" '"\($name): score=\(.score) band=\(.band)"'
 done
 ```
 
@@ -190,19 +192,21 @@ done
 
 **Verify:** Lineage edges exist for seeded products.
 
-```bash
-PRODUCT_ID=$(get_product_id "Daily Revenue Report")
+Response shape: `{productId, depth, nodes: [{id, type, label, metadata}], edges: [{id, source, target, edgeType, confidence}]}`
 
+Note: node fields are `type` and `label` (not `node_type`/`display_name`).
+
+```bash
 echo "=== Upstream (sources) ==="
-curl -s "$API/organizations/$ORG_ID/lineage/products/$PRODUCT_ID/upstream" \
+curl -s "$API/organizations/$ORG_ID/lineage/products/$REVENUE_PRODUCT_ID/upstream" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.nodes[] | { display_name, node_type }'
+jq '.nodes[] | select(.id != "'$REVENUE_PRODUCT_ID'") | { label, type }'
 
 echo ""
 echo "=== Downstream (consumers) ==="
-curl -s "$API/organizations/$ORG_ID/lineage/products/$PRODUCT_ID/downstream" \
+curl -s "$API/organizations/$ORG_ID/lineage/products/$REVENUE_PRODUCT_ID/downstream" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.nodes[] | { display_name, node_type }'
+jq '.nodes[] | select(.id != "'$REVENUE_PRODUCT_ID'") | { label, type }'
 ```
 
 **Expected:**
@@ -211,17 +215,19 @@ jq '.nodes[] | { display_name, node_type }'
 
 ---
 
-## TC-07 — Access Grants
+## TC-07 — SLO Summary
 
-**Verify:** Access grant system is operational.
+**Verify:** Per-product SLO health summary is available.
+
+Response shape: `{product_id, org_id, total_slos, active_slos, pass_rate_7d, pass_rate_30d, slos_with_no_data, last_evaluated_at, slo_health}`
 
 ```bash
-# List grants for the org
-curl -s "$API/organizations/$ORG_ID/access/grants" \
-  -H "Authorization: Bearer $TOKEN" | jq '.items | length'
+curl -s "$API/organizations/$ORG_ID/products/$REVENUE_PRODUCT_ID/slo-summary" \
+  -H "Authorization: Bearer $TOKEN" | \
+jq '{ total_slos, active_slos, pass_rate_7d, slo_health }'
 ```
 
-**Expected:** Returns a list (may be empty if no grants were seeded).
+**Expected:** total_slos=2, active_slos=2, slo_health is "yellow" or "green".
 
 ---
 
@@ -229,12 +235,14 @@ curl -s "$API/organizations/$ORG_ID/access/grants" \
 
 **Verify:** Governance command center returns aggregate data.
 
+Response shape: `{summary: {totalPublished, compliant, driftDetected, gracePeriod, nonCompliant}, domainHealth: [...], recentEvents: [...], activeExceptions: [...], activeGracePeriods: [...]}`
+
 ```bash
 curl -s "$API/organizations/$ORG_ID/governance/dashboard" \
-  -H "Authorization: Bearer $TOKEN" | jq .
+  -H "Authorization: Bearer $TOKEN" | jq '.summary'
 ```
 
-**Expected:** Returns governance summary with compliance counts.
+**Expected:** `totalPublished` >= 4, `compliant` >= 4.
 
 ---
 
@@ -242,13 +250,15 @@ curl -s "$API/organizations/$ORG_ID/governance/dashboard" \
 
 **Verify:** Compliance state is tracked per product.
 
+Response shape: `{items: [{id, productId, state, orgId, policyVersionId, evaluatedAt, violations, ...}], meta: {...}}`
+
 ```bash
 curl -s "$API/organizations/$ORG_ID/governance/compliance" \
   -H "Authorization: Bearer $TOKEN" | \
 jq '.items[] | { productId, state }'
 ```
 
-**Expected:** Compliance entries for seeded products.
+**Expected:** Compliance entries with state "compliant" for seeded products.
 
 ---
 
@@ -256,13 +266,17 @@ jq '.items[] | { productId, state }'
 
 **Verify:** Published products appear in the marketplace.
 
+Response shape: `{items: [{id, name, slug, status, trustScore, domainName, complianceState, sloHealthIndicator, outputPortTypes, ...}], meta: {...}}`
+
+Note: field is `trustScore` (camelCase, integer 0–100) and `domainName`.
+
 ```bash
 curl -s "$API/organizations/$ORG_ID/marketplace/products" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.items[] | { name, status, trust_score }'
+jq '.items[] | { name, status, trustScore, domainName }'
 ```
 
-**Expected:** All 4 published seed products visible with trust scores.
+**Expected:** All published products visible with trustScore and domainName.
 
 ---
 
@@ -270,29 +284,35 @@ jq '.items[] | { name, status, trust_score }'
 
 **Verify:** Full product detail available via marketplace endpoint.
 
-```bash
-PRODUCT_ID=$(get_product_id "Customer 360")
+Response shape: `{id, name, status, trustScore, trustScoreBreakdown: {composite, dimensions: {...}}, complianceState, sloHealthIndicator, activeConsumerCount, ports: [...], ...}`
 
-curl -s "$API/organizations/$ORG_ID/marketplace/products/$PRODUCT_ID" \
+```bash
+curl -s "$API/organizations/$ORG_ID/marketplace/products/$C360_PRODUCT_ID" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '{ name, status, trust_score, lineage_summary, slo_summary }'
+jq '{ name, status, trustScore, complianceState, sloHealthIndicator, activeConsumerCount }'
 ```
 
-**Expected:** Product detail with trust score, lineage, and SLO summary.
+**Expected:** Product detail with trustScore, complianceState, sloHealthIndicator.
 
 ---
 
 ## TC-12 — Marketplace Search
 
-**Verify:** Marketplace search returns matching products.
+**Verify:** Marketplace search endpoint is operational.
+
+Response shape: `{total, page, limit, results: [...]}`
+
+Note: Search depends on OpenSearch. In dev stacks without OpenSearch,
+results will be empty. This test verifies the endpoint responds without error.
 
 ```bash
 curl -s "$API/organizations/$ORG_ID/marketplace/search?q=revenue" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.items[] | { name, score }'
+jq '{ total, page, limit, result_count: (.results | length) }'
 ```
 
-**Expected:** Daily Revenue Report appears in results.
+**Expected:** Response with `total`, `page`, `limit`, and `results` array.
+Results may be empty if OpenSearch is not running.
 
 ---
 
@@ -300,10 +320,10 @@ jq '.items[] | { name, score }'
 
 **Verify:** Trust score can be recomputed on demand.
 
-```bash
-PRODUCT_ID=$(get_product_id "Order Fulfillment SLA")
+Response shape: `{product_id, org_id, score, band, components: {...}, computed_at}`
 
-curl -s -X POST "$API/organizations/$ORG_ID/products/$PRODUCT_ID/trust-score/recompute" \
+```bash
+curl -s -X POST "$API/organizations/$ORG_ID/products/$FULFILLMENT_PRODUCT_ID/trust-score/recompute" \
   -H "Authorization: Bearer $TOKEN" | \
 jq '{ score, band, computed_at }'
 ```
@@ -316,12 +336,14 @@ jq '{ score, band, computed_at }'
 
 **Verify:** Trust score history accumulates over recomputes.
 
-```bash
-PRODUCT_ID=$(get_product_id "Daily Revenue Report")
+Response shape: raw array `[{id, product_id, score, band, components, computed_at}, ...]`
 
-curl -s "$API/organizations/$ORG_ID/products/$PRODUCT_ID/trust-score/history?limit=5" \
+Note: response is a plain JSON array, not `{items: []}`.
+
+```bash
+curl -s "$API/organizations/$ORG_ID/products/$REVENUE_PRODUCT_ID/trust-score/history?limit=5" \
   -H "Authorization: Bearer $TOKEN" | \
-jq '.items[] | { score, band, computed_at }'
+jq '[ limit(3; .[]) | { score, band, computed_at } ]'
 ```
 
 **Expected:** Multiple history entries with timestamps.
@@ -333,13 +355,11 @@ jq '.items[] | { score, band, computed_at }'
 **Verify:** Publishing an already-published product returns an appropriate error.
 
 ```bash
-DOMAIN_ID=$(get_domain_id "finance")
-PRODUCT_ID=$(get_product_id "Daily Revenue Report")
-
-curl -s -X POST "$API/organizations/$ORG_ID/domains/$DOMAIN_ID/products/$PRODUCT_ID/publish" \
+curl -s -X POST \
+  "$API/organizations/$ORG_ID/domains/$FINANCE_DOMAIN_ID/products/$REVENUE_PRODUCT_ID/publish" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"version":"2.0.0","change_summary":"Re-publish test"}' | jq .
+  -d '{"version":"2.0.0"}' | jq .
 ```
 
-**Expected:** 422 error — "Product must be in draft status to publish".
+**Expected:** 409 error — "Product must be in draft status to publish".
