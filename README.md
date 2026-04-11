@@ -7,7 +7,7 @@ Provenance is an open-source, cloud-native platform that makes data mesh real �
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PRD](https://img.shields.io/badge/docs-PRD%20v1.0-teal.svg)](./documents/prd)
 [![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.0-teal.svg)](./documents/architecture)
-[![Status](https://img.shields.io/badge/status-Phase%203%20complete-green.svg)]()
+[![Status](https://img.shields.io/badge/status-Phase%203%20verified-green.svg)]()
 
 ---
 
@@ -97,15 +97,21 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 ## Project Status
 
-Provenance is in active development. Phases 1 and 2 are complete and running in production on EC2. Phase 3 is nearing completion.
+Provenance is in active development. Phases 1–3 are complete and verified end-to-end on EC2.
 
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | Complete |
 | **Phase 2 — Governance & Marketplace** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | Complete |
-| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | Complete |
-| **Phase 4 — Agent Integration** | MCP server, federated query layer, agent identity, semantic search | Planned |
+| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | Complete and verified |
+| **Phase 4 — Agent Integration** | MCP server, agent query layer, agent identity, semantic search | Next |
 | **Phase 5 — Production Hardening** | Microservices split, managed services migration, security hardening | Not started |
+
+### Verification Status (Phase 3)
+
+- **API tests:** 15/15 passing (health, domains, products, SLOs, trust scores, lineage, governance, marketplace)
+- **Browser checks:** 8/8 passing (auth, navigation, domain dashboard, product detail, marketplace, governance, lineage, observability)
+- **Known gaps:** Marketplace full-text search requires OpenSearch (disabled in dev stack); lineage chart visual polish pending
 
 ### What's Live Today
 

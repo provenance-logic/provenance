@@ -41,9 +41,28 @@ export class LineageService {
     try {
       this.driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
       this.logger.log(`Neo4j driver initialized: ${uri}`);
+      this.ensureConstraints().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Neo4j constraint setup failed: ${msg}`);
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Neo4j driver init failed — graph sync disabled: ${msg}`);
+    }
+  }
+
+  private async ensureConstraints(): Promise<void> {
+    if (!this.driver) return;
+    const session: Session = this.driver.session();
+    try {
+      for (const label of ['Source', 'DataProduct', 'Consumer']) {
+        await session.run(
+          `CREATE CONSTRAINT ${label.toLowerCase()}_unique IF NOT EXISTS FOR (n:${label}) REQUIRE (n.node_id, n.org_id) IS UNIQUE`,
+        );
+      }
+      this.logger.log('Neo4j unique constraints ensured');
+    } finally {
+      await session.close();
     }
   }
 
