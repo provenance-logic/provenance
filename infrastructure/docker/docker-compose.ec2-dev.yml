@@ -344,6 +344,8 @@ services:
       # Redpanda / Kafka
       KAFKA_BROKERS: redpanda:9092
       REDPANDA_ENABLED: "true"
+      # MCP agent query API key
+      MCP_API_KEY: ${MCP_API_KEY:-}
       # Disabled services — connections fail gracefully
       OPENSEARCH_ENABLED: "false"
       TEMPORAL_ENABLED: "false"
@@ -401,6 +403,38 @@ services:
       - provenance
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Agent Query Layer — MCP server for AI agents
+  # ---------------------------------------------------------------------------
+  agent-query:
+    build:
+      context: ../../
+      dockerfile: apps/agent-query/Dockerfile
+      target: development
+    container_name: provenance-ec2-agent-query
+    restart: unless-stopped
+    environment:
+      PORT: 3002
+      CONTROL_PLANE_URL: http://api:3001
+      MCP_API_KEY: ${MCP_API_KEY:-}
+      NODE_ENV: development
+    volumes:
+      - ../../apps/agent-query:/app/apps/agent-query:cached
+      - /app/apps/agent-query/node_modules
+    ports:
+      - "3002:3002"
+    networks:
+      - provenance
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

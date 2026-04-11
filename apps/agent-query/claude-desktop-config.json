@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "provenance": {
+      "url": "http://54.83.160.49:3002/mcp/sse",
+      "apiKey": "provenance-mcp-dev-key-2026"
+    }
+  }
+}

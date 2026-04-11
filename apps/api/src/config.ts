@@ -33,6 +33,9 @@ const envSchema = z.object({
   // Defaults to KEYCLOAK_AUTH_SERVER_URL when running outside Docker.
   KEYCLOAK_ISSUER_URL: z.string().url().optional(),
   KEYCLOAK_CLIENT_ID: z.string().min(1),
+
+  // MCP API key (optional — enables API key auth for the agent query layer)
+  MCP_API_KEY: z.string().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
