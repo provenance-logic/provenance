@@ -4,6 +4,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3002),
   CONTROL_PLANE_URL: z.string().default('http://localhost:3001'),
   MCP_API_KEY: z.string().min(1),
+  DEFAULT_ORG_ID: z.string().min(1),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 

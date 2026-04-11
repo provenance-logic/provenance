@@ -78,15 +78,16 @@ and you should see 6 Provenance tools listed:
 
 ## Step 5 — Try it out
 
-Type any of these into Claude Desktop:
+Type any of these into Claude Desktop — no org IDs or UUIDs needed:
 
-- "What data products does org e9213d00-264f-40ff-b1ee-52241bfe033e have?"
-- "What is the trust score for product 93ab2cb6-493f-4035-a387-854039627eaf?"
-- "Show me the lineage for the Daily Revenue Report"
+- "What data products are available?"
+- "Show me the trust score for the Daily Revenue Report"
+- "What is the lineage for Customer 360?"
 - "Search for products related to revenue"
+- "How are the SLOs for Order Fulfillment SLA?"
 
 Claude will use the Provenance tools to fetch real data and answer
-your questions.
+your questions. The server automatically uses the default organization.
 
 ## Troubleshooting
 
@@ -100,3 +101,13 @@ your questions.
 
 **First launch is slow:**
 - The first time, `npx` downloads the `mcp-remote` bridge package. This is a one-time download and takes 5-10 seconds.
+
+## Server-side environment variables
+
+These are configured on the EC2 instance in `.env.ec2`:
+
+| Variable | Description |
+|---|---|
+| `MCP_API_KEY` | Shared secret for API authentication |
+| `DEFAULT_ORG_ID` | Default organization ID used when tools are called without an org_id |
+| `CONTROL_PLANE_URL` | URL of the Provenance control plane API |

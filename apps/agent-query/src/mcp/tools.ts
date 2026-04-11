@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResult, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ControlPlaneClient, ProductSummary, LineageNode } from '../control-plane/control-plane.client.js';
+import { getConfig } from '../config.js';
 
 type ToolHandler = (args: Record<string, string>) => Promise<CallToolResult>;
 
@@ -15,6 +16,11 @@ interface ToolDef {
   handler: ToolHandler;
 }
 
+/** Resolve org_id from args or fall back to the configured default. */
+function resolveOrgId(args: Record<string, string>): string {
+  return args.org_id || getConfig().DEFAULT_ORG_ID;
+}
+
 function makeTools(client: ControlPlaneClient): ToolDef[] {
   return [
     // ── Tool 1: list_products ──────────────────────────────────────────
@@ -24,13 +30,14 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           status_filter: { type: 'string', description: 'Filter by status: published, draft, or all (default: all)' },
         },
-        required: ['org_id'],
+        required: [],
       },
       handler: async (args) => {
-        const products = await client.listProducts(args.org_id);
+        const orgId = resolveOrgId(args);
+        const products = await client.listProducts(orgId);
         const filtered = args.status_filter && args.status_filter !== 'all'
           ? products.filter((p: ProductSummary) => p.status === args.status_filter)
           : products;
@@ -57,14 +64,15 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           product_id: { type: 'string', description: 'The product ID' },
           domain_id: { type: 'string', description: 'The domain ID' },
         },
-        required: ['org_id', 'product_id', 'domain_id'],
+        required: ['product_id', 'domain_id'],
       },
       handler: async (args) => {
-        const p = await client.getProduct(args.org_id, args.domain_id, args.product_id);
+        const orgId = resolveOrgId(args);
+        const p = await client.getProduct(orgId, args.domain_id, args.product_id);
         const ports = (p.ports ?? []).map((port: { portType: string; name: string; interfaceType?: string }) =>
           `  - ${port.name} (${port.portType}${port.interfaceType ? `, ${port.interfaceType}` : ''})`,
         ).join('\n');
@@ -94,13 +102,14 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           product_id: { type: 'string', description: 'The product ID' },
         },
-        required: ['org_id', 'product_id'],
+        required: ['product_id'],
       },
       handler: async (args) => {
-        const ts = await client.getTrustScore(args.org_id, args.product_id);
+        const orgId = resolveOrgId(args);
+        const ts = await client.getTrustScore(orgId, args.product_id);
         const components = ts.components as Record<string, { raw_value: unknown; component_score: number; weight: number; weighted_score: number }>;
         const componentLines = Object.entries(components).map(([name, c]) =>
           `  - ${name}: score=${c.component_score.toFixed(2)}, weight=${c.weight}, weighted=${c.weighted_score.toFixed(3)}`,
@@ -125,15 +134,16 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           product_id: { type: 'string', description: 'The product ID' },
           direction: { type: 'string', description: 'upstream, downstream, or both (default: both)' },
         },
-        required: ['org_id', 'product_id'],
+        required: ['product_id'],
       },
       handler: async (args) => {
+        const orgId = resolveOrgId(args);
         const dir = (args.direction ?? 'both') as 'upstream' | 'downstream' | 'both';
-        const lineage = await client.getLineage(args.org_id, args.product_id, dir);
+        const lineage = await client.getLineage(orgId, args.product_id, dir);
         const sections: string[] = [];
 
         if (lineage.upstream) {
@@ -171,13 +181,14 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           product_id: { type: 'string', description: 'The product ID' },
         },
-        required: ['org_id', 'product_id'],
+        required: ['product_id'],
       },
       handler: async (args) => {
-        const slo = await client.getSloSummary(args.org_id, args.product_id);
+        const orgId = resolveOrgId(args);
+        const slo = await client.getSloSummary(orgId, args.product_id);
         const text = [
           `SLO Health: ${slo.slo_health}`,
           `Total SLOs: ${slo.total_slos}`,
@@ -199,13 +210,14 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       inputSchema: {
         type: 'object',
         properties: {
-          org_id: { type: 'string', description: 'The organization ID' },
+          org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           query: { type: 'string', description: 'Search keywords' },
         },
-        required: ['org_id', 'query'],
+        required: ['query'],
       },
       handler: async (args) => {
-        const results = await client.searchProducts(args.org_id, args.query);
+        const orgId = resolveOrgId(args);
+        const results = await client.searchProducts(orgId, args.query);
 
         if (results.length === 0) {
           return { content: [{ type: 'text', text: `No products found matching "${args.query}".` }] };
@@ -227,8 +239,6 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
 export function registerTools(server: McpServer, client: ControlPlaneClient): void {
   const tools = makeTools(client);
 
-  // Use the low-level Server API to register tools with raw JSON Schema
-  // (avoids the TS2589 "excessively deep" error from the McpServer Zod overloads)
   const underlying = server.server;
 
   underlying.setRequestHandler(

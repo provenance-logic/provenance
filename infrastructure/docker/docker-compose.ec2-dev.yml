@@ -422,6 +422,7 @@ services:
       PORT: 3002
       CONTROL_PLANE_URL: http://api:3001
       MCP_API_KEY: ${MCP_API_KEY:-}
+      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-}
       NODE_ENV: development
     volumes:
       - ../../apps/agent-query:/app/apps/agent-query:cached
