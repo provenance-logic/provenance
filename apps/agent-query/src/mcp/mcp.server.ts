@@ -5,19 +5,21 @@ import { registerTools } from './tools.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 const transports = new Map<string, SSEServerTransport>();
-
-let mcpServer: McpServer;
 let controlPlaneClient: ControlPlaneClient;
 
-export function initMcpServer(): void {
-  controlPlaneClient = new ControlPlaneClient();
-
-  mcpServer = new McpServer(
+function createMcpServer(): McpServer {
+  const server = new McpServer(
     { name: 'provenance', version: '0.1.0' },
     { capabilities: { tools: {} } },
   );
+  registerTools(server, controlPlaneClient);
+  return server;
+}
 
-  registerTools(mcpServer, controlPlaneClient);
+export function initMcpServer(): void {
+  controlPlaneClient = new ControlPlaneClient();
+  // Validate that a server can be created (tools register without error)
+  createMcpServer();
   console.log('[MCP] Server initialized with 6 tools');
 }
 
@@ -25,6 +27,8 @@ export async function handleSseConnection(
   _req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  // Each SSE connection gets its own McpServer instance
+  const server = createMcpServer();
   const transport = new SSEServerTransport('/mcp/messages', res);
   transports.set(transport.sessionId, transport);
 
@@ -32,7 +36,7 @@ export async function handleSseConnection(
     transports.delete(transport.sessionId);
   };
 
-  await mcpServer.connect(transport);
+  await server.connect(transport);
 }
 
 export async function handleSseMessage(

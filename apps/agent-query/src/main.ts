@@ -18,6 +18,11 @@ async function bootstrap() {
   // Initialize MCP server
   initMcpServer();
 
+  // Reject POST to /mcp/sse — mcp-remote tries Streamable HTTP first
+  app.post('/mcp/sse', (_req, res) => {
+    res.status(405).set('Allow', 'GET').json({ error: 'Method Not Allowed. Use GET for SSE.' });
+  });
+
   // SSE endpoint — client connects here to establish the event stream
   app.get('/mcp/sse', async (req, res) => {
     try {
