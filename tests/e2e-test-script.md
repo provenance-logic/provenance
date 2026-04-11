@@ -27,26 +27,59 @@ export TOKEN=$(curl -sf -X POST \
   -d 'username=testuser' \
   -d 'password=provenance_dev' | jq -r '.access_token')
 
-# Helper: get product ID by name (searches across all domains)
-get_product_id() {
-  local name="$1"
-  curl -s "$API/organizations/$ORG_ID/domains" \
-    -H "Authorization: Bearer $TOKEN" | \
-  jq -r '.items[].id' | while read domain_id; do
-    curl -s "$API/organizations/$ORG_ID/domains/$domain_id/products" \
-      -H "Authorization: Bearer $TOKEN" | \
-    jq -r --arg name "$name" \
-      '.items[] | select(.name == $name) | .id'
-  done | head -1
-}
-
 # Helper: get domain ID by slug
 get_domain_id() {
-  local slug="$1"
   curl -s "$API/organizations/$ORG_ID/domains" \
     -H "Authorization: Bearer $TOKEN" | \
-  jq -r --arg slug "$slug" '.items[] | select(.slug == $slug) | .id'
+  jq -r --arg slug "$1" '.items[] | select(.slug == $slug) | .id'
 }
+
+# Helper: get product ID by name (searches across all domains)
+# Uses a for loop over an array to avoid subshell/SIGPIPE issues
+# with piped while-read.
+get_product_id() {
+  local name="$1"
+  local domain_ids
+  domain_ids=( $(curl -s "$API/organizations/$ORG_ID/domains" \
+    -H "Authorization: Bearer $TOKEN" | jq -r '.items[].id') )
+  for domain_id in "${domain_ids[@]}"; do
+    local result
+    result=$(curl -s "$API/organizations/$ORG_ID/domains/$domain_id/products" \
+      -H "Authorization: Bearer $TOKEN" | \
+    jq -r --arg name "$name" '.items[] | select(.name == $name) | .id')
+    if [[ -n "$result" ]]; then
+      echo "$result"
+      return
+    fi
+  done
+}
+```
+
+## Setup — Pre-fetched Product IDs
+
+Avoids repeated API lookups during testing. Run once after setting
+up shell variables above.
+
+```bash
+# Fetch domain IDs
+export FINANCE_DOMAIN_ID=$(get_domain_id "finance")
+export MARKETING_DOMAIN_ID=$(get_domain_id "marketing")
+export OPS_DOMAIN_ID=$(get_domain_id "operations")
+
+# Fetch product IDs
+export REVENUE_PRODUCT_ID=$(get_product_id "Daily Revenue Report")
+export FUNNEL_PRODUCT_ID=$(get_product_id "Customer Acquisition Funnel")
+export FULFILLMENT_PRODUCT_ID=$(get_product_id "Order Fulfillment SLA")
+export C360_PRODUCT_ID=$(get_product_id "Customer 360")
+
+# Verify all IDs resolved
+echo "Finance domain:  $FINANCE_DOMAIN_ID"
+echo "Marketing domain: $MARKETING_DOMAIN_ID"
+echo "Ops domain:       $OPS_DOMAIN_ID"
+echo "Revenue product:  $REVENUE_PRODUCT_ID"
+echo "Funnel product:   $FUNNEL_PRODUCT_ID"
+echo "Fulfillment:      $FULFILLMENT_PRODUCT_ID"
+echo "Customer 360:     $C360_PRODUCT_ID"
 ```
 
 ---
