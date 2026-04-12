@@ -3,12 +3,14 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { z } from 'zod';
 import { AgentIdentityEntity } from './entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from './entities/agent-trust-classification.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import type { RequestContext, RoleType } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -58,14 +60,30 @@ function hasGovernanceRole(roles: RoleType[]): boolean {
 
 @Injectable()
 export class AgentsService {
+  private readonly logger = new Logger(AgentsService.name);
+
   constructor(
     @InjectRepository(AgentIdentityEntity)
     private readonly agentRepo: Repository<AgentIdentityEntity>,
     @InjectRepository(AgentTrustClassificationEntity)
     private readonly classificationRepo: Repository<AgentTrustClassificationEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async registerAgent(dto: CreateAgentDto, ctx: RequestContext) {
+    // B4: Validate human_oversight_contact belongs to a known principal
+    const oversightPrincipal = await this.principalRepo.findOne({
+      where: { email: dto.human_oversight_contact },
+    });
+    if (!oversightPrincipal) {
+      throw new BadRequestException(
+        'human_oversight_contact must be a registered platform user',
+      );
+    }
+
     const agent = this.agentRepo.create({
       orgId: dto.org_id,
       displayName: dto.display_name,
@@ -178,18 +196,150 @@ export class AgentsService {
     agent.currentClassification = dto.classification;
     await this.agentRepo.save(agent);
 
+    // Emit downgrade to audit log
+    if (!upgrade) {
+      try {
+        await this.writeAuditLog({
+          orgId: agent.orgId,
+          principalId: ctx.principalId,
+          principalType: ctx.principalType,
+          action: 'classification_downgraded',
+          resourceType: 'agent_identity',
+          resourceId: agentId,
+          oldValue: { classification: currentClassification },
+          newValue: { classification: dto.classification, reason: dto.reason },
+          agentId,
+          agentTrustClassificationAtTime: dto.classification,
+          humanOversightContact: agent.humanOversightContact,
+        });
+      } catch (err) {
+        this.logger.error('Failed to write classification downgrade audit entry', err);
+      }
+    }
+
     return this.formatAgentResponse(agent, savedClassification);
+  }
+
+  // ---------------------------------------------------------------------------
+  // B2: Classification history
+  // ---------------------------------------------------------------------------
+
+  async getClassificationHistory(agentId: string) {
+    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+
+    const history = await this.classificationRepo.find({
+      where: { agentId },
+      order: { effectiveFrom: 'DESC' },
+    });
+
+    return history.map((h) => ({
+      classification_id: h.classificationId,
+      agent_id: h.agentId,
+      classification: h.classification,
+      scope: h.scope,
+      changed_by_principal_id: h.changedByPrincipalId,
+      changed_by_principal_type: h.changedByPrincipalType,
+      reason: h.reason,
+      effective_from: h.effectiveFrom,
+      created_at: h.createdAt,
+    }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // B4: Oversight endpoint
+  // ---------------------------------------------------------------------------
+
+  async getOversight(agentId: string) {
+    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+
+    const currentClassification = await this.getCurrentClassification(agentId);
+
+    // Fetch last activity and 24h count from audit log
+    let lastActivityAt: string | null = null;
+    let activityCount24h = 0;
+
+    try {
+      const lastActivity = await this.dataSource.query(
+        `SELECT occurred_at FROM audit.audit_log
+         WHERE agent_id = $1 AND action = 'mcp_tool_call'
+         ORDER BY occurred_at DESC LIMIT 1`,
+        [agentId],
+      );
+      if (lastActivity.length > 0) {
+        lastActivityAt = lastActivity[0].occurred_at;
+      }
+
+      const countResult = await this.dataSource.query(
+        `SELECT count(*)::int as cnt FROM audit.audit_log
+         WHERE agent_id = $1 AND action = 'mcp_tool_call'
+           AND occurred_at >= NOW() - INTERVAL '24 hours'`,
+        [agentId],
+      );
+      activityCount24h = countResult[0]?.cnt ?? 0;
+    } catch (err) {
+      this.logger.error('Failed to query agent activity from audit log', err);
+    }
+
+    return {
+      agent_id: agent.agentId,
+      display_name: agent.displayName,
+      human_oversight_contact: agent.humanOversightContact,
+      current_classification: currentClassification?.classification ?? 'Observed',
+      last_activity_at: lastActivityAt,
+      activity_count_24h: activityCount24h,
+    };
   }
 
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private async getCurrentClassification(agentId: string) {
+  async getCurrentClassification(agentId: string) {
     return this.classificationRepo.findOne({
       where: { agentId },
       order: { effectiveFrom: 'DESC' },
     });
+  }
+
+  private async writeAuditLog(entry: {
+    orgId: string;
+    principalId: string;
+    principalType: string;
+    action: string;
+    resourceType: string;
+    resourceId: string;
+    oldValue?: unknown;
+    newValue?: unknown;
+    agentId?: string;
+    agentTrustClassificationAtTime?: string;
+    humanOversightContact?: string;
+    toolName?: string;
+    mcpInputSummary?: string;
+  }) {
+    await this.dataSource.query(
+      `INSERT INTO audit.audit_log
+       (org_id, principal_id, principal_type, action, resource_type, resource_id,
+        old_value, new_value, agent_id, agent_trust_classification_at_time,
+        human_oversight_contact, tool_name, mcp_input_summary)
+       VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8, $9::uuid, $10, $11, $12, $13)`,
+      [
+        entry.orgId,
+        entry.principalId,
+        entry.principalType,
+        entry.action,
+        entry.resourceType,
+        entry.resourceId,
+        entry.oldValue ? JSON.stringify(entry.oldValue) : null,
+        entry.newValue ? JSON.stringify(entry.newValue) : null,
+        entry.agentId ?? null,
+        entry.agentTrustClassificationAtTime ?? null,
+        entry.humanOversightContact ?? null,
+        entry.toolName ?? null,
+        entry.mcpInputSummary ?? null,
+      ],
+    );
   }
 
   private formatAgentResponse(

@@ -5,11 +5,10 @@
 #
 #   postgres, keycloak, opa, neo4j, redpanda, redpanda-init, api, web
 #
-# Excluded (not needed for Phase 1 dev): opensearch, minio,
+# Excluded (not needed for Phase 1 dev): minio,
 # temporal, kong, and all init/setup containers.
 #
 # Disabled features when running this stack:
-#   - Product search/indexing (OPENSEARCH_ENABLED=false)
 #   - Access workflows (TEMPORAL_ENABLED=false)
 #
 # Usage:
@@ -33,6 +32,7 @@ volumes:
   neo4j_import:
   neo4j_plugins:
   redpanda_data:
+  opensearch_data:
 
 services:
 
@@ -248,6 +248,41 @@ services:
       start_period: 60s
 
   # ---------------------------------------------------------------------------
+  # OpenSearch — search and semantic vector index (memory-constrained for EC2 dev)
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: provenance-ec2-opensearch
+    restart: unless-stopped
+    environment:
+      cluster.name: provenance-search
+      node.name: provenance-ec2-opensearch-node1
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
   # Redpanda — Kafka-compatible message broker (memory-constrained for EC2 dev)
   # ---------------------------------------------------------------------------
   redpanda:
@@ -346,8 +381,12 @@ services:
       REDPANDA_ENABLED: "true"
       # MCP agent query API key
       MCP_API_KEY: ${MCP_API_KEY:-}
+      # Embedding service
+      EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding:8001}
+      # OpenSearch
+      OPENSEARCH_NODE: http://opensearch:9200
+      OPENSEARCH_ENABLED: "true"
       # Disabled services — connections fail gracefully
-      OPENSEARCH_ENABLED: "false"
       TEMPORAL_ENABLED: "false"
     volumes:
       - ../../apps/api:/app/apps/api:cached
@@ -369,6 +408,8 @@ services:
       neo4j:
         condition: service_healthy
       redpanda:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/v1/health || exit 1"]

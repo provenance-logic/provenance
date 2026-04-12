@@ -151,6 +151,23 @@ export class ControlPlaneClient {
     return res.data;
   }
 
+  async getAgentInfo(agentId: string): Promise<{ agent_id: string; current_classification: string; human_oversight_contact: string; org_id: string } | null> {
+    try {
+      const res = await this.http.get(`/agents/${agentId}`);
+      return res.data;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeAuditEntry(entry: Record<string, unknown>): Promise<void> {
+    try {
+      await this.http.post('/internal/audit', entry);
+    } catch (err) {
+      console.error('[Audit] Failed to write audit entry:', (err as Error).message);
+    }
+  }
+
   async searchProducts(orgId: string, query: string): Promise<ProductSummary[]> {
     // Try marketplace search first
     try {

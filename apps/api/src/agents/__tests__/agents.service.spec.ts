@@ -1,9 +1,10 @@
 import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
 import { ForbiddenException } from '@nestjs/common';
 import { AgentsService } from '../agents.service.js';
 import { AgentIdentityEntity } from '../entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from '../entities/agent-trust-classification.entity.js';
+import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import type { RequestContext } from '@provenance/types';
 
 const mockAgentRepo = () => ({
@@ -27,6 +28,14 @@ const mockClassificationRepo = () => ({
     createdAt: new Date(),
     ...entity,
   })),
+});
+
+const mockPrincipalRepo = () => ({
+  findOne: jest.fn(),
+});
+
+const mockDataSource = () => ({
+  query: jest.fn().mockResolvedValue([]),
 });
 
 function makeCtx(overrides: Partial<RequestContext> = {}): RequestContext {
@@ -62,6 +71,7 @@ describe('AgentsService', () => {
   let service: AgentsService;
   let agentRepo: ReturnType<typeof mockAgentRepo>;
   let classificationRepo: ReturnType<typeof mockClassificationRepo>;
+  let principalRepo: ReturnType<typeof mockPrincipalRepo>;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -69,18 +79,22 @@ describe('AgentsService', () => {
         AgentsService,
         { provide: getRepositoryToken(AgentIdentityEntity), useFactory: mockAgentRepo },
         { provide: getRepositoryToken(AgentTrustClassificationEntity), useFactory: mockClassificationRepo },
+        { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
+        { provide: getDataSourceToken(), useFactory: mockDataSource },
       ],
     }).compile();
 
     service = module.get(AgentsService);
     agentRepo = module.get(getRepositoryToken(AgentIdentityEntity));
     classificationRepo = module.get(getRepositoryToken(AgentTrustClassificationEntity));
+    principalRepo = module.get(getRepositoryToken(PrincipalEntity));
   });
 
   // ---------------------------------------------------------------------------
   // Test 1: Registration always produces Observed classification
   // ---------------------------------------------------------------------------
   it('registration always produces Observed classification', async () => {
+    principalRepo.findOne.mockResolvedValue({ principalId: 'principal-002', email: 'oversight@example.com' });
     const ctx = makeCtx();
     const result = await service.registerAgent(
       {
@@ -123,6 +137,33 @@ describe('AgentsService', () => {
         ctx,
       ),
     ).rejects.toThrow(ForbiddenException);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 2b: Upgrade succeeds with governance role (B2 positive gate)
+  // ---------------------------------------------------------------------------
+  it('upgrade succeeds with governance_member role', async () => {
+    const agent = makeAgent({ currentClassification: 'Observed' });
+    agentRepo.findOne.mockResolvedValue(agent);
+    classificationRepo.findOne.mockResolvedValue({
+      classification: 'Observed',
+      effectiveFrom: new Date(),
+    });
+
+    const ctx = makeCtx({ roles: ['governance_member'], email: 'governance-lead@example.com' });
+
+    const result = await service.updateClassification(
+      'agent-001',
+      { classification: 'Supervised', reason: 'Agent completed 30-day observation period with zero policy violations' },
+      ctx,
+    );
+
+    expect(result.current_classification).toBe('Supervised');
+    expect(result.agent_id).toBe('agent-001');
+    expect(result.classification_reason).toBe(
+      'Agent completed 30-day observation period with zero policy violations',
+    );
+    expect(result.classification_scope).toBe('global');
   });
 
   // ---------------------------------------------------------------------------

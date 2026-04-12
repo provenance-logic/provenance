@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { passportJwtSecret } from 'jwks-rsa';
 import { getConfig } from '../config.js';
-import type { JwtClaims, RequestContext } from '@provenance/types';
+import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
+import type { JwtClaims, RequestContext, RoleType } from '@provenance/types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor() {
+  constructor(
+    @InjectRepository(RoleAssignmentEntity)
+    private readonly roleAssignmentRepo: Repository<RoleAssignmentEntity>,
+  ) {
     const config = getConfig();
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -23,15 +29,32 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  validate(payload: JwtClaims): RequestContext {
+  async validate(payload: JwtClaims): Promise<RequestContext> {
     const displayName = payload.given_name && payload.family_name
       ? `${payload.given_name} ${payload.family_name}`
       : (payload.preferred_username ?? undefined);
+
+    const principalId = payload.provenance_principal_id ?? payload.sub;
+    const orgId = payload.provenance_org_id ?? '';
+
+    // Fetch roles from database for this principal
+    let roles: RoleType[] = [];
+    if (principalId && orgId) {
+      try {
+        const assignments = await this.roleAssignmentRepo.find({
+          where: { principalId, orgId },
+        });
+        roles = assignments.map((a) => a.role as RoleType);
+      } catch {
+        // If role lookup fails, proceed with empty roles
+      }
+    }
+
     return {
-      principalId: payload.provenance_principal_id ?? payload.sub,
-      orgId: payload.provenance_org_id ?? '',
+      principalId,
+      orgId,
       principalType: payload.provenance_principal_type ?? 'human_user',
-      roles: [],
+      roles,
       keycloakSubject: payload.sub,
       ...(payload.email !== undefined && { email: payload.email }),
       ...(displayName !== undefined && { displayName }),

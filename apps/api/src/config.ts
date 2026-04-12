@@ -34,6 +34,9 @@ const envSchema = z.object({
   KEYCLOAK_ISSUER_URL: z.string().url().optional(),
   KEYCLOAK_CLIENT_ID: z.string().min(1),
 
+  // Embedding service
+  EMBEDDING_SERVICE_URL: z.string().url().default('http://localhost:8001'),
+
   // MCP API key (optional — enables API key auth for the agent query layer)
   MCP_API_KEY: z.string().optional(),
 });

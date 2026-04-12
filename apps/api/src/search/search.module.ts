@@ -11,6 +11,7 @@ import { AccessRequestEntity } from '../access/entities/access-request.entity.js
 import { opensearchClientProvider } from './opensearch.client.js';
 import { TrustScoreService } from './trust-score.service.js';
 import { ProductIndexService } from './product-index.service.js';
+import { SearchIndexingService } from './search-indexing.service.js';
 import { KafkaConsumerService } from './kafka-consumer.service.js';
 import { MarketplaceService } from './marketplace.service.js';
 import { MarketplaceController } from './marketplace.controller.js';
@@ -33,9 +34,11 @@ import { MarketplaceGlobalController } from './marketplace-global.controller.js'
     opensearchClientProvider,
     TrustScoreService,
     ProductIndexService,
+    SearchIndexingService,
     KafkaConsumerService,
     MarketplaceService,
   ],
   controllers: [MarketplaceController, MarketplaceGlobalController],
+  exports: [SearchIndexingService],
 })
 export class SearchModule {}

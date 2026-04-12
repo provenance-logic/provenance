@@ -10,6 +10,7 @@ import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { ComplianceStateEntity } from '../governance/entities/compliance-state.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
+import { SearchModule } from '../search/search.module.js';
 import { TrustScoreService } from '../search/trust-score.service.js';
 
 export { ProductsService };
@@ -26,6 +27,7 @@ export { ProductsService };
     ]),
     GovernanceModule,
     KafkaModule,
+    SearchModule,
   ],
   controllers: [ProductsController],
   providers: [ProductsService, TrustScoreService],

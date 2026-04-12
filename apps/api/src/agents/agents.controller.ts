@@ -60,4 +60,14 @@ export class AgentsController {
     }
     return this.agentsService.updateClassification(agentId, parsed.data, ctx);
   }
+
+  @Get(':agentId/classification/history')
+  async getClassificationHistory(@Param('agentId') agentId: string) {
+    return this.agentsService.getClassificationHistory(agentId);
+  }
+
+  @Get(':agentId/oversight')
+  async getOversight(@Param('agentId') agentId: string) {
+    return this.agentsService.getOversight(agentId);
+  }
 }

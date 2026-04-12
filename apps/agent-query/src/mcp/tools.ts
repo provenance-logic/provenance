@@ -259,6 +259,31 @@ export function registerTools(server: McpServer, client: ControlPlaneClient): vo
       if (!tool) {
         return { content: [{ type: 'text', text: `Unknown tool: ${request.params.name}` }], isError: true };
       }
+
+      // Audit logging: write synchronously before returning tool response.
+      // Never throws — if audit fails, log and continue.
+      const orgId = (request.params.arguments as Record<string, string>)?.org_id || getConfig().DEFAULT_ORG_ID;
+      try {
+        const inputSummary = JSON.stringify(request.params.arguments ?? {}).slice(0, 500);
+
+        // Default to service_account context (MCP_API_KEY auth path).
+        // When agent identity resolution is implemented, these will be populated from JWT.
+        const auditEntry: Record<string, unknown> = {
+          org_id: orgId,
+          principal_id: null,
+          principal_type: 'service_account',
+          action: 'mcp_tool_call',
+          resource_type: 'mcp_tool',
+          resource_id: null,
+          tool_name: request.params.name,
+          mcp_input_summary: inputSummary,
+        };
+
+        await client.writeAuditEntry(auditEntry);
+      } catch (err) {
+        console.error('[Audit] Tool call audit failed (non-blocking):', err);
+      }
+
       try {
         return await tool.handler((request.params.arguments ?? {}) as Record<string, string>);
       } catch (err: unknown) {

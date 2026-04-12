@@ -14,6 +14,7 @@ import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
+import { SearchIndexingService } from '../search/search-indexing.service.js';
 import type {
   DataProduct,
   DataProductList,
@@ -46,6 +47,7 @@ export class ProductsService {
     private readonly principalRepo: Repository<PrincipalEntity>,
     private readonly governanceService: GovernanceService,
     private readonly kafkaProducerService: KafkaProducerService,
+    private readonly searchIndexingService: SearchIndexingService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -270,6 +272,10 @@ export class ProductsService {
       snapshot,
     };
     await this.kafkaProducerService.publish('product.lifecycle', product.id, event);
+
+    // Fire-and-forget: index product embedding for semantic search.
+    // Do not await — embedding failure must never block publish.
+    this.searchIndexingService.indexProduct(product.id, orgId).catch(() => {});
 
     return snapshot;
   }
