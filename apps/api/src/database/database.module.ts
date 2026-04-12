@@ -26,6 +26,8 @@ import { EmissionLogEntity } from '../lineage/entities/emission-log.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
 import { TrustScoreHistoryEntity } from '../trust-score/entities/trust-score-history.entity.js';
+import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
+import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-classification.entity.js';
 
 @Module({
   imports: [
@@ -65,6 +67,8 @@ import { TrustScoreHistoryEntity } from '../trust-score/entities/trust-score-his
             SloDeclarationEntity,
             SloEvaluationEntity,
             TrustScoreHistoryEntity,
+            AgentIdentityEntity,
+            AgentTrustClassificationEntity,
           ],
           // Migrations are managed by Flyway — TypeORM never runs them.
           synchronize: false,
