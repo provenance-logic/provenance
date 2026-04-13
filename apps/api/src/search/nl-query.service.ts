@@ -63,6 +63,12 @@ export class NlQueryService {
 
       const parsed = JSON.parse(jsonStr) as SearchIntent;
       parsed.raw_query = query;
+      // TODO(Phase 5): The Claude API often infers domains from query text that don't
+      // match any actual domain in the platform (e.g. "customer" when the real domain is
+      // "Marketing"). This causes the downstream domain filter to return zero results even
+      // though kNN ranking would find relevant products. Fix: validate the extracted domain
+      // against known org domains before returning, and drop the domain field if no match
+      // is found so the search falls through to pure semantic ranking.
       return parsed;
     } catch (err) {
       this.logger.warn(
