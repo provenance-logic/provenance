@@ -193,6 +193,28 @@ Connectors that implement discovery mode perform two types of crawling:
 
 **Connector discovery is a Phase 3 deliverable** — the connector framework is built in Phase 1/2; discovery mode implementation for priority connectors ships with Phase 3 alongside the lineage graph.
 
+**Phase 4 status: Phase 4a and Phase 4b complete.**
+
+Phase 4a delivered:
+- MCP server (SSE transport, `@modelcontextprotocol/sdk`) with 6 initial tools: `list_products`, `get_product`, `get_trust_score`, `get_lineage`, `get_slo_summary`, `search_products`
+- Agent Query Layer as a separate NestJS/Express process on port 3002
+- MCP audit interceptor — all tool calls logged to `audit.audit_log`
+- Agent identity model — `agent_identities` and `agent_trust_classifications` tables, registration API, classification transitions with governance role enforcement
+
+Phase 4b delivered:
+- Embedding service (all-MiniLM-L6-v2, 384 dimensions) — Python FastAPI service on port 8001
+- OpenSearch kNN semantic index (`data_products` index with `knn_vector` field, cosine similarity via nmslib/HNSW)
+- NL query translation via Claude API (`claude-sonnet-4-20250514`) — `NlQueryService` extracts structured search intent (domain, tags, keywords, trust_score_min, lifecycle_state) with 5s timeout and graceful fallback
+- `semantic_search` MCP tool (7th tool) — hybrid kNN (boost 0.7) + BM25 (boost 0.3) search
+- Index freshness automation — fire-and-forget re-indexing on publish, update (name/description/tags on published products), and deletion on deprecate/decommission
+- Agent registration API with Observed default classification
+- Trust classification model (Observed/Supervised/Autonomous) with full audit history
+- Activity tracking — all MCP tool calls logged to `audit.audit_log` with agent identity context (agent_id, trust classification at time, human oversight contact)
+- Human oversight contact enforcement — must be a registered platform user
+- `register_agent` and `get_agent_status` MCP tools (8th and 9th tools)
+- Integration milestone — agent identity context captured in semantic search audit trail; two agents with different trust classifications produce distinct audit entries
+- Internal semantic search endpoint: `POST /api/v1/internal/search/semantic` (MCP_API_KEY auth)
+
 ---
 
 ## Phase 1 Build Targets (Start Here)
