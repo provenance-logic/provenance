@@ -20,7 +20,7 @@ export function initMcpServer(): void {
   controlPlaneClient = new ControlPlaneClient();
   // Validate that a server can be created (tools register without error)
   createMcpServer();
-  console.log('[MCP] Server initialized with 6 tools');
+  console.log('[MCP] Server initialized with 9 tools');
 }
 
 export async function handleSseConnection(

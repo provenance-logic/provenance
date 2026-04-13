@@ -168,6 +168,33 @@ export class ControlPlaneClient {
     }
   }
 
+  async registerAgent(orgId: string, dto: {
+    display_name: string;
+    model_name: string;
+    model_provider: string;
+    human_oversight_contact: string;
+  }): Promise<Record<string, unknown>> {
+    const res = await this.http.post('/agents', {
+      ...dto,
+      org_id: orgId,
+    });
+    return res.data;
+  }
+
+  async getAgentStatus(agentId: string): Promise<Record<string, unknown>> {
+    const res = await this.http.get(`/agents/${agentId}/oversight`);
+    return res.data;
+  }
+
+  async getSemanticSearch(orgId: string, query: string, limit = 10): Promise<{ intent: Record<string, unknown>; results: Array<Record<string, unknown>> }> {
+    const res = await this.http.post('/internal/search/semantic', {
+      query,
+      org_id: orgId,
+      limit,
+    });
+    return res.data;
+  }
+
   async searchProducts(orgId: string, query: string): Promise<ProductSummary[]> {
     // Try marketplace search first
     try {

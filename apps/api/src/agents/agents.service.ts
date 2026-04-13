@@ -84,13 +84,21 @@ export class AgentsService {
       );
     }
 
+    // When called via MCP API key (service_account), principalId is 'mcp-agent' (not a UUID).
+    // Fall back to the oversight principal's ID for the registered_by field.
+    const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const registeredBy = isValidUuid.test(ctx.principalId)
+      ? ctx.principalId
+      : oversightPrincipal.id;
+    const changedBy = registeredBy;
+
     const agent = this.agentRepo.create({
       orgId: dto.org_id,
       displayName: dto.display_name,
       modelName: dto.model_name,
       modelProvider: dto.model_provider,
       humanOversightContact: dto.human_oversight_contact,
-      registeredByPrincipalId: ctx.principalId,
+      registeredByPrincipalId: registeredBy,
       currentClassification: 'Observed',
     });
     const savedAgent = await this.agentRepo.save(agent);
@@ -100,7 +108,7 @@ export class AgentsService {
       orgId: dto.org_id,
       classification: 'Observed',
       scope: 'global',
-      changedByPrincipalId: ctx.principalId,
+      changedByPrincipalId: changedBy,
       changedByPrincipalType: 'human_user',
       reason: 'Initial registration',
     });

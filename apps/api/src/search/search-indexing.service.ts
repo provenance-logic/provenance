@@ -78,6 +78,21 @@ export class SearchIndexingService {
     }
   }
 
+  async deleteFromIndex(productId: string): Promise<void> {
+    try {
+      await this.client.delete({
+        index: INDEX_NAME,
+        id: productId,
+        refresh: true,
+      });
+    } catch (err: unknown) {
+      // 404 is acceptable — the product may never have been indexed
+      if ((err as { meta?: { statusCode?: number } }).meta?.statusCode !== 404) {
+        this.logger.error(`Failed to delete product ${productId} from index`, (err as Error).message);
+      }
+    }
+  }
+
   private buildEmbeddingText(
     name: string,
     description: string | null,

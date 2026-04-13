@@ -137,15 +137,41 @@ export class ProductsService {
       relations: ['ports'],
     });
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
-    if (product.status !== 'draft') {
-      throw new ConflictException('Only draft products can be updated directly. Create a new version instead.');
+
+    // Draft products: any field can be updated.
+    // Published products: only name, description, and tags can be updated (metadata corrections).
+    if (product.status !== 'draft' && product.status !== 'published') {
+      throw new ConflictException(
+        `Products in '${product.status}' state cannot be updated`,
+      );
     }
+    if (product.status === 'published') {
+      if (dto.classification !== undefined || dto.ownerPrincipalId !== undefined) {
+        throw new ConflictException(
+          'Published products can only update name, description, and tags',
+        );
+      }
+    }
+
+    // Track whether searchable fields changed (for re-indexing published products)
+    const nameChanged = dto.name !== undefined && dto.name !== product.name;
+    const descChanged = dto.description !== undefined && dto.description !== product.description;
+    const tagsChanged = dto.tags !== undefined &&
+      JSON.stringify(dto.tags) !== JSON.stringify(product.tags);
+    const searchFieldsChanged = nameChanged || descChanged || tagsChanged;
+
     if (dto.name !== undefined) product.name = dto.name;
     if (dto.description !== undefined) product.description = dto.description;
     if (dto.classification !== undefined) product.classification = dto.classification;
     if (dto.ownerPrincipalId !== undefined) product.ownerPrincipalId = dto.ownerPrincipalId;
     if (dto.tags !== undefined) product.tags = dto.tags;
     const saved = await this.productRepo.save(product);
+
+    // Fire-and-forget: re-index if published product's searchable fields changed
+    if (product.status === 'published' && searchFieldsChanged) {
+      this.searchIndexingService.indexProduct(product.id, orgId).catch(() => {});
+    }
+
     return this.toDataProduct(saved);
   }
 
@@ -278,6 +304,58 @@ export class ProductsService {
     this.searchIndexingService.indexProduct(product.id, orgId).catch(() => {});
 
     return snapshot;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle transitions (deprecate / decommission)
+  // ---------------------------------------------------------------------------
+
+  async deprecateProduct(
+    orgId: string,
+    domainId: string,
+    productId: string,
+  ): Promise<DataProduct> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId, domainId },
+      relations: ['ports'],
+    });
+    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    if (product.status !== 'published') {
+      throw new ConflictException(`Product must be in published status to deprecate; current status is '${product.status}'`);
+    }
+
+    product.status = 'deprecated';
+    const saved = await this.productRepo.save(product);
+    saved.ports = product.ports;
+
+    // Remove from semantic search index
+    this.searchIndexingService.deleteFromIndex(productId).catch(() => {});
+
+    return this.toDataProduct(saved);
+  }
+
+  async decommissionProduct(
+    orgId: string,
+    domainId: string,
+    productId: string,
+  ): Promise<DataProduct> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId, domainId },
+      relations: ['ports'],
+    });
+    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    if (product.status !== 'deprecated') {
+      throw new ConflictException(`Product must be in deprecated status to decommission; current status is '${product.status}'`);
+    }
+
+    product.status = 'decommissioned';
+    const saved = await this.productRepo.save(product);
+    saved.ports = product.ports;
+
+    // Remove from semantic search index
+    this.searchIndexingService.deleteFromIndex(productId).catch(() => {});
+
+    return this.toDataProduct(saved);
   }
 
   // ---------------------------------------------------------------------------

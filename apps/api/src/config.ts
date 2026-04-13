@@ -39,6 +39,9 @@ const envSchema = z.object({
 
   // MCP API key (optional — enables API key auth for the agent query layer)
   MCP_API_KEY: z.string().optional(),
+
+  // Anthropic API key (optional — enables NL query translation via Claude)
+  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

@@ -386,6 +386,8 @@ services:
       # OpenSearch
       OPENSEARCH_NODE: http://opensearch:9200
       OPENSEARCH_ENABLED: "true"
+      # Anthropic API (Claude) — NL query translation
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
       # Disabled services — connections fail gracefully
       TEMPORAL_ENABLED: "false"
     volumes:
@@ -486,6 +488,7 @@ services:
       CONTROL_PLANE_URL: http://api:3001
       MCP_API_KEY: ${MCP_API_KEY:-}
       DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
       NODE_ENV: development
     volumes:
       - ../../apps/agent-query:/app/apps/agent-query:cached

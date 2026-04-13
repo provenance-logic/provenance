@@ -16,6 +16,9 @@ import { KafkaConsumerService } from './kafka-consumer.service.js';
 import { MarketplaceService } from './marketplace.service.js';
 import { MarketplaceController } from './marketplace.controller.js';
 import { MarketplaceGlobalController } from './marketplace-global.controller.js';
+import { NlQueryService } from './nl-query.service.js';
+import { HybridSearchService } from './hybrid-search.service.js';
+import { SemanticSearchController } from './semantic-search.controller.js';
 
 @Module({
   imports: [
@@ -37,8 +40,10 @@ import { MarketplaceGlobalController } from './marketplace-global.controller.js'
     SearchIndexingService,
     KafkaConsumerService,
     MarketplaceService,
+    NlQueryService,
+    HybridSearchService,
   ],
-  controllers: [MarketplaceController, MarketplaceGlobalController],
-  exports: [SearchIndexingService],
+  controllers: [MarketplaceController, MarketplaceGlobalController, SemanticSearchController],
+  exports: [SearchIndexingService, NlQueryService, HybridSearchService],
 })
 export class SearchModule {}

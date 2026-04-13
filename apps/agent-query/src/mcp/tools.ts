@@ -203,7 +203,115 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
       },
     },
 
-    // ── Tool 6: search_products ────────────────────────────────────────
+    // ── Tool 6: semantic_search ─────────────────────────────────────────
+    {
+      name: 'semantic_search',
+      description: 'Search for data products using natural language. Understands intent, domain context, and semantic meaning. Returns ranked results with trust scores.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Natural language description of the data you are looking for' },
+          limit: { type: 'string', description: 'Maximum results to return (default 10, max 10)' },
+        },
+        required: ['query'],
+      },
+      handler: async (args) => {
+        const orgId = resolveOrgId(args);
+        const limit = Math.min(parseInt(args.limit || '10', 10) || 10, 10);
+        const result = await client.getSemanticSearch(orgId, args.query, limit);
+
+        if (!result.results || result.results.length === 0) {
+          return { content: [{ type: 'text', text: `No products found matching "${args.query}".` }] };
+        }
+
+        const lines = result.results.map((r: Record<string, unknown>, i: number) => {
+          const trustStr = r.trust_score != null ? ` | Trust: ${r.trust_score}` : '';
+          return `${i + 1}. ${r.name} [${r.lifecycle_state}] — Domain: ${r.domain}${trustStr}\n   Score: ${(r.score as number).toFixed(4)} | ID: ${r.product_id}\n   Tags: ${(r.tags as string[]).join(', ')}`;
+        });
+
+        const intentSummary = Object.entries(result.intent)
+          .filter(([k]) => k !== 'raw_query')
+          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+          .join(', ');
+
+        const text = [
+          `Search intent: ${intentSummary || 'keyword only'}`,
+          '',
+          `Found ${result.results.length} matching products:`,
+          '',
+          ...lines,
+        ].join('\n');
+
+        return { content: [{ type: 'text', text }] };
+      },
+    },
+
+    // ── Tool 7: register_agent ──────────────────────────────────────────
+    {
+      name: 'register_agent',
+      description: 'Register a new AI agent identity in the Provenance platform. The agent will be assigned Observed trust classification by default. Requires human_oversight_contact to be a registered platform user.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          display_name: { type: 'string', description: 'Human-readable name for this agent' },
+          model_name: { type: 'string', description: 'The model identifier, e.g. claude-sonnet-4-20250514' },
+          model_provider: { type: 'string', description: 'The model provider, e.g. Anthropic' },
+          human_oversight_contact: { type: 'string', description: 'Email address of the registered platform user responsible for overseeing this agent' },
+        },
+        required: ['display_name', 'model_name', 'model_provider', 'human_oversight_contact'],
+      },
+      handler: async (args) => {
+        const orgId = resolveOrgId(args);
+        const result = await client.registerAgent(orgId, {
+          display_name: args.display_name,
+          model_name: args.model_name,
+          model_provider: args.model_provider,
+          human_oversight_contact: args.human_oversight_contact,
+        });
+
+        const text = [
+          `Agent registered successfully:`,
+          `  Agent ID: ${result.agent_id}`,
+          `  Display Name: ${result.display_name}`,
+          `  Model: ${result.model_name} (${result.model_provider})`,
+          `  Classification: ${result.current_classification}`,
+          `  Oversight Contact: ${result.human_oversight_contact}`,
+          `  Created: ${result.created_at}`,
+        ].join('\n');
+
+        return { content: [{ type: 'text', text }] };
+      },
+    },
+
+    // ── Tool 8: get_agent_status ──────────────────────────────────────
+    {
+      name: 'get_agent_status',
+      description: 'Get the current identity, trust classification, and recent activity summary for a registered agent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_id: { type: 'string', description: 'The agent ID to look up' },
+        },
+        required: ['agent_id'],
+      },
+      handler: async (args) => {
+        const result = await client.getAgentStatus(args.agent_id);
+
+        const text = [
+          `Agent Status:`,
+          `  Agent ID: ${result.agent_id}`,
+          `  Display Name: ${result.display_name}`,
+          `  Classification: ${result.current_classification}`,
+          `  Oversight Contact: ${result.human_oversight_contact}`,
+          `  Last Activity: ${result.last_activity_at ?? 'None'}`,
+          `  Activity Count (24h): ${result.activity_count_24h}`,
+        ].join('\n');
+
+        return { content: [{ type: 'text', text }] };
+      },
+    },
+
+    // ── Tool 9: search_products ────────────────────────────────────────
     {
       name: 'search_products',
       description: 'Search for data products by keyword. Returns matching products with their domain, status, and trust score.',
@@ -262,21 +370,36 @@ export function registerTools(server: McpServer, client: ControlPlaneClient): vo
 
       // Audit logging: write synchronously before returning tool response.
       // Never throws — if audit fails, log and continue.
-      const orgId = (request.params.arguments as Record<string, string>)?.org_id || getConfig().DEFAULT_ORG_ID;
+      const args = (request.params.arguments ?? {}) as Record<string, string>;
+      const orgId = args.org_id || getConfig().DEFAULT_ORG_ID;
       try {
-        const inputSummary = JSON.stringify(request.params.arguments ?? {}).slice(0, 500);
+        const inputSummary = JSON.stringify(args).slice(0, 500);
 
-        // Default to service_account context (MCP_API_KEY auth path).
-        // When agent identity resolution is implemented, these will be populated from JWT.
+        // Resolve agent identity if agent_id is provided in arguments
+        let agentId: string | null = args.agent_id || null;
+        let agentClassification: string | null = null;
+        let humanOversightContact: string | null = null;
+
+        if (agentId) {
+          const agentInfo = await client.getAgentInfo(agentId);
+          if (agentInfo) {
+            agentClassification = agentInfo.current_classification;
+            humanOversightContact = agentInfo.human_oversight_contact;
+          }
+        }
+
         const auditEntry: Record<string, unknown> = {
           org_id: orgId,
           principal_id: null,
-          principal_type: 'service_account',
+          principal_type: agentId ? 'ai_agent' : 'service_account',
           action: 'mcp_tool_call',
           resource_type: 'mcp_tool',
           resource_id: null,
           tool_name: request.params.name,
           mcp_input_summary: inputSummary,
+          agent_id: agentId,
+          agent_trust_classification_at_time: agentClassification,
+          human_oversight_contact: humanOversightContact,
         };
 
         await client.writeAuditEntry(auditEntry);

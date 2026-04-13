@@ -15,6 +15,7 @@ out/
 .env
 .env.local
 .env.*.local
+.env.ec2
 # Allow the example file
 !.env.example
 

@@ -101,6 +101,24 @@ export class ProductsController {
     return this.productsService.publishProduct(orgId, domainId, productId, dto, ctx);
   }
 
+  @Post(':productId/deprecate')
+  deprecateProduct(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Param('productId') productId: string,
+  ) {
+    return this.productsService.deprecateProduct(orgId, domainId, productId);
+  }
+
+  @Post(':productId/decommission')
+  decommissionProduct(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Param('productId') productId: string,
+  ) {
+    return this.productsService.decommissionProduct(orgId, domainId, productId);
+  }
+
   @Get(':productId/compliance')
   getComplianceState(
     @Param('orgId') orgId: string,
