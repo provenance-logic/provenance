@@ -1,9 +1,26 @@
 # Provenance Technical Architecture Document
 
-**Version 1.1 — Companion to PRD v1.1**
+**Version 1.2 — Companion to PRD v1.2**
 **MVP and Production-Grade Specifications**
 **Confidential — Not for Distribution**
 
+> **Changelog — v1.1 → v1.2**
+> Phase 4 complete as of April 13, 2026.
+>
+> Section 3: PostgreSQL connectors schema — added agent_authentication_method field note; Two OpenSearch indices documented explicitly
+>
+> Section 3: MVP Agent Authentication — new subsection documenting X-Agent-Id header pattern as MVP shortcut with Phase 5 resolution path
+>
+> Section 5: Phase 4 marked complete with confirmed technology decisions (MCP transport, 9 tools, embedding model, two OpenSearch indices, NL query translation, agent auth)
+>
+> Section 5: Phase 5 becomes active phase; anomaly detection moved to Phase 5; Priority 1 data product completeness items added as Phase 4c / early Phase 5 deliverables
+>
+> Section 6: Two new technology decisions — MVP Agent Authentication, Two OpenSearch Index Strategy
+>
+> Section 7: Build-from-scratch list updated — audit log query API added; X-Agent-Id pattern noted as temporary
+>
+> Section 8: MVP summary updated — Phase 4 confirmed complete, Phase 5 active
+>
 > **Changelog — v1.0 → v1.1**
 > - Header updated: companion to PRD v1.1
 > - Section 2: Open Source Foundation intro updated to include discovery engine as a differentiated build
@@ -141,6 +158,7 @@ Total estimated cost without credits: $200-350/month.
 | identity | principals, roles, role_assignments, agent_identities, agent_trust_classifications | Keycloak is auth source; PostgreSQL stores platform-specific identity metadata |
 | products | data_products, product_versions, port_declarations, port_contracts, lifecycle_events | Core product registry. Versions stored as immutable records. |
 | connectors | connectors, connector_health_events, source_registrations, schema_snapshots, **capability_manifests**, **discovery_crawl_events**, **discovery_coverage_scores** | Credentials referenced by external secrets ARN only. Capability manifests immutable per connector version. |
+| identity | principals, roles, role_assignments, agent_identities, agent_trust_classifications | agent_trust_classifications includes `scope` field defaulting to `'global'` for MVP; `changed_by_principal_id`, `changed_by_principal_type`, and `reason` fields mandatory on all classification change events |
 | governance | policy_schemas, policy_versions, effective_policies, compliance_states, exceptions, grace_periods | Policy artifacts stored as JSONB |
 | access | access_grants, access_requests, approval_events | Consumer-product access relationships with expiration tracking |
 | observability | slo_declarations, slo_evaluations, trust_score_history, observability_snapshots | Partitioned by org_id and time |
@@ -269,6 +287,25 @@ IF discovered_value conflicts with domain_declared_value:
 | Dynamic Policy Evaluator | OPA client (HTTP) | Before every query execution, evaluates agent access scope and governance policy. Under 200ms overhead target. |
 | Provenance Envelope Builder | Custom NestJS service | Assembles provenance envelope (F6.17) from query execution context. Writes consumer lineage event to Redpanda. |
 | Agent Anomaly Detector | Custom NestJS service | Sliding window query pattern analysis per agent identity. |
+
+### MVP Two OpenSearch Indices *(new v1.2)*
+
+Two distinct OpenSearch indices are active simultaneously. Their purposes are complementary and they must not be conflated:
+
+| Index | Name | Type | Used By | Populated By |
+| --- | --- | --- | --- | --- |
+| Semantic search | `data_products` | kNN, 384-dimension embeddings (all-MiniLM-L6-v2), cosine similarity, nmslib/HNSW | `semantic_search` MCP tool | Product publish, name/description/tags update, deprecation, decommission |
+| Keyword search | `provenance-products` | BM25, no embeddings | Marketplace search endpoint, `search_products` MCP tool | Product publish and updates |
+
+Both indices are refreshed automatically on lifecycle transitions (deprecation, decommission trigger removal) and on mutable field updates (name, description, tags trigger re-index). All index operations are fire-and-forget — they do not block the triggering action from completing.
+
+### MVP Agent Authentication Pattern *(new v1.2)*
+
+The current MVP agent authentication uses an intentional shortcut that must be understood and replaced in Phase 5.
+
+**Current (MVP):** MCP tool calls carry an optional `X-Agent-Id` request header. If present, the MCP server fetches agent details from the control plane and populates audit log entries with agent identity context. If absent, calls are logged as service account activity. The `MCP_API_KEY` bypass on the control plane API is the auth mechanism for all MCP → control plane calls. Agent identity in audit logs is self-reported in MVP — a caller could supply any `agent_id`. This is acceptable for MVP where the agent population is known and controlled.
+
+**Phase 5 resolution:** Full JWT-based agent authentication on the MCP server. Each registered agent receives a signed JWT carrying `principal_type=agent` and `agent_id` claims, validated on every MCP request via Keycloak. The `X-Agent-Id` header pattern is retired. An ADR (see `documents/architecture/adr/`) documents this decision formally.
 
 ### MVP Security Architecture
 
@@ -419,11 +456,44 @@ Total production cost range: $2,400-$8,000/month before customer workload.
 | Federated Query Layer | Query planning. Policy-aware execution. Cross-product join semantics. Provenance envelope builder. Result caching. | NestJS, OPA client, Redis |
 | Agent UI | Agent Registry. Activity Monitor. Human Review Queue. Trust Classification UI. | React, NestJS agent API |
 
-### Phase 5 — Production Hardening (Weeks 27-34)
+### Phase 3 — Lineage, Observability, and Discovery ✅ Complete
+
+### Phase 4 — Agent Integration ✅ Complete (April 13, 2026)
+
+**Confirmed technology decisions:**
+
+| Component | Decision |
+| --- | --- |
+| MCP transport | SSE, port 3002 |
+| MCP tools | 9 tools: list_products, get_product, get_trust_score, get_lineage, get_slo_summary, search_products, semantic_search, register_agent, get_agent_status |
+| Embedding model | all-MiniLM-L6-v2, 384 dimensions |
+| Embedding service | Python FastAPI, port 8001 |
+| Semantic index | `data_products`, kNN, cosine similarity, nmslib/HNSW |
+| Keyword index | `provenance-products`, BM25 |
+| NL query translation | claude-sonnet-4-20250514, 5s timeout, graceful fallback to keyword search |
+| Agent authentication (MVP) | X-Agent-Id header + MCP_API_KEY bypass — see ADR and MVP Agent Authentication Pattern above |
+| Agent trust classification | Three tiers (Observed/Supervised/Autonomous), global scope, scope field ready for per-domain post-MVP |
+| Audit log query API | Filter by agent_id, event_type, time range, principal_type — no aggregation |
+| Frozen state | Temporal workflow state, triggered by agent classification downgrade |
+
+### Phase 4c / Early Phase 5 — Data Product Completeness (Priority 1)
+
+Before or alongside Phase 5 infrastructure hardening, the following Priority 1 data product completeness items should be delivered. They are implementation tasks against existing data — the data exists in the platform; surfacing it through the agent interface and product detail page is the work.
+
+| Component | What to Build | Data Source |
+| --- | --- | --- |
+| Column-level schema in get_product | Expose most recent schema snapshot per output port in MCP tool response and product detail page | connectors.schema_snapshots |
+| Ownership and stewardship in get_product | Expose owner name, contact, domain team name, created_by, created_at, updated_at | products and identity schemas |
+| Data freshness signals in get_product | Expose last successful refresh timestamp, refresh cadence, freshness SLA, freshness compliance state | observability schema |
+| Access status for requesting principal | Expose current access status (granted/pending/not requested/denied) and how to request | access schema |
+
+### Phase 5 — Production Hardening (Active Phase)
 
 | Activity | Description | Risk |
 | --- | --- | --- |
-| Monolith to microservices split | Extract NestJS modules into independent services. Kubernetes manifests. Helm charts. | Medium |
+| Full JWT-based agent authentication | Replace X-Agent-Id header pattern with cryptographically verified JWT agent tokens from Keycloak | Medium — new Keycloak agent client configuration + MCP server auth middleware |
+| Agent anomaly detection | Behavioral pattern analysis against audit log. Temporal escalation workflows to human oversight contacts. Requires production behavioral baseline — cannot be built meaningfully before real activity data exists. | High — Temporal workflows + audit log query patterns |
+| Per-domain trust classification | Logic layer on top of existing scope field in agent_trust_classifications | Low — schema is ready |
 | Database migration to managed services | PostgreSQL → Aurora. Neo4j → Neptune/AuraDB. Redpanda → MSK. OpenSearch → managed. | Low |
 | EKS migration | Containerized services to EKS. Auto-scaling. | Low |
 | Security hardening | VPC private subnets. mTLS. WAF. KMS CMK. Penetration testing. | Medium |
@@ -445,7 +515,8 @@ Total production cost range: $2,400-$8,000/month before customer workload.
 | NL Query Translation | Claude API (claude-sonnet-4-20250514) | GPT-4o; local Llama; rule-based parser | Natural choice for an Anthropic-protocol platform. | If cost at scale becomes prohibitive |
 | MCP Implementation | @modelcontextprotocol/sdk (official TypeScript) | Custom implementation; Python MCP SDK | Reference implementation. Guarantees spec compliance. | No revisit trigger — always use official SDK |
 | Semantic Embeddings | sentence-transformers (self-hosted) | OpenAI Embeddings API; AWS Bedrock Titan | Free, fast enough, avoids per-embedding API cost at scale. | If embedding quality is insufficient for agent discovery accuracy |
-| **Discovery Engine Architecture** | **Temporal-orchestrated crawls, Kafka-based result pipeline** | **Synchronous crawl on registration; direct database writes from crawler** | **Temporal provides durable crawl execution with retries. Kafka decouples crawl output from downstream consumers. Synchronous crawl is viable MVP fallback if Temporal overhead is too heavy.** | **If Temporal adds unacceptable latency to connector registration** |
+| **MVP Agent Authentication** | **X-Agent-Id header + MCP_API_KEY bypass** | **Full JWT agent tokens from Keycloak from day one** | **Full JWT auth requires agent onboarding flows not yet built in Phase 4. X-Agent-Id is self-reported but acceptable for MVP where agent population is known and controlled. Phase 5 replaces with cryptographically verified JWTs.** | **Phase 5 — replace when Keycloak agent client configuration is complete** |
+| **Two OpenSearch Index Strategy** | **Separate semantic (kNN) and keyword (BM25) indices** | **Single index with both field types; unified index with embedding fallback** | **Semantic and keyword search have different refresh patterns, query paths, and failure modes. Separate indices provide clean isolation and independent scaling. The MCP tools that use each index are distinct.** | **No revisit trigger** | **Synchronous crawl on registration; direct database writes from crawler** | **Temporal provides durable crawl execution with retries. Kafka decouples crawl output from downstream consumers. Synchronous crawl is viable MVP fallback if Temporal overhead is too heavy.** | **If Temporal adds unacceptable latency to connector registration** |
 | **Discovery Conflict Resolution** | **Domain-declared takes precedence; governance-configurable auto-override** | **Last-write-wins; always-override discovered; manual merge only** | **Domain teams are authoritative source of truth for their products. Governance override is the escape valve without making override the default.** | **No revisit trigger** |
 
 ---
@@ -516,13 +587,16 @@ provenance-platform/
 * Port contract enforcement engine
 * Semantic change declaration model
 * Agent provenance envelope builder
-* Provenance-specific MCP tools and prompts
+* Provenance-specific MCP tools and prompts (9 tools as of Phase 4)
 * Non-determinism lineage markers
 * Federated query planner and executor
-* **Connector discovery engine (crawl orchestration, delta detection, Kafka result pipeline)**
-* **Capability manifest validation and enforcement**
-* **Discovery coverage scoring per metadata category per connector**
-* **Discovery conflict detection and resolution workflow**
+* Connector discovery engine (crawl orchestration, delta detection, Kafka result pipeline)
+* Capability manifest validation and enforcement
+* Discovery coverage scoring per metadata category per connector
+* Discovery conflict detection and resolution workflow
+* Agent trust classification enforcement and transition logic
+* Frozen state management (Temporal workflow state, governance disposition)
+* Audit log query API (filter layer — agent_id, event_type, time range, principal_type)
 
 **Configure from open source (do not reinvent):**
 
@@ -553,16 +627,17 @@ provenance-platform/
 | Relational database | PostgreSQL 16 (self-hosted on EC2) |
 | Message broker | Redpanda (Kafka-compatible, self-hosted) |
 | Policy engine | Open Policy Agent (OPA sidecar) |
-| Search | OpenSearch (single-node, self-hosted) |
+| Search | OpenSearch (single-node) — two indices: `data_products` (kNN semantic) + `provenance-products` (BM25 keyword) |
 | Identity | Keycloak (self-hosted) |
-| Workflow engine | Temporal (self-hosted) — governance workflows + discovery scheduling |
+| Workflow engine | Temporal (self-hosted) — governance workflows, discovery scheduling, frozen state |
 | API gateway | Kong OSS |
-| Agent interface | MCP server (official TypeScript SDK) + GraphQL + REST |
-| Semantic search | sentence-transformers + OpenSearch kNN |
-| NL query translation | Claude API (claude-sonnet-4-20250514) |
-| **Discovery engine** | **Temporal-orchestrated crawls, Kafka result pipeline, per-connector adapters (Databricks, dbt, Snowflake, Fivetran)** |
-| Estimated MVP cost | $200-350/month ($0 with AWS Activate credits) |
-| MVP build timeline | ~34 weeks (5 phases) |
+| Agent interface | MCP server SSE on port 3002 — 9 tools (official TypeScript SDK) |
+| Semantic search | all-MiniLM-L6-v2 (384 dimensions) + OpenSearch kNN, cosine similarity, nmslib/HNSW |
+| Embedding service | Python FastAPI, port 8001 |
+| NL query translation | claude-sonnet-4-20250514, 5s timeout, graceful fallback |
+| Agent authentication (MVP) | X-Agent-Id header — Phase 5 replaces with JWT |
+| Discovery engine | Temporal-orchestrated crawls, Kafka result pipeline, per-connector adapters (Databricks, dbt, Snowflake, Fivetran) |
+| Build status | Phases 1–4 complete. Phase 5 active. |
 
 ### Production Architecture in One View
 

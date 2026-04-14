@@ -2,7 +2,7 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.1.md` and `documents/architecture/Provenance_Architecture_v1.0.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.2.md` and `documents/architecture/Provenance_Architecture_v1.2.md`.
 
 ---
 
@@ -142,7 +142,11 @@ provenance-platform/
 
 **Compliance states:** Compliant, Drift Detected, Grace Period, Non-Compliant
 
-**Agent trust classifications:** Observed, Supervised, Autonomous
+**Agent trust classifications:** Observed (default — read-only, no side effects), Supervised (consequential actions held pending human approval), Autonomous (full operational capability, explicit governance grant required — never automated)
+
+**Agent trust classification transitions:** Upgrades (toward Autonomous) require governance role only. Downgrades can be performed by human oversight contact OR governance role. Autonomous can never be set by automated process.
+
+**Workflow states:** Draft, Published, Deprecated, Decommissioned (product states) + **Frozen** (platform-level Temporal state — in-flight operations suspended pending governance disposition, triggered by agent classification downgrade in Phase 4)
 
 **Principal types:** Human user, Service account, AI agent, Platform administrator
 
@@ -150,11 +154,17 @@ provenance-platform/
 
 **Lineage edge types:** Derives From, Transforms, Consumes, Depends On, Supersedes
 
+**Lineage source markers:** system-discovered (from connector crawl), declared (by domain team), emitted (by pipeline at runtime)
+
 **Connector discovery modes:** Active discovery (crawls on registration + re-crawl schedule), Passive emission only (no discovery mode declared in capability manifest)
 
 **Discovery metadata categories:** Structural, Descriptive, Operational, Quality, Governance
 
-**Lineage source markers:** system-discovered (from connector crawl), declared (by domain team), emitted (by pipeline at runtime)
+**MCP tools (Phase 4 complete — 9 tools):** list_products, get_product, get_trust_score, get_lineage, get_slo_summary, search_products, semantic_search, register_agent, get_agent_status
+
+**OpenSearch indices:** `data_products` (kNN semantic, 384-dim, all-MiniLM-L6-v2) + `provenance-products` (BM25 keyword). Both active and complementary — do not merge.
+
+**Agent authentication (MVP):** X-Agent-Id header pattern — self-reported, acceptable for known agent population. Phase 5 replaces with JWT-based auth from Keycloak.
 
 ---
 
@@ -183,58 +193,16 @@ Connectors that implement discovery mode perform two types of crawling:
 
 ## Build Phases
 
-| Phase | Scope | Key Deliverable |
-| --- | --- | --- |
-| 1 | Organization model, domain management, basic product authoring, identity | Running platform — org onboarding, domain creation, product drafting |
-| 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access |
-| 3 | Lineage graph, emission API, trust score, observability dashboard | Trust infrastructure live — lineage, SLOs, trust score |
-| 4 | MCP server, federated query layer, agent identity, semantic search | Data 3.0 milestone — agents as first-class participants |
-| 5 | Microservices split, managed services migration, security hardening | Production-grade platform |
+| Phase | Scope | Key Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Organization model, domain management, basic product authoring, identity | Running platform — org onboarding, domain creation, product drafting | ✅ Complete |
+| 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access | ✅ Complete |
+| 3 | Lineage graph, emission API, trust score, observability dashboard, connector discovery | Trust infrastructure live — lineage, SLOs, trust score, auto-discovery | ✅ Complete |
+| 4 | MCP server, federated query layer, agent identity, semantic search, trust classification, audit log query API | Data 3.0 milestone — agents as first-class participants (9 MCP tools, SSE port 3002) | ✅ Complete |
+| 4c | Priority 1 data product completeness — column-level schema, ownership, freshness, access status in get_product | Agent interface and product detail page fully informative | 🔲 Next |
+| 5 | Microservices split, managed services migration, security hardening, JWT agent auth, anomaly detection | Production-grade platform | 🔲 Planned |
 
-**Connector discovery is a Phase 3 deliverable** — the connector framework is built in Phase 1/2; discovery mode implementation for priority connectors ships with Phase 3 alongside the lineage graph.
-
-**Phase 4 status: Phase 4a and Phase 4b complete.**
-
-Phase 4a delivered:
-- MCP server (SSE transport, `@modelcontextprotocol/sdk`) with 6 initial tools: `list_products`, `get_product`, `get_trust_score`, `get_lineage`, `get_slo_summary`, `search_products`
-- Agent Query Layer as a separate NestJS/Express process on port 3002
-- MCP audit interceptor — all tool calls logged to `audit.audit_log`
-- Agent identity model — `agent_identities` and `agent_trust_classifications` tables, registration API, classification transitions with governance role enforcement
-
-Phase 4b delivered:
-- Embedding service (all-MiniLM-L6-v2, 384 dimensions) — Python FastAPI service on port 8001
-- OpenSearch kNN semantic index (`data_products` index with `knn_vector` field, cosine similarity via nmslib/HNSW)
-- NL query translation via Claude API (`claude-sonnet-4-20250514`) — `NlQueryService` extracts structured search intent (domain, tags, keywords, trust_score_min, lifecycle_state) with 5s timeout and graceful fallback
-- `semantic_search` MCP tool (7th tool) — hybrid kNN (boost 0.7) + BM25 (boost 0.3) search
-- Index freshness automation — fire-and-forget re-indexing on publish, update (name/description/tags on published products), and deletion on deprecate/decommission
-- Agent registration API with Observed default classification
-- Trust classification model (Observed/Supervised/Autonomous) with full audit history
-- Activity tracking — all MCP tool calls logged to `audit.audit_log` with agent identity context (agent_id, trust classification at time, human oversight contact)
-- Human oversight contact enforcement — must be a registered platform user
-- `register_agent` and `get_agent_status` MCP tools (8th and 9th tools)
-- Integration milestone — agent identity context captured in semantic search audit trail; two agents with different trust classifications produce distinct audit entries
-- Internal semantic search endpoint: `POST /api/v1/internal/search/semantic` (MCP_API_KEY auth)
-
----
-
-## Phase 1 Build Targets (Start Here)
-
-The goal of Phase 1 is a running platform where a user can:
-
-1. Create an organization
-2. Create domains within it
-3. Start defining a data product (Draft state)
-4. Log in and see a domain dashboard
-
-**Phase 1 components to build:**
-
-1. `infrastructure/docker/docker-compose.yml` — all services defined (PostgreSQL, Neo4j, Redpanda, OpenSearch, OPA, Keycloak, MinIO, Temporal, Kong)
-2. `infrastructure/terraform/` — AWS EC2 provisioning
-3. `apps/api/` — NestJS monolith scaffold with organizations and products modules
-4. `apps/web/` — React app with Keycloak auth and navigation shell
-5. `packages/types/` — shared TypeScript types matching the domain model
-6. `packages/openapi/` — OpenAPI spec for organizations and products APIs
-7. `.github/workflows/` — CI/CD pipeline (test, lint, build, deploy)
+**Active phase: 4c / early Phase 5.** Phases 1–4 complete as of April 13, 2026.
 
 ---
 
@@ -259,6 +227,14 @@ The goal of Phase 1 is a running platform where a user can:
 **Connector capability manifests are immutable per version.** Never mutate a capability manifest in place — create a new connector version.
 
 **Discovery results never auto-override domain-declared metadata** unless governance has explicitly configured auto-override. Always check conflict resolution policy before merging discovered metadata.
+
+**Autonomous trust classification can never be set by automated process.** Always require explicit human action by a governance role principal. Any code path that could programmatically assign Autonomous is a bug.
+
+**Classification change audit entries require a non-null reason field.** Reject any classification change request where `reason` is null or empty string.
+
+**Frozen operations require explicit governance disposition.** Never auto-complete or auto-cancel frozen operations — always require approve or cancel from a governance role principal.
+
+**The X-Agent-Id header is an MVP shortcut.** Do not build new features that depend on it being the permanent auth mechanism. Phase 5 replaces it with JWT. Keep the auth concern isolated in middleware.
 
 ---
 
@@ -349,7 +325,7 @@ The goal of Phase 1 is a running platform where a user can:
 
 ## Full Documentation
 
-* Product Requirements Document: `documents/prd/Provenance_PRD_v1.1.md`
-* Architecture Document: `documents/architecture/Provenance_Architecture_v1.0.md`
+* Product Requirements Document: `documents/prd/Provenance_PRD_v1.2.md`
+* Architecture Document: `documents/architecture/Provenance_Architecture_v1.2.md`
 * Architecture Decision Records: `documents/architecture/adr/`
 * API Reference: `documents/api/` (generated from OpenAPI specs)
