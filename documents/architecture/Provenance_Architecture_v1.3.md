@@ -1,10 +1,17 @@
 # Provenance Technical Architecture Document
 
-**Version 1.2 — Companion to PRD v1.2**
+**Version 1.3 — Companion to PRD v1.3**
 **MVP and Production-Grade Specifications**
 **Confidential — Not for Distribution**
 
-> **Changelog — v1.1 → v1.2**
+> **Changelog — v1.2 → v1.3**
+> Phase 5 redefined as "Open Source Ready" — lean, infrastructure-light scope replacing the original expensive managed services migration. Phase 6 "Production Scale" introduced as the funded future state for Kubernetes, managed AWS services, and enterprise security hardening.
+>
+> Section 5: Phase 5 build sequence replaced entirely with lean scope
+>
+> Section 6: New technology decision added — Lean Phase 5 Strategy
+>
+> Section 8: Architecture summary updated — Phase 5 description updated, Phase 6 Production Scale added
 > Phase 4 complete as of April 13, 2026.
 >
 > Section 3: PostgreSQL connectors schema — added agent_authentication_method field note; Two OpenSearch indices documented explicitly
@@ -487,19 +494,35 @@ Before or alongside Phase 5 infrastructure hardening, the following Priority 1 d
 | Data freshness signals in get_product | Expose last successful refresh timestamp, refresh cadence, freshness SLA, freshness compliance state | observability schema |
 | Access status for requesting principal | Expose current access status (granted/pending/not requested/denied) and how to request | access schema |
 
-### Phase 5 — Production Hardening (Active Phase)
+### Phase 5 — Open Source Ready (Active Phase)
 
-| Activity | Description | Risk |
+**Theme:** Make the platform reliable, secure, and contributor-friendly on existing infrastructure. No significant new cloud spend. Estimated additional monthly cost: $10-30.
+
+| Activity | Description | Infrastructure Cost |
 | --- | --- | --- |
-| Full JWT-based agent authentication | Replace X-Agent-Id header pattern with cryptographically verified JWT agent tokens from Keycloak | Medium — new Keycloak agent client configuration + MCP server auth middleware |
-| Agent anomaly detection | Behavioral pattern analysis against audit log. Temporal escalation workflows to human oversight contacts. Requires production behavioral baseline — cannot be built meaningfully before real activity data exists. | High — Temporal workflows + audit log query patterns |
-| Per-domain trust classification | Logic layer on top of existing scope field in agent_trust_classifications | Low — schema is ready |
-| Database migration to managed services | PostgreSQL → Aurora. Neo4j → Neptune/AuraDB. Redpanda → MSK. OpenSearch → managed. | Low |
-| EKS migration | Containerized services to EKS. Auto-scaling. | Low |
-| Security hardening | VPC private subnets. mTLS. WAF. KMS CMK. Penetration testing. | Medium |
-| Multi-tenancy validation | Load testing. RLS audit. Tenant isolation penetration test. | High |
-| SOC 2 readiness audit | Internal audit. Gap analysis. Remediation. | Medium |
-| Disaster recovery | RTO/RPO definition. Cross-region replication. Runbook documentation. | Low |
+| Stability and reliability | Automated daily backups for PostgreSQL and Neo4j with tested restore procedure. Docker restart policies for auto-recovery. CloudWatch basic monitoring — EC2 health, disk, memory alerts. Operational runbook for common failure scenarios. Log rotation. | ~$10-20/month CloudWatch |
+| Security essentials | HTTPS enforced on all external endpoints. Security group audit and tightening. Credentials rotation procedure executed and documented. Environment variable audit — no secrets in code or logs. SSH key management review. | Zero |
+| JWT agent authentication | Replace X-Agent-Id header with cryptographically verified JWT tokens from Keycloak. Agent onboarding provisions Keycloak client credential during registration. MCP server middleware validates JWT on every request. MCP_API_KEY bypass retired. Keycloak already running — no new infrastructure. | Zero |
+| Data product completeness Priority 1 | Column-level schema, ownership/stewardship, freshness signals, and access status for requesting principal in get_product response. Data exists in platform today — this is API and MCP tool work only. | Zero |
+| Agent anomaly detection | Behavioral pattern analysis against audit log. Configurable thresholds per trust classification. Temporal escalation workflows to human oversight contacts. Auto-suspension on sustained anomaly. Temporal and audit log already operational. | Zero |
+| Developer experience | Local setup in under 30 minutes from clean clone on Mac and Linux. CONTRIBUTING.md. Comprehensive seed data. OpenAPI docs published. README reflects current state. | Zero |
+| SOC 2 foundations | Data flow documentation. Access control documentation. Incident response runbook. Audit log export capability. Change management documentation. | Zero |
+
+### Phase 6 — Production Scale (When Funded)
+
+Phase 6 is triggered by enterprise customer requirements, investor funding, or both. It is not a calendar-driven phase. The architecture is designed so Phase 6 is a configuration migration, not a rewrite — every managed service upgrade is a connection string change.
+
+| Activity | Description | Trigger |
+| --- | --- | --- |
+| Kubernetes / EKS migration | Extract monolith to microservices. Write Kubernetes manifests and Helm charts. Deploy to EKS with auto-scaling. | Engineering team scale or customer SLA requires it |
+| Managed database migration | PostgreSQL → Aurora Serverless v2. Neo4j → Neptune or AuraDB. Redpanda → MSK. OpenSearch → Amazon OpenSearch Service. | Customer database reliability SLA |
+| Temporal Cloud | Migrate from self-hosted Temporal. | Workflow engine managed SLA required |
+| Security hardening | VPC private subnets. mTLS via App Mesh. WAF. KMS customer-managed keys. Penetration testing. | Enterprise security requirements or compliance audit |
+| Multi-AZ and DR | Cross-region Aurora replication. Neptune snapshot automation. RTO/RPO definitions. | Customer data residency or DR requirements |
+| Full observability stack | Datadog APM + Logs + Infrastructure. | Engineering team scale requires it |
+| CloudFront CDN | Global edge for React SPA. | Global performance requirements |
+| Formal SOC 2 Type II audit | Formal engagement with auditor. | Enterprise sales requirement |
+| Keycloak HA | Keycloak on EKS with HA config, or migrate to Auth0/Okta. | Identity provider uptime SLA |
 
 ---
 
@@ -515,6 +538,7 @@ Before or alongside Phase 5 infrastructure hardening, the following Priority 1 d
 | NL Query Translation | Claude API (claude-sonnet-4-20250514) | GPT-4o; local Llama; rule-based parser | Natural choice for an Anthropic-protocol platform. | If cost at scale becomes prohibitive |
 | MCP Implementation | @modelcontextprotocol/sdk (official TypeScript) | Custom implementation; Python MCP SDK | Reference implementation. Guarantees spec compliance. | No revisit trigger — always use official SDK |
 | Semantic Embeddings | sentence-transformers (self-hosted) | OpenAI Embeddings API; AWS Bedrock Titan | Free, fast enough, avoids per-embedding API cost at scale. | If embedding quality is insufficient for agent discovery accuracy |
+| **Lean Phase 5 Strategy** | **Open Source Ready on existing infrastructure** | **Full managed services migration as Phase 5** | **Provenance is an open source platform pre-revenue and pre-investment. A $2,400-8,000/month infrastructure jump is not appropriate at this stage. The architecture is designed so managed services migration (Phase 6) is a configuration change, not a rewrite. Phase 6 is triggered by customers or funding, not a calendar date.** | **When first enterprise customer or funding round requires it** |
 | **MVP Agent Authentication** | **X-Agent-Id header + MCP_API_KEY bypass** | **Full JWT agent tokens from Keycloak from day one** | **Full JWT auth requires agent onboarding flows not yet built in Phase 4. X-Agent-Id is self-reported but acceptable for MVP where agent population is known and controlled. Phase 5 replaces with cryptographically verified JWTs.** | **Phase 5 — replace when Keycloak agent client configuration is complete** |
 | **Two OpenSearch Index Strategy** | **Separate semantic (kNN) and keyword (BM25) indices** | **Single index with both field types; unified index with embedding fallback** | **Semantic and keyword search have different refresh patterns, query paths, and failure modes. Separate indices provide clean isolation and independent scaling. The MCP tools that use each index are distinct.** | **No revisit trigger** | **Synchronous crawl on registration; direct database writes from crawler** | **Temporal provides durable crawl execution with retries. Kafka decouples crawl output from downstream consumers. Synchronous crawl is viable MVP fallback if Temporal overhead is too heavy.** | **If Temporal adds unacceptable latency to connector registration** |
 | **Discovery Conflict Resolution** | **Domain-declared takes precedence; governance-configurable auto-override** | **Last-write-wins; always-override discovered; manual merge only** | **Domain teams are authoritative source of truth for their products. Governance override is the escape valve without making override the default.** | **No revisit trigger** |
@@ -637,7 +661,8 @@ provenance-platform/
 | NL query translation | claude-sonnet-4-20250514, 5s timeout, graceful fallback |
 | Agent authentication (MVP) | X-Agent-Id header — Phase 5 replaces with JWT |
 | Discovery engine | Temporal-orchestrated crawls, Kafka result pipeline, per-connector adapters (Databricks, dbt, Snowflake, Fivetran) |
-| Build status | Phases 1–4 complete. Phase 5 active. |
+| Build status | Phases 1–4 complete. **Phase 5 (Open Source Ready) active. Est. additional cost: $10-30/month.** |
+| Phase 6 trigger | First enterprise customer or funding round — Kubernetes, managed services, security hardening |
 
 ### Production Architecture in One View
 

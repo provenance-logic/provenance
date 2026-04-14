@@ -1,9 +1,16 @@
 # Provenance Product Requirements Document
 
-**Version 1.2 — MVP Release**
+**Version 1.3 — MVP Release**
 **Confidential — Not for Distribution**
 
-> **Changelog — v1.1 → v1.2**
+> **Changelog — v1.2 → v1.3**
+> Phase 5 redefined as "Open Source Ready" — lean, infrastructure-light scope appropriate for an open source platform pre-revenue and pre-investment. Original expensive infrastructure targets moved to Phase 6 "Production Scale."
+>
+> Appendix D updated: Phase 5 scope replaced entirely
+>
+> Appendix B updated: Phase 6 Production Scale added as post-funding candidate registry
+>
+> Appendix C updated: new design decision — Lean Phase 5
 > Phase 4 complete as of April 13, 2026.
 >
 > Domain 2: F2.11a added (lifecycle endpoints trigger index removal), F2.11b added (mutable fields on published products with auto re-indexing)
@@ -982,7 +989,7 @@ The following are exposed through the `get_product` MCP tool and verified workin
 | Trust score weight customization | 5 | Governance configurability extension |
 | Natural language query precision improvement | 6 | Continuous investment area |
 | Agent financial metering and chargeback | 6 | Internal billing / FinOps use case |
-| Agent anomaly detection and Temporal escalation | 6 | Requires production behavioral baseline — Phase 5 |
+| Agent anomaly detection and Temporal escalation | 6 | Phase 5 deliverable |
 | Per-domain agent trust classification | 6 | Schema scope field ready; logic deferred |
 | Trust-scope-based search result filtering | 6 | Audit infrastructure confirmed; filtering deferred |
 | Mobile application | 7 | Broader reach post-stabilization |
@@ -994,6 +1001,29 @@ The following are exposed through the `get_product` MCP tool and verified workin
 | Consumer connection experience | 7 | Port-type-specific connection packages at access grant time |
 | Additional frozen state triggers | 8 | Domain suspension, policy change mid-workflow |
 | Audit log pattern analysis and anomaly detection | 8 | Phase 5 — requires behavioral baseline |
+
+---
+
+### Phase 6 — Production Scale (When Funded)
+
+These capabilities require significant infrastructure investment and belong in a funded future state. They are not appropriate for an open source pre-revenue project. Phase 6 is triggered by enterprise customer requirements, investor funding, or both.
+
+| Capability | Trigger |
+| --- | --- |
+| Kubernetes / EKS migration | Enterprise customers or team scale requires it |
+| Amazon Aurora PostgreSQL | Database reliability SLA required by customers |
+| Amazon Neptune | Graph database scale or managed SLA required |
+| Amazon MSK | Kafka operational burden at scale |
+| Amazon OpenSearch Service | Search reliability SLA required |
+| Temporal Cloud | Workflow engine managed SLA required |
+| mTLS between services | Enterprise security posture required |
+| WAF and advanced security tooling | Enterprise security requirements or compliance audit |
+| Multi-AZ and cross-region replication | Customer data residency or DR requirements |
+| Datadog / full observability stack | Engineering team scale requires it |
+| CloudFront CDN | Global performance requirements |
+| Formal SOC 2 Type II audit | Enterprise sales requirement |
+| Kong API gateway full activation | Enterprise API management requirements |
+| Keycloak HA configuration | Identity provider uptime SLA required |
 
 ---
 
@@ -1014,37 +1044,100 @@ The following are exposed through the `get_product` MCP tool and verified workin
 | Autonomous Classification Requires Explicit Human Action | Autonomous tier can never be assigned by automated process | The trust level with the least friction must never be granted without deliberate human intent |
 | Anomaly Detection Deferred to Phase 5 | Anomaly detection requires production behavioral baseline | Building detection before real data exists produces arbitrary thresholds and false positives |
 | Frozen State as Platform-Level Construct | Frozen is a Temporal workflow state, not an agent-specific concept | The pattern will be needed beyond agent classification downgrade in future phases |
+| Lean Phase 5 — Open Source Ready | Phase 5 focuses on reliability, security, and developer experience on existing infrastructure. Expensive managed services and Kubernetes deferred to Phase 6. | Provenance is an open source platform pre-revenue and pre-investment. Infrastructure spend must match the business stage. The architecture is designed so Phase 6 is a configuration migration, not a rewrite. Phase 6 is triggered by customers or funding, not a calendar date. |
 
 ---
 
-## Appendix D: Phase 5 Scope Confirmation *(new v1.2)*
+## Appendix D: Phase 5 Scope — Open Source Ready *(revised v1.3)*
 
-The following items are explicitly confirmed as Phase 5 scope. They were deferred during Phase 4 planning and must not be inadvertently scoped into Phase 4c engineering prompts.
+Phase 5 is redefined as "Open Source Ready." The goal is to make the platform reliable, secure, and contributor-friendly on existing infrastructure. No significant new cloud spend. The expensive infrastructure migration originally planned for Phase 5 is moved to Phase 6 — it belongs in a funded future state, not an open source pre-revenue project.
 
-**From Phase 4 deferral decisions:**
-- Full JWT-based agent authentication on the MCP server (replaces X-Agent-Id header pattern)
-- Agent anomaly detection and Temporal escalation workflows
-- Per-domain trust classification (schema scope field is ready; logic deferred)
-- Trust-scope-based search result filtering
+**Estimated additional monthly infrastructure cost for Phase 5: $10-30.**
 
-**From Phase 4b manual verification — Priority 2 data product completeness:**
-- Data quality signals
-- Versioning and change history in product detail
-- Contractual and compliance metadata
-- Volume and performance signals
+---
 
-**From original Phase 5 scope (confirmed still in):**
-- Microservices decomposition
-- Managed services migration (Aurora, Neptune, MSK, Amazon OpenSearch Service)
-- Security hardening (VPC private subnets, mTLS, WAF, KMS CMK)
-- SOC 2 readiness
-- Kong API gateway activation
-- Keycloak HA configuration
-- Temporal Cloud migration
-- Audit log pattern analysis and anomaly detection
+### 5.1 — Stability and Reliability
 
-**Priority 1 data product completeness items (Phase 4c / early Phase 5 — confirm sequencing before Phase 5 kickoff):**
-- Column-level schema in get_product response
-- Ownership and stewardship contacts in get_product response
-- Data freshness signals in get_product response
-- Access status for requesting principal in get_product response
+- Automated daily backups for PostgreSQL and Neo4j with documented and tested restore procedure
+- Docker restart policies ensuring all services auto-recover on failure without manual intervention
+- CloudWatch basic monitoring — EC2 health, disk usage, memory thresholds, alerting on critical failures
+- Operational runbook documenting recovery procedures for common failure scenarios
+- Log rotation configured to prevent disk exhaustion
+
+### 5.2 — Security Essentials
+
+- HTTPS enforced on all external endpoints — no unencrypted traffic
+- Security group audit — all EC2 security groups reviewed and tightened; no ports open that are not required
+- Credentials rotation procedure documented and executed — all secrets rotated, rotation schedule established
+- Environment variable audit — verified no secrets in code, logs, or version control
+- SSH key management — reviewed, documented, unnecessary access revoked
+
+### 5.3 — JWT Agent Authentication
+
+Replace the X-Agent-Id header MVP shortcut with cryptographically verified agent identity.
+
+- Agent onboarding flow provisions a Keycloak client credential during agent registration
+- MCP server middleware validates JWT signature on every request — agent identity is verified, not self-reported
+- `principal_type=agent` and `agent_id` claims validated before tool dispatch
+- `MCP_API_KEY` bypass retired
+- Keycloak is already running — no new infrastructure required
+
+### 5.4 — Data Product Completeness — Priority 1
+
+Surface data that already exists in the platform through the agent interface and product detail page.
+
+- Column-level schema in `get_product` response — field names, data types, nullability, descriptions, PK/partition indicators, PII indicators (from `connectors.schema_snapshots`)
+- Ownership and stewardship contacts in `get_product` response — owner name and contact, domain team name, created_by, created_at, updated_at
+- Data freshness signals in `get_product` response — last successful refresh timestamp, refresh cadence, freshness SLA, freshness compliance state
+- Access status for requesting principal in `get_product` response — granted/pending/not requested/denied, how to request, expected approval time, expiration date if grant exists
+
+No new infrastructure. All data exists in the platform today.
+
+### 5.5 — Agent Anomaly Detection
+
+Build on the audit log and Temporal infrastructure already running.
+
+- Behavioral pattern analysis against audit log — query volume spikes, unusual access patterns, cross-product join anomalies
+- Configurable thresholds per trust classification tier
+- Temporal escalation workflows — automated notification to human oversight contact on threshold breach
+- Automatic agent suspension on sustained anomaly above configurable limit pending governance review
+- No new infrastructure — Temporal and audit log already operational
+
+### 5.6 — Developer Experience
+
+Make it easy for contributors to understand, run, and contribute to the platform.
+
+- Local setup working in under 30 minutes from a clean clone on Mac and Linux
+- `CONTRIBUTING.md` with clear guidelines — development setup, coding patterns, PR process, ADR expectations
+- Comprehensive seed data covering all entity types, lifecycle states, and agent scenarios for local development
+- OpenAPI documentation published and accessible from the running platform
+- README updated to reflect current actual state of the platform
+
+### 5.7 — SOC 2 Foundations
+
+Documentation and process work that costs nothing but time — positions the platform for a formal SOC 2 engagement when the business warrants it.
+
+- Data flow documentation — what data the platform holds, where it lives, how long it is retained
+- Access control documentation — who has access to what and how that is managed
+- Incident response runbook — what happens when something goes wrong
+- Audit log export capability — structured export for external compliance audit consumption
+- Change management documentation — how code changes are reviewed and deployed
+
+---
+
+### Out of Scope for Phase 5 — Deferred to Phase 6
+
+The following were originally planned for Phase 5 but are deferred to Phase 6 ("Production Scale"). They belong in a funded future state when customers or investors require and can fund them.
+
+- Kubernetes / EKS migration
+- Amazon Aurora PostgreSQL (replacing self-hosted PostgreSQL)
+- Amazon Neptune (replacing self-hosted Neo4j)
+- Amazon MSK (replacing self-hosted Redpanda)
+- Amazon OpenSearch Service (replacing self-hosted OpenSearch)
+- Temporal Cloud (replacing self-hosted Temporal)
+- mTLS between services
+- WAF and advanced security tooling
+- Multi-AZ and cross-region replication
+- Datadog / full observability stack
+- CloudFront CDN
+- Formal SOC 2 Type II audit engagement

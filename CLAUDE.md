@@ -2,7 +2,7 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.2.md` and `documents/architecture/Provenance_Architecture_v1.2.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.3.md` and `documents/architecture/Provenance_Architecture_v1.3.md`.
 
 ---
 
@@ -199,10 +199,10 @@ Connectors that implement discovery mode perform two types of crawling:
 | 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access | ✅ Complete |
 | 3 | Lineage graph, emission API, trust score, observability dashboard, connector discovery | Trust infrastructure live — lineage, SLOs, trust score, auto-discovery | ✅ Complete |
 | 4 | MCP server, federated query layer, agent identity, semantic search, trust classification, audit log query API | Data 3.0 milestone — agents as first-class participants (9 MCP tools, SSE port 3002) | ✅ Complete |
-| 4c | Priority 1 data product completeness — column-level schema, ownership, freshness, access status in get_product | Agent interface and product detail page fully informative | 🔲 Next |
-| 5 | Microservices split, managed services migration, security hardening, JWT agent auth, anomaly detection | Production-grade platform | 🔲 Planned |
+| 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. | 🔲 Active |
+| 6 | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | Production Scale — triggered by enterprise customers or funding, not a calendar date | 🔲 When Funded |
 
-**Active phase: 4c / early Phase 5.** Phases 1–4 complete as of April 13, 2026.
+**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026.
 
 ---
 
@@ -325,7 +325,7 @@ Connectors that implement discovery mode perform two types of crawling:
 
 ## Full Documentation
 
-* Product Requirements Document: `documents/prd/Provenance_PRD_v1.2.md`
-* Architecture Document: `documents/architecture/Provenance_Architecture_v1.2.md`
+* Product Requirements Document: `documents/prd/Provenance_PRD_v1.3.md`
+* Architecture Document: `documents/architecture/Provenance_Architecture_v1.3.md`
 * Architecture Decision Records: `documents/architecture/adr/`
 * API Reference: `documents/api/` (generated from OpenAPI specs)
