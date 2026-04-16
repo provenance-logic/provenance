@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { getConfig } from '../config.js';
+import type { SessionIdentity } from '../mcp/tools.js';
 
 export interface ProductSummary {
   id: string;
@@ -61,11 +62,18 @@ export interface SloSummary {
 export class ControlPlaneClient {
   private http: AxiosInstance;
 
-  constructor() {
+  constructor(session?: SessionIdentity) {
     const config = getConfig();
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${config.MCP_API_KEY}`,
+    };
+    if (session) {
+      headers['X-Agent-Id'] = session.agentId;
+      headers['X-Org-Id'] = session.orgId;
+    }
     this.http = axios.create({
       baseURL: `${config.CONTROL_PLANE_URL}/api/v1`,
-      headers: { Authorization: `Bearer ${config.MCP_API_KEY}` },
+      headers,
       timeout: 10000,
     });
   }

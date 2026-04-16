@@ -37,6 +37,11 @@ const envSchema = z.object({
   // Embedding service
   EMBEDDING_SERVICE_URL: z.string().url().default('http://localhost:8001'),
 
+  // Keycloak Admin API (agent client provisioning — ADR-002)
+  KEYCLOAK_ADMIN_URL: z.string().url().optional(),
+  KEYCLOAK_ADMIN_CLIENT_ID: z.string().min(1).optional(),
+  KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(1).optional(),
+
   // MCP API key (optional — enables API key auth for the agent query layer)
   MCP_API_KEY: z.string().optional(),
 

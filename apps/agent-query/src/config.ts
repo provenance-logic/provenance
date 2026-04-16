@@ -6,6 +6,18 @@ const envSchema = z.object({
   MCP_API_KEY: z.string().min(1),
   DEFAULT_ORG_ID: z.string().min(1),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // Keycloak — JWT validation for agent tokens (ADR-002 Phase 5b)
+  KEYCLOAK_URL: z.string().url(),
+  KEYCLOAK_REALM: z.string().min(1).default('provenance'),
+
+  // ADR-002 Phase 5c: 30-day deprecation compatibility mode.
+  // When true, unauthenticated MCP requests are logged but allowed through.
+  // When false (default), unauthenticated requests are rejected with 401.
+  DEPRECATION_WARNING_ONLY: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 export type AgentQueryConfig = z.infer<typeof envSchema>;

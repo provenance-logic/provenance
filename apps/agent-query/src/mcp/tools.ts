@@ -3,9 +3,14 @@ import { CallToolResult, ListToolsRequestSchema, CallToolRequestSchema } from '@
 import { ControlPlaneClient, ProductSummary, LineageNode } from '../control-plane/control-plane.client.js';
 import { getConfig } from '../config.js';
 
+export interface SessionIdentity {
+  agentId: string;
+  orgId: string;
+}
+
 type ToolHandler = (args: Record<string, string>) => Promise<CallToolResult>;
 
-interface ToolDef {
+export interface ToolDef {
   name: string;
   description: string;
   inputSchema: {
@@ -16,12 +21,12 @@ interface ToolDef {
   handler: ToolHandler;
 }
 
-/** Resolve org_id from args or fall back to the configured default. */
-function resolveOrgId(args: Record<string, string>): string {
-  return args.org_id || getConfig().DEFAULT_ORG_ID;
+/** Resolve org_id: session identity first, then args, then default. */
+function resolveOrgId(session: SessionIdentity, args: Record<string, string>): string {
+  return session.orgId || args.org_id || getConfig().DEFAULT_ORG_ID;
 }
 
-function makeTools(client: ControlPlaneClient): ToolDef[] {
+export function makeTools(client: ControlPlaneClient, session: SessionIdentity): ToolDef[] {
   return [
     // ── Tool 1: list_products ──────────────────────────────────────────
     {
@@ -36,7 +41,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: [],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const products = await client.listProducts(orgId);
         const filtered = args.status_filter && args.status_filter !== 'all'
           ? products.filter((p: ProductSummary) => p.status === args.status_filter)
@@ -71,7 +76,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['product_id', 'domain_id'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const p = await client.getProduct(orgId, args.domain_id, args.product_id);
         const ports = (p.ports ?? []).map((port: { portType: string; name: string; interfaceType?: string }) =>
           `  - ${port.name} (${port.portType}${port.interfaceType ? `, ${port.interfaceType}` : ''})`,
@@ -108,7 +113,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['product_id'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const ts = await client.getTrustScore(orgId, args.product_id);
         const components = ts.components as Record<string, { raw_value: unknown; component_score: number; weight: number; weighted_score: number }>;
         const componentLines = Object.entries(components).map(([name, c]) =>
@@ -141,7 +146,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['product_id'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const dir = (args.direction ?? 'both') as 'upstream' | 'downstream' | 'both';
         const lineage = await client.getLineage(orgId, args.product_id, dir);
         const sections: string[] = [];
@@ -187,7 +192,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['product_id'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const slo = await client.getSloSummary(orgId, args.product_id);
         const text = [
           `SLO Health: ${slo.slo_health}`,
@@ -216,7 +221,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['query'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const limit = Math.min(parseInt(args.limit || '10', 10) || 10, 10);
         const result = await client.getSemanticSearch(orgId, args.query, limit);
 
@@ -261,7 +266,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['display_name', 'model_name', 'model_provider', 'human_oversight_contact'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const result = await client.registerAgent(orgId, {
           display_name: args.display_name,
           model_name: args.model_name,
@@ -286,16 +291,14 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
     // ── Tool 8: get_agent_status ──────────────────────────────────────
     {
       name: 'get_agent_status',
-      description: 'Get the current identity, trust classification, and recent activity summary for a registered agent.',
+      description: 'Get the current identity, trust classification, and recent activity summary for the authenticated agent.',
       inputSchema: {
         type: 'object',
-        properties: {
-          agent_id: { type: 'string', description: 'The agent ID to look up' },
-        },
-        required: ['agent_id'],
+        properties: {},
+        required: [],
       },
-      handler: async (args) => {
-        const result = await client.getAgentStatus(args.agent_id);
+      handler: async (_args) => {
+        const result = await client.getAgentStatus(session.agentId);
 
         const text = [
           `Agent Status:`,
@@ -324,7 +327,7 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
         required: ['query'],
       },
       handler: async (args) => {
-        const orgId = resolveOrgId(args);
+        const orgId = resolveOrgId(session, args);
         const results = await client.searchProducts(orgId, args.query);
 
         if (results.length === 0) {
@@ -344,8 +347,8 @@ function makeTools(client: ControlPlaneClient): ToolDef[] {
   ];
 }
 
-export function registerTools(server: McpServer, client: ControlPlaneClient): void {
-  const tools = makeTools(client);
+export function registerTools(server: McpServer, client: ControlPlaneClient, session: SessionIdentity): void {
+  const tools = makeTools(client, session);
 
   const underlying = server.server;
 
@@ -368,36 +371,31 @@ export function registerTools(server: McpServer, client: ControlPlaneClient): vo
         return { content: [{ type: 'text', text: `Unknown tool: ${request.params.name}` }], isError: true };
       }
 
-      // Audit logging: write synchronously before returning tool response.
-      // Never throws — if audit fails, log and continue.
+      // Audit logging: identity sourced from the verified JWT session, not
+      // from tool arguments (ADR-002 Phase 5b-6).
       const args = (request.params.arguments ?? {}) as Record<string, string>;
-      const orgId = args.org_id || getConfig().DEFAULT_ORG_ID;
       try {
         const inputSummary = JSON.stringify(args).slice(0, 500);
 
-        // Resolve agent identity if agent_id is provided in arguments
-        let agentId: string | null = args.agent_id || null;
         let agentClassification: string | null = null;
         let humanOversightContact: string | null = null;
 
-        if (agentId) {
-          const agentInfo = await client.getAgentInfo(agentId);
-          if (agentInfo) {
-            agentClassification = agentInfo.current_classification;
-            humanOversightContact = agentInfo.human_oversight_contact;
-          }
+        const agentInfo = await client.getAgentInfo(session.agentId);
+        if (agentInfo) {
+          agentClassification = agentInfo.current_classification;
+          humanOversightContact = agentInfo.human_oversight_contact;
         }
 
         const auditEntry: Record<string, unknown> = {
-          org_id: orgId,
-          principal_id: null,
-          principal_type: agentId ? 'ai_agent' : 'service_account',
+          org_id: session.orgId,
+          principal_id: session.agentId,
+          principal_type: 'ai_agent',
           action: 'mcp_tool_call',
           resource_type: 'mcp_tool',
           resource_id: null,
           tool_name: request.params.name,
           mcp_input_summary: inputSummary,
-          agent_id: agentId,
+          agent_id: session.agentId,
           agent_trust_classification_at_time: agentClassification,
           human_oversight_contact: humanOversightContact,
         };

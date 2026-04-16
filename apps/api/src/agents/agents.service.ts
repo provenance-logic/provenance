@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import { AgentIdentityEntity } from './entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from './entities/agent-trust-classification.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
 import type { RequestContext, RoleType } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -71,6 +73,7 @@ export class AgentsService {
     private readonly principalRepo: Repository<PrincipalEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly keycloakAdmin: KeycloakAdminService,
   ) {}
 
   async registerAgent(dto: CreateAgentDto, ctx: RequestContext) {
@@ -92,29 +95,42 @@ export class AgentsService {
       : oversightPrincipal.id;
     const changedBy = registeredBy;
 
-    const agent = this.agentRepo.create({
-      orgId: dto.org_id,
-      displayName: dto.display_name,
-      modelName: dto.model_name,
-      modelProvider: dto.model_provider,
-      humanOversightContact: dto.human_oversight_contact,
-      registeredByPrincipalId: registeredBy,
-      currentClassification: 'Observed',
-    });
-    const savedAgent = await this.agentRepo.save(agent);
+    // ADR-002 Phase 5a-3: wrap DB writes + Keycloak provisioning in a single
+    // transaction so a Keycloak failure rolls back the DB records.
+    const { savedAgent, savedClassification, credentials } =
+      await this.dataSource.transaction(async (manager) => {
+        const txAgentRepo = manager.getRepository(AgentIdentityEntity);
+        const txClassRepo = manager.getRepository(AgentTrustClassificationEntity);
 
-    const classification = this.classificationRepo.create({
-      agentId: savedAgent.agentId,
-      orgId: dto.org_id,
-      classification: 'Observed',
-      scope: 'global',
-      changedByPrincipalId: changedBy,
-      changedByPrincipalType: 'human_user',
-      reason: 'Initial registration',
-    });
-    const savedClassification = await this.classificationRepo.save(classification);
+        const agent = txAgentRepo.create({
+          orgId: dto.org_id,
+          displayName: dto.display_name,
+          modelName: dto.model_name,
+          modelProvider: dto.model_provider,
+          humanOversightContact: dto.human_oversight_contact,
+          registeredByPrincipalId: registeredBy,
+          currentClassification: 'Observed',
+          keycloakClientProvisioned: true,
+        });
+        const sa = await txAgentRepo.save(agent);
 
-    return this.formatAgentResponse(savedAgent, savedClassification);
+        const classification = txClassRepo.create({
+          agentId: sa.agentId,
+          orgId: dto.org_id,
+          classification: 'Observed',
+          scope: 'global',
+          changedByPrincipalId: changedBy,
+          changedByPrincipalType: 'human_user',
+          reason: 'Initial registration',
+        });
+        const sc = await txClassRepo.save(classification);
+
+        const creds = await this.keycloakAdmin.createAgentClient(sa.agentId, dto.org_id);
+
+        return { savedAgent: sa, savedClassification: sc, credentials: creds };
+      });
+
+    return this.formatAgentResponse(savedAgent, savedClassification, credentials.keycloak_client_secret);
   }
 
   async getAgent(agentId: string) {
@@ -226,6 +242,56 @@ export class AgentsService {
     }
 
     return this.formatAgentResponse(agent, savedClassification);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 Phase 5a-4: Secret rotation
+  // ---------------------------------------------------------------------------
+
+  async rotateSecret(agentId: string, ctx: RequestContext) {
+    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+
+    const isOversightContact = ctx.email === agent.humanOversightContact;
+    if (!isOversightContact && !hasGovernanceRole(ctx.roles)) {
+      throw new ForbiddenException(
+        'Secret rotation requires the human oversight contact or a governance role',
+      );
+    }
+
+    const credentials = await this.keycloakAdmin.rotateClientSecret(agentId);
+    const currentClassification = await this.getCurrentClassification(agentId);
+
+    return this.formatAgentResponse(agent, currentClassification, credentials.keycloak_client_secret);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 Phase 5c-10: One-time credential provisioning for pre-existing agents
+  // ---------------------------------------------------------------------------
+
+  async provisionCredentials(agentId: string, ctx: RequestContext) {
+    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+
+    if (!hasGovernanceRole(ctx.roles)) {
+      throw new ForbiddenException(
+        'Credential provisioning requires a governance role',
+      );
+    }
+
+    if (agent.keycloakClientProvisioned) {
+      throw new ConflictException(
+        `Agent ${agentId} already has Keycloak credentials provisioned`,
+      );
+    }
+
+    const credentials = await this.keycloakAdmin.createAgentClient(agentId, agent.orgId);
+
+    agent.keycloakClientProvisioned = true;
+    await this.agentRepo.save(agent);
+
+    const currentClassification = await this.getCurrentClassification(agentId);
+    return this.formatAgentResponse(agent, currentClassification, credentials.keycloak_client_secret);
   }
 
   // ---------------------------------------------------------------------------
@@ -353,6 +419,7 @@ export class AgentsService {
   private formatAgentResponse(
     agent: AgentIdentityEntity,
     classification: AgentTrustClassificationEntity | null,
+    keycloakClientSecret: string | null = null,
   ) {
     return {
       agent_id: agent.agentId,
@@ -366,6 +433,8 @@ export class AgentsService {
       classification_scope: classification?.scope ?? 'global',
       classification_changed_at: classification?.effectiveFrom ?? null,
       classification_reason: classification?.reason ?? null,
+      keycloak_client_id: agent.agentId,
+      keycloak_client_secret: keycloakClientSecret,
       created_at: agent.createdAt,
       updated_at: agent.updatedAt,
     };

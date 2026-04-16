@@ -32,6 +32,9 @@ export class AgentIdentityEntity {
   @Column({ name: 'current_classification', type: 'varchar', length: 50, nullable: true })
   currentClassification!: string | null;
 
+  @Column({ name: 'keycloak_client_provisioned', type: 'boolean', default: false })
+  keycloakClientProvisioned!: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

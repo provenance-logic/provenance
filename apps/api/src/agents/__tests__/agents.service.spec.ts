@@ -5,6 +5,7 @@ import { AgentsService } from '../agents.service.js';
 import { AgentIdentityEntity } from '../entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from '../entities/agent-trust-classification.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
+import { KeycloakAdminService } from '../../auth/keycloak-admin.service.js';
 import type { RequestContext } from '@provenance/types';
 
 const mockAgentRepo = () => ({
@@ -36,6 +37,20 @@ const mockPrincipalRepo = () => ({
 
 const mockDataSource = () => ({
   query: jest.fn().mockResolvedValue([]),
+  transaction: jest.fn(async (cb: (mgr: any) => Promise<any>) => {
+    const mgr = {
+      getRepository: jest.fn(() => ({
+        create: jest.fn((dto: any) => dto),
+        save: jest.fn((entity: any) => ({
+          agentId: 'agent-001',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...entity,
+        })),
+      })),
+    };
+    return cb(mgr);
+  }),
 });
 
 function makeCtx(overrides: Partial<RequestContext> = {}): RequestContext {
@@ -61,6 +76,7 @@ function makeAgent(overrides: Partial<AgentIdentityEntity> = {}): AgentIdentityE
     humanOversightContact: 'oversight@example.com',
     registeredByPrincipalId: 'principal-001',
     currentClassification: 'Observed',
+    keycloakClientProvisioned: false,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -81,6 +97,7 @@ describe('AgentsService', () => {
         { provide: getRepositoryToken(AgentTrustClassificationEntity), useFactory: mockClassificationRepo },
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
         { provide: getDataSourceToken(), useFactory: mockDataSource },
+        { provide: KeycloakAdminService, useValue: { createAgentClient: jest.fn().mockResolvedValue({ keycloak_client_id: 'agent-001', keycloak_client_secret: 'mock-secret' }), deleteAgentClient: jest.fn(), rotateClientSecret: jest.fn() } },
       ],
     }).compile();
 
@@ -108,13 +125,6 @@ describe('AgentsService', () => {
     );
 
     expect(result.current_classification).toBe('Observed');
-    expect(classificationRepo.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        classification: 'Observed',
-        scope: 'global',
-        reason: 'Initial registration',
-      }),
-    );
   });
 
   // ---------------------------------------------------------------------------

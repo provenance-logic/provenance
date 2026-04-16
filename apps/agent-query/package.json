@@ -9,7 +9,7 @@
     "dev": "ts-node --esm src/main.ts",
     "start": "node dist/src/main.js",
     "start:dev": "nodemon --watch src --ext ts --exec 'ts-node --esm src/main.ts'",
-    "test": "echo 'No tests yet'",
+    "test": "node --experimental-vm-modules ../../node_modules/.bin/jest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,14 +19,33 @@
     "@nestjs/platform-express": "^10.3.0",
     "axios": "^1.7.0",
     "express": "^4.18.0",
+    "jsonwebtoken": "^9.0.3",
+    "jwks-rsa": "^3.1.0",
     "reflect-metadata": "^0.2.1",
     "rxjs": "^7.8.1",
     "zod": "^3.22.4"
   },
+  "jest": {
+    "extensionsToTreatAsEsm": [".ts"],
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.ts$": ["ts-jest", { "useESM": true, "tsconfig": "<rootDir>/../tsconfig.json" }]
+    },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "testEnvironment": "node"
+  },
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.11.30",
+    "jest": "^29.7.0",
     "nodemon": "^3.1.0",
+    "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
   }

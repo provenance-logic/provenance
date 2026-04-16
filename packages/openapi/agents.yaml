@@ -1,0 +1,574 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance Agents API
+  version: 1.0.0
+  description: |
+    Manages AI agent identities, trust classifications, and Keycloak
+    client credentials for the Provenance platform.
+
+    All endpoints require a valid Keycloak-issued JWT in the Authorization
+    header. Every resource is scoped to an organization via org_id.
+
+    **ADR-002** governs agent authentication. Agents authenticate via
+    Keycloak `client_credentials` grant using credentials provisioned at
+    registration time.
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Agents
+    description: Agent identity registration and lookup
+  - name: Agent Classification
+    description: Trust classification management
+  - name: Agent Credentials
+    description: Keycloak client credential lifecycle (ADR-002)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+      description: The agent's unique identifier
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Shared primitives
+    # ------------------------------------------------------------------
+    Uuid:
+      type: string
+      format: uuid
+      examples:
+        - "018e8e5f-1234-7abc-8def-012345678901"
+
+    Timestamp:
+      type: string
+      format: date-time
+      examples:
+        - "2026-04-16T12:00:00Z"
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    # ------------------------------------------------------------------
+    # Agent trust classification
+    # ------------------------------------------------------------------
+    AgentTrustClassification:
+      type: string
+      enum: [Observed, Supervised, Autonomous]
+      description: |
+        Trust level assigned to an agent by governance.
+        - **Observed** (default): agent behavior is monitored.
+        - **Supervised**: agent has demonstrated reliability.
+        - **Autonomous**: highest trust; requires explicit governance approval.
+
+    ClassificationScope:
+      type: string
+      enum: [global]
+      description: Scope of the classification. Reserved for future expansion.
+
+    # ------------------------------------------------------------------
+    # Agent registration request
+    # ------------------------------------------------------------------
+    CreateAgentRequest:
+      type: object
+      required:
+        - display_name
+        - model_name
+        - model_provider
+        - human_oversight_contact
+        - org_id
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          description: Human-readable name for this agent.
+          examples:
+            - "Revenue Pipeline Agent"
+        model_name:
+          type: string
+          minLength: 1
+          description: The model identifier.
+          examples:
+            - "claude-sonnet-4-20250514"
+        model_provider:
+          type: string
+          minLength: 1
+          description: The model provider.
+          examples:
+            - "Anthropic"
+        human_oversight_contact:
+          type: string
+          format: email
+          description: |
+            Email address of the registered platform user responsible for
+            overseeing this agent. Must match an existing principal.
+          examples:
+            - "alice@acme.com"
+        org_id:
+          $ref: "#/components/schemas/Uuid"
+
+    # ------------------------------------------------------------------
+    # Agent response — returned by registration, get, list, rotate, provision
+    # ------------------------------------------------------------------
+    AgentResponse:
+      type: object
+      required:
+        - agent_id
+        - org_id
+        - display_name
+        - model_name
+        - model_provider
+        - human_oversight_contact
+        - registered_by_principal_id
+        - current_classification
+        - classification_scope
+        - keycloak_client_id
+        - keycloak_client_secret
+        - created_at
+        - updated_at
+      properties:
+        agent_id:
+          $ref: "#/components/schemas/Uuid"
+        org_id:
+          $ref: "#/components/schemas/Uuid"
+        display_name:
+          type: string
+        model_name:
+          type: string
+        model_provider:
+          type: string
+        human_oversight_contact:
+          type: string
+          format: email
+        registered_by_principal_id:
+          $ref: "#/components/schemas/Uuid"
+        current_classification:
+          $ref: "#/components/schemas/AgentTrustClassification"
+        classification_scope:
+          $ref: "#/components/schemas/ClassificationScope"
+        classification_changed_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        classification_reason:
+          type: [string, "null"]
+        keycloak_client_id:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            The Keycloak client ID for this agent. Always equal to agent_id.
+            Used by the agent to acquire JWT tokens via the client_credentials
+            grant.
+        keycloak_client_secret:
+          type: [string, "null"]
+          writeOnly: true
+          description: |
+            The Keycloak client secret for this agent. **Returned once** at
+            registration time, and once via POST /agents/{agentId}/rotate-secret
+            or POST /agents/{agentId}/provision-credentials. Never returned on
+            subsequent GET reads (null). Store securely — it cannot be retrieved
+            again without rotation.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ------------------------------------------------------------------
+    # Classification update request
+    # ------------------------------------------------------------------
+    UpdateClassificationRequest:
+      type: object
+      required:
+        - classification
+        - reason
+      properties:
+        classification:
+          $ref: "#/components/schemas/AgentTrustClassification"
+        reason:
+          type: string
+          minLength: 10
+          description: |
+            Justification for the classification change. Must be at least
+            10 characters and contain more than a single word.
+          examples:
+            - "Agent demonstrated reliable behavior over 30-day observation period"
+
+    # ------------------------------------------------------------------
+    # Classification history entry
+    # ------------------------------------------------------------------
+    ClassificationHistoryEntry:
+      type: object
+      required:
+        - classification_id
+        - agent_id
+        - classification
+        - scope
+        - changed_by_principal_id
+        - changed_by_principal_type
+        - reason
+        - effective_from
+        - created_at
+      properties:
+        classification_id:
+          $ref: "#/components/schemas/Uuid"
+        agent_id:
+          $ref: "#/components/schemas/Uuid"
+        classification:
+          $ref: "#/components/schemas/AgentTrustClassification"
+        scope:
+          $ref: "#/components/schemas/ClassificationScope"
+        changed_by_principal_id:
+          $ref: "#/components/schemas/Uuid"
+        changed_by_principal_type:
+          type: string
+          enum: [human_user, governance_role]
+        reason:
+          type: string
+        effective_from:
+          $ref: "#/components/schemas/Timestamp"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ------------------------------------------------------------------
+    # Oversight summary
+    # ------------------------------------------------------------------
+    OversightSummary:
+      type: object
+      required:
+        - agent_id
+        - display_name
+        - human_oversight_contact
+        - current_classification
+        - last_activity_at
+        - activity_count_24h
+      properties:
+        agent_id:
+          $ref: "#/components/schemas/Uuid"
+        display_name:
+          type: string
+        human_oversight_contact:
+          type: string
+          format: email
+        current_classification:
+          $ref: "#/components/schemas/AgentTrustClassification"
+        last_activity_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        activity_count_24h:
+          type: integer
+          minimum: 0
+
+# ======================================================================
+# Paths
+# ======================================================================
+paths:
+  # --------------------------------------------------------------------
+  # POST /agents — register a new agent
+  # --------------------------------------------------------------------
+  /agents:
+    post:
+      operationId: registerAgent
+      summary: Register a new AI agent
+      description: |
+        Creates an agent identity record, assigns Observed trust classification,
+        and provisions a dedicated Keycloak client for `client_credentials`
+        authentication (ADR-002).
+
+        The response includes `keycloak_client_secret` — store it securely.
+        It is returned only once and cannot be retrieved again without rotation.
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgentRequest"
+      responses:
+        "201":
+          description: Agent registered successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "400":
+          description: Validation error or human_oversight_contact not a registered user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized.
+
+    get:
+      operationId: listAgents
+      summary: List agents in an organization
+      tags: [Agents]
+      parameters:
+        - name: orgId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      responses:
+        "200":
+          description: List of agents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentResponse"
+        "400":
+          description: Missing orgId parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized.
+
+  # --------------------------------------------------------------------
+  # GET /agents/{agentId} — get agent details
+  # --------------------------------------------------------------------
+  /agents/{agentId}:
+    get:
+      operationId: getAgent
+      summary: Get agent details
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Agent details. `keycloak_client_secret` is always null on reads.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --------------------------------------------------------------------
+  # PATCH /agents/{agentId}/classification — update trust classification
+  # --------------------------------------------------------------------
+  /agents/{agentId}/classification:
+    patch:
+      operationId: updateClassification
+      summary: Update agent trust classification
+      description: |
+        Upgrades (Observed to Supervised, Supervised to Autonomous) require
+        `governance_member` role. Downgrades can be performed by the agent's
+        `human_oversight_contact` or any `governance_member`.
+      tags: [Agent Classification]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClassificationRequest"
+      responses:
+        "200":
+          description: Classification updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "400":
+          description: Agent already at the requested classification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized.
+        "403":
+          description: Insufficient permissions for this classification transition.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --------------------------------------------------------------------
+  # GET /agents/{agentId}/classification/history
+  # --------------------------------------------------------------------
+  /agents/{agentId}/classification/history:
+    get:
+      operationId: getClassificationHistory
+      summary: Get trust classification history
+      description: Returns the immutable audit trail of all classification changes.
+      tags: [Agent Classification]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Classification history (newest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClassificationHistoryEntry"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --------------------------------------------------------------------
+  # GET /agents/{agentId}/oversight
+  # --------------------------------------------------------------------
+  /agents/{agentId}/oversight:
+    get:
+      operationId: getOversight
+      summary: Get agent oversight summary
+      description: |
+        Returns the agent's current classification, oversight contact,
+        last activity timestamp, and 24-hour activity count.
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Oversight summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OversightSummary"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --------------------------------------------------------------------
+  # POST /agents/{agentId}/rotate-secret — rotate Keycloak client secret
+  # --------------------------------------------------------------------
+  /agents/{agentId}/rotate-secret:
+    post:
+      operationId: rotateAgentSecret
+      summary: Rotate agent Keycloak client secret
+      description: |
+        Generates a new Keycloak client secret for the agent. The old secret
+        is immediately invalidated. The new secret is returned once in the
+        response — store it securely.
+
+        Requires `governance_member` role or the agent's
+        `human_oversight_contact`.
+      tags: [Agent Credentials]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Secret rotated. `keycloak_client_secret` contains the new secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "401":
+          description: Unauthorized.
+        "403":
+          description: |
+            Caller is not a governance_member and not the agent's
+            human_oversight_contact.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --------------------------------------------------------------------
+  # POST /agents/{agentId}/provision-credentials — one-time migration
+  # --------------------------------------------------------------------
+  /agents/{agentId}/provision-credentials:
+    post:
+      operationId: provisionAgentCredentials
+      summary: Provision Keycloak credentials for a pre-existing agent
+      description: |
+        One-time migration endpoint for agents registered before ADR-002
+        Keycloak provisioning was implemented. Creates a Keycloak client
+        for the agent and returns the client secret once.
+
+        Fails with 409 if the agent already has credentials provisioned.
+        Requires `governance_member` role.
+      tags: [Agent Credentials]
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Credentials provisioned. `keycloak_client_secret` contains the secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "401":
+          description: Unauthorized.
+        "403":
+          description: Caller does not have governance_member role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Agent already has Keycloak credentials provisioned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

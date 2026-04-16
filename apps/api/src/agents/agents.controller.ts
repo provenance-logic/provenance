@@ -61,6 +61,24 @@ export class AgentsController {
     return this.agentsService.updateClassification(agentId, parsed.data, ctx);
   }
 
+  @Post(':agentId/rotate-secret')
+  @HttpCode(HttpStatus.OK)
+  async rotateSecret(
+    @Param('agentId') agentId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.agentsService.rotateSecret(agentId, ctx);
+  }
+
+  @Post(':agentId/provision-credentials')
+  @HttpCode(HttpStatus.OK)
+  async provisionCredentials(
+    @Param('agentId') agentId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.agentsService.provisionCredentials(agentId, ctx);
+  }
+
   @Get(':agentId/classification/history')
   async getClassificationHistory(@Param('agentId') agentId: string) {
     return this.agentsService.getClassificationHistory(agentId);
