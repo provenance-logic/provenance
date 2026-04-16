@@ -64,8 +64,8 @@ The `get_product` tool returns product details regardless of the requester's acc
 
 These are meaningful additions planned for Phase 5.
 
-**Agent authentication is self-reported in MVP**
-The current MCP server uses an `X-Agent-Id` request header as the agent identity signal. Agent identity in audit logs is self-reported — a caller could supply any agent_id. This is acceptable for MVP where the agent population is known and controlled. Phase 5 replaces this with cryptographically verified JWT tokens from Keycloak.
+**~~Agent authentication is self-reported in MVP~~ — Resolved (April 16, 2026)**
+Agent authentication now uses Keycloak `client_credentials` JWTs validated on every MCP request (ADR-002). Agent identity is cryptographically verified, not self-reported. The Phase 4 `X-Agent-Id` header pattern has been superseded. Pre-existing agents can be migrated via `POST /agents/:agentId/provision-credentials`.
 
 **Anomaly detection not yet implemented**
 The platform captures a complete audit trail of all agent activity but does not yet detect anomalous behavioral patterns or trigger automatic escalation. Anomaly detection requires a behavioral baseline that does not exist until activity tracking has run in production. Phase 5 delivers anomaly detection and Temporal-based escalation workflows.

@@ -1072,15 +1072,20 @@ Phase 5 is redefined as "Open Source Ready." The goal is to make the platform re
 - Environment variable audit — verified no secrets in code, logs, or version control
 - SSH key management — reviewed, documented, unnecessary access revoked
 
-### 5.3 — JWT Agent Authentication
+### 5.3 — JWT Agent Authentication ✅ Complete (April 16, 2026)
 
-Replace the X-Agent-Id header MVP shortcut with cryptographically verified agent identity.
+Replaced the X-Agent-Id header MVP shortcut with cryptographically verified agent identity (ADR-002).
 
-- Agent onboarding flow provisions a Keycloak client credential during agent registration
-- MCP server middleware validates JWT signature on every request — agent identity is verified, not self-reported
-- `principal_type=agent` and `agent_id` claims validated before tool dispatch
-- `MCP_API_KEY` bypass retired
-- Keycloak is already running — no new infrastructure required
+- Agent registration provisions a dedicated Keycloak client per agent via `client_credentials` grant
+- Agent Query Layer validates JWT Bearer tokens on every MCP request (RS256 via JWKS, exp, iss, `principal_type=ai_agent`)
+- Verified `agent_id` and `provenance_org_id` claims extracted from JWT — identity is cryptographic, not self-reported
+- `agent_id` removed from all MCP tool input schemas — sourced from session identity
+- Agent Query Layer forwards verified identity to control plane via `X-Agent-Id` / `X-Org-Id` headers (internal service-to-service only)
+- `POST /agents/:agentId/rotate-secret` — secret rotation for governance members and oversight contacts
+- `POST /agents/:agentId/provision-credentials` — one-time migration for pre-existing agents
+- V14 migration adds `keycloak_client_provisioned` flag to `identity.agent_identities`
+- 30-day deprecation mode (`DEPRECATION_WARNING_ONLY`) for backward compatibility during migration
+- Keycloak is already running — no new infrastructure required. Zero additional cost.
 
 ### 5.4 — Data Product Completeness — Priority 1
 

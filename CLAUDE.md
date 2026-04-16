@@ -164,7 +164,7 @@ provenance-platform/
 
 **OpenSearch indices:** `data_products` (kNN semantic, 384-dim, all-MiniLM-L6-v2) + `provenance-products` (BM25 keyword). Both active and complementary — do not merge.
 
-**Agent authentication (MVP):** X-Agent-Id header pattern — self-reported, acceptable for known agent population. Phase 5 replaces with JWT-based auth from Keycloak.
+**Agent authentication (ADR-002, Phase 5 complete):** JWT-based authentication via Keycloak `client_credentials` grant. Each registered agent receives a dedicated Keycloak client at registration time. Agent Query Layer validates JWT on every MCP request (RS256, JWKS, exp, iss, `principal_type=ai_agent`). Verified `agent_id` and `org_id` extracted from JWT claims — identity is cryptographically verified, not self-reported. Supersedes the Phase 4 `X-Agent-Id` header pattern. See `documents/architecture/adr/ADR-002-jwt-agent-authentication.md`.
 
 ---
 
@@ -199,10 +199,10 @@ Connectors that implement discovery mode perform two types of crawling:
 | 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access | ✅ Complete |
 | 3 | Lineage graph, emission API, trust score, observability dashboard, connector discovery | Trust infrastructure live — lineage, SLOs, trust score, auto-discovery | ✅ Complete |
 | 4 | MCP server, federated query layer, agent identity, semantic search, trust classification, audit log query API | Data 3.0 milestone — agents as first-class participants (9 MCP tools, SSE port 3002) | ✅ Complete |
-| 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. | 🔲 Active |
+| 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. JWT agent auth complete (ADR-002). | 🔲 Active |
 | 6 | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | Production Scale — triggered by enterprise customers or funding, not a calendar date | 🔲 When Funded |
 
-**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026.
+**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 JWT agent authentication (ADR-002) complete as of April 16, 2026.
 
 ---
 
@@ -234,7 +234,7 @@ Connectors that implement discovery mode perform two types of crawling:
 
 **Frozen operations require explicit governance disposition.** Never auto-complete or auto-cancel frozen operations — always require approve or cancel from a governance role principal.
 
-**The X-Agent-Id header is an MVP shortcut.** Do not build new features that depend on it being the permanent auth mechanism. Phase 5 replaces it with JWT. Keep the auth concern isolated in middleware.
+**Agent authentication is JWT-based (ADR-002).** Agents authenticate via Keycloak `client_credentials` JWTs validated at the Agent Query Layer. The Phase 4 `X-Agent-Id` header pattern has been superseded. Do not use self-reported identity for any new features.
 
 ---
 

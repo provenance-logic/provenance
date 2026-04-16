@@ -306,13 +306,19 @@ Two distinct OpenSearch indices are active simultaneously. Their purposes are co
 
 Both indices are refreshed automatically on lifecycle transitions (deprecation, decommission trigger removal) and on mutable field updates (name, description, tags trigger re-index). All index operations are fire-and-forget — they do not block the triggering action from completing.
 
-### MVP Agent Authentication Pattern *(new v1.2)*
+### Agent Authentication (ADR-002) *(updated v1.3 — Phase 5 complete)*
 
-The current MVP agent authentication uses an intentional shortcut that must be understood and replaced in Phase 5.
+Agent authentication uses Keycloak's OAuth2 `client_credentials` grant flow, implemented in Phase 5 per ADR-002. This supersedes the Phase 4 MVP pattern (`X-Agent-Id` self-reported header).
 
-**Current (MVP):** MCP tool calls carry an optional `X-Agent-Id` request header. If present, the MCP server fetches agent details from the control plane and populates audit log entries with agent identity context. If absent, calls are logged as service account activity. The `MCP_API_KEY` bypass on the control plane API is the auth mechanism for all MCP → control plane calls. Agent identity in audit logs is self-reported in MVP — a caller could supply any `agent_id`. This is acceptable for MVP where the agent population is known and controlled.
+**How it works:**
+1. **Registration provisioning:** When an agent is registered (via `register_agent` MCP tool or `POST /agents`), the platform provisions a dedicated Keycloak client with `client_id` = agent UUID, `client_secret` returned once, and custom JWT claims: `principal_type=ai_agent`, `agent_id`, `provenance_org_id`.
+2. **Token acquisition:** The agent authenticates to Keycloak's token endpoint (`POST /realms/provenance/protocol/openid-connect/token`) with `grant_type=client_credentials`. Token lifetime is 300 seconds, no refresh tokens.
+3. **Request authentication:** The agent includes the JWT as `Authorization: Bearer <token>` on every MCP request (`/mcp/sse`, `/mcp/messages`).
+4. **Validation:** The Agent Query Layer validates JWT signature (RS256 via JWKS with 1-hour key cache), expiry, issuer, and `principal_type=ai_agent`. Rejected requests receive 401 with no body.
+5. **Session binding:** Verified `agent_id` and `org_id` are bound to the MCP session. All tool calls within that session use the verified identity — `agent_id` is not accepted as a tool argument.
+6. **Identity forwarding:** The Agent Query Layer forwards verified identity to the control plane via `X-Agent-Id` and `X-Org-Id` headers alongside the `MCP_API_KEY` service-to-service token. The control plane `JwtAuthGuard` verifies the agent exists in the database before populating `RequestContext`.
 
-**Phase 5 resolution:** Full JWT-based agent authentication on the MCP server. Each registered agent receives a signed JWT carrying `principal_type=agent` and `agent_id` claims, validated on every MCP request via Keycloak. The `X-Agent-Id` header pattern is retired. An ADR (see `documents/architecture/adr/`) documents this decision formally.
+**Credential lifecycle:** Secret rotation via `POST /agents/:agentId/rotate-secret` (governance or oversight contact). One-time migration for pre-existing agents via `POST /agents/:agentId/provision-credentials` (governance only). See `documents/architecture/adr/ADR-002-jwt-agent-authentication.md` for full decision record.
 
 ### MVP Security Architecture
 
@@ -478,7 +484,7 @@ Total production cost range: $2,400-$8,000/month before customer workload.
 | Semantic index | `data_products`, kNN, cosine similarity, nmslib/HNSW |
 | Keyword index | `provenance-products`, BM25 |
 | NL query translation | claude-sonnet-4-20250514, 5s timeout, graceful fallback to keyword search |
-| Agent authentication (MVP) | X-Agent-Id header + MCP_API_KEY bypass — see ADR and MVP Agent Authentication Pattern above |
+| Agent authentication | JWT via Keycloak `client_credentials` (ADR-002, Phase 5) — supersedes Phase 4 X-Agent-Id header pattern |
 | Agent trust classification | Three tiers (Observed/Supervised/Autonomous), global scope, scope field ready for per-domain post-MVP |
 | Audit log query API | Filter by agent_id, event_type, time range, principal_type — no aggregation |
 | Frozen state | Temporal workflow state, triggered by agent classification downgrade |
@@ -502,7 +508,7 @@ Before or alongside Phase 5 infrastructure hardening, the following Priority 1 d
 | --- | --- | --- |
 | Stability and reliability | Automated daily backups for PostgreSQL and Neo4j with tested restore procedure. Docker restart policies for auto-recovery. CloudWatch basic monitoring — EC2 health, disk, memory alerts. Operational runbook for common failure scenarios. Log rotation. | ~$10-20/month CloudWatch |
 | Security essentials | HTTPS enforced on all external endpoints. Security group audit and tightening. Credentials rotation procedure executed and documented. Environment variable audit — no secrets in code or logs. SSH key management review. | Zero |
-| JWT agent authentication | Replace X-Agent-Id header with cryptographically verified JWT tokens from Keycloak. Agent onboarding provisions Keycloak client credential during registration. MCP server middleware validates JWT on every request. MCP_API_KEY bypass retired. Keycloak already running — no new infrastructure. | Zero |
+| JWT agent authentication ✅ | Keycloak `client_credentials` JWT auth for agents (ADR-002). Per-agent Keycloak client provisioned at registration. Agent Query Layer validates JWT (RS256/JWKS) on every MCP request. Session-bound identity replaces self-reported `agent_id`. Secret rotation and migration endpoints. 30-day deprecation mode. Complete April 16, 2026. | Zero |
 | Data product completeness Priority 1 | Column-level schema, ownership/stewardship, freshness signals, and access status for requesting principal in get_product response. Data exists in platform today — this is API and MCP tool work only. | Zero |
 | Agent anomaly detection | Behavioral pattern analysis against audit log. Configurable thresholds per trust classification. Temporal escalation workflows to human oversight contacts. Auto-suspension on sustained anomaly. Temporal and audit log already operational. | Zero |
 | Developer experience | Local setup in under 30 minutes from clean clone on Mac and Linux. CONTRIBUTING.md. Comprehensive seed data. OpenAPI docs published. README reflects current state. | Zero |
@@ -539,7 +545,7 @@ Phase 6 is triggered by enterprise customer requirements, investor funding, or b
 | MCP Implementation | @modelcontextprotocol/sdk (official TypeScript) | Custom implementation; Python MCP SDK | Reference implementation. Guarantees spec compliance. | No revisit trigger — always use official SDK |
 | Semantic Embeddings | sentence-transformers (self-hosted) | OpenAI Embeddings API; AWS Bedrock Titan | Free, fast enough, avoids per-embedding API cost at scale. | If embedding quality is insufficient for agent discovery accuracy |
 | **Lean Phase 5 Strategy** | **Open Source Ready on existing infrastructure** | **Full managed services migration as Phase 5** | **Provenance is an open source platform pre-revenue and pre-investment. A $2,400-8,000/month infrastructure jump is not appropriate at this stage. The architecture is designed so managed services migration (Phase 6) is a configuration change, not a rewrite. Phase 6 is triggered by customers or funding, not a calendar date.** | **When first enterprise customer or funding round requires it** |
-| **MVP Agent Authentication** | **X-Agent-Id header + MCP_API_KEY bypass** | **Full JWT agent tokens from Keycloak from day one** | **Full JWT auth requires agent onboarding flows not yet built in Phase 4. X-Agent-Id is self-reported but acceptable for MVP where agent population is known and controlled. Phase 5 replaces with cryptographically verified JWTs.** | **Phase 5 — replace when Keycloak agent client configuration is complete** |
+| **Agent Authentication (ADR-002)** | **Keycloak `client_credentials` JWT per agent (Phase 5)** | **X-Agent-Id header (Phase 4 MVP); shared API key** | **Each agent gets a dedicated Keycloak client at registration. JWT validated on every MCP request. Identity is cryptographic, not self-reported. Supersedes X-Agent-Id pattern. See ADR-002.** | **Resolved — implemented Phase 5 (April 16, 2026)** |
 | **Two OpenSearch Index Strategy** | **Separate semantic (kNN) and keyword (BM25) indices** | **Single index with both field types; unified index with embedding fallback** | **Semantic and keyword search have different refresh patterns, query paths, and failure modes. Separate indices provide clean isolation and independent scaling. The MCP tools that use each index are distinct.** | **No revisit trigger** | **Synchronous crawl on registration; direct database writes from crawler** | **Temporal provides durable crawl execution with retries. Kafka decouples crawl output from downstream consumers. Synchronous crawl is viable MVP fallback if Temporal overhead is too heavy.** | **If Temporal adds unacceptable latency to connector registration** |
 | **Discovery Conflict Resolution** | **Domain-declared takes precedence; governance-configurable auto-override** | **Last-write-wins; always-override discovered; manual merge only** | **Domain teams are authoritative source of truth for their products. Governance override is the escape valve without making override the default.** | **No revisit trigger** |
 
@@ -659,7 +665,7 @@ provenance-platform/
 | Semantic search | all-MiniLM-L6-v2 (384 dimensions) + OpenSearch kNN, cosine similarity, nmslib/HNSW |
 | Embedding service | Python FastAPI, port 8001 |
 | NL query translation | claude-sonnet-4-20250514, 5s timeout, graceful fallback |
-| Agent authentication (MVP) | X-Agent-Id header — Phase 5 replaces with JWT |
+| Agent authentication | Keycloak `client_credentials` JWT per agent (ADR-002) |
 | Discovery engine | Temporal-orchestrated crawls, Kafka result pipeline, per-connector adapters (Databricks, dbt, Snowflake, Fivetran) |
 | Build status | Phases 1–4 complete. **Phase 5 (Open Source Ready) active. Est. additional cost: $10-30/month.** |
 | Phase 6 trigger | First enterprise customer or funding round — Kubernetes, managed services, security hardening |

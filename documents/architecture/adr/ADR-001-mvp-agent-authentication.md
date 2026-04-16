@@ -1,9 +1,9 @@
 # ADR-001: MVP Agent Authentication via X-Agent-Id Header
 
 **Date:** April 13, 2026
-**Status:** Accepted — superseded in Phase 5
+**Status:** Superseded
 **Author:** Provenance Platform Team
-**Superseded by:** ADR-002 (to be written in Phase 5): JWT-Based Agent Authentication
+**Superseded by:** ADR-002 (April 15, 2026): JWT-Based Agent Authentication via Keycloak Client Credentials — implemented April 16, 2026
 
 ---
 

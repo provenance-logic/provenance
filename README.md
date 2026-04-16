@@ -7,7 +7,7 @@ Provenance is an open-source, cloud-native platform that makes data mesh real �
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PRD](https://img.shields.io/badge/docs-PRD%20v1.0-teal.svg)](./documents/prd)
 [![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.0-teal.svg)](./documents/architecture)
-[![Status](https://img.shields.io/badge/status-Phase%203%20verified-green.svg)]()
+[![Status](https://img.shields.io/badge/status-Phase%205%20active-green.svg)]()
 
 ---
 
@@ -97,15 +97,15 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 ## Project Status
 
-Provenance is in active development. Phases 1–3 are complete and verified end-to-end on EC2.
+Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is in progress with JWT agent authentication delivered.
 
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | Complete |
 | **Phase 2 — Governance & Marketplace** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | Complete |
 | **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | Complete and verified |
-| **Phase 4 — Agent Integration** | MCP server, agent query layer, agent identity, semantic search | Next |
-| **Phase 5 — Production Hardening** | Microservices split, managed services migration, security hardening | Not started |
+| **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | Complete |
+| **Phase 5 — Open Source Ready** | JWT agent auth (ADR-002), stability, security essentials, data product completeness, developer experience | Active — JWT auth complete |
 
 ### Verification Status (Phase 3)
 
@@ -141,6 +141,14 @@ Provenance is in active development. Phases 1–3 are complete and verified end-
 - Trust score panel on product detail page with score badge, sparkline trend, component breakdown, and recompute
 - Interactive Lineage Explorer UI with Cytoscape.js graph visualization and dagre layout
 - Observability Dashboard with SLO declarations, evaluation history, health summary, and inline SLO creation
+
+**Agent Integration (Phase 4 + Phase 5 Auth)**
+- MCP server (SSE transport, port 3002) with 9 tools: list_products, get_product, get_trust_score, get_lineage, get_slo_summary, search_products, semantic_search, register_agent, get_agent_status
+- Semantic search with hybrid kNN + BM25 scoring via OpenSearch
+- NL query translation via Claude API with graceful fallback
+- Agent identity model with three trust tiers (Observed, Supervised, Autonomous) and governance-controlled transitions
+- JWT-based agent authentication via Keycloak `client_credentials` grant (ADR-002) — agents receive dedicated Keycloak clients at registration, JWTs validated on every MCP request
+- Complete audit trail of all agent activity with verified identity context
 
 ---
 
