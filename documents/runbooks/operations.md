@@ -279,3 +279,82 @@ Backup logs are streamed to CloudWatch Logs group `/provenance/backups`.
 | Disk Critical | DiskUsedPercent | >= 90 for 1 hour | Page |
 | Memory Warning | MemoryUsedPercent | >= 80 for 72 hours | Notify |
 | Container Down | UnhealthyContainerCount | >= 1 for 15 min | Page |
+
+---
+
+## Credential Rotation
+
+### Rotation Schedule
+
+| Credential | Rotation Interval | Procedure |
+|---|---|---|
+| MCP API key | Every 90 days | Automated script (see below) |
+| PostgreSQL password | Every 90 days | Manual — update `.env.ec2`, restart all services |
+| Neo4j password | Every 90 days | Manual — update `.env.ec2`, restart all services |
+| Keycloak admin password | Every 90 days | Manual — update `.env.ec2`, restart keycloak |
+| Anthropic API key | Per Anthropic policy | Rotate in Anthropic console, update `.env.ec2`, restart api and agent-query |
+
+### MCP API Key Rotation
+
+The MCP API key authenticates requests between the API and the agent-query layer. It should be rotated every 90 days.
+
+**Automated rotation:**
+
+```bash
+sudo /opt/provenance/infrastructure/scripts/rotate-mcp-key.sh
+```
+
+This script:
+1. Generates a new 32-byte random key via `openssl rand`
+2. Updates `MCP_API_KEY` in `/opt/provenance/infrastructure/docker/.env.ec2`
+3. Restarts only the `api` and `agent-query` containers (other services are unaffected)
+4. Logs the rotation date to `/opt/provenance/backups/key-rotation.log`
+
+**Manual rotation (if the script is unavailable):**
+
+```bash
+# 1. Generate a new key
+NEW_KEY=$(openssl rand -hex 32)
+echo "New MCP API key: ${NEW_KEY}"
+
+# 2. Update .env.ec2
+sed -i "s/^MCP_API_KEY=.*/MCP_API_KEY=${NEW_KEY}/" /opt/provenance/infrastructure/docker/.env.ec2
+
+# 3. Restart affected services
+sudo docker compose -f /opt/provenance/infrastructure/docker/docker-compose.ec2-dev.yml \
+  --env-file /opt/provenance/infrastructure/docker/.env.ec2 \
+  restart api agent-query
+
+# 4. Verify
+curl -s http://localhost:3001/api/v1/health | jq .
+curl -s http://localhost:3002/health | jq .
+```
+
+**Important:** Never reuse an MCP API key from git history. The key `provenance-mcp-dev-key-2026` was committed in early development and must not be reused in any environment.
+
+### PostgreSQL / Neo4j Password Rotation
+
+These passwords are shared across multiple services and require a full stack restart.
+
+```bash
+# 1. Generate new password
+NEW_PW=$(openssl rand -base64 24)
+
+# 2. Update .env.ec2
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${NEW_PW}/" /opt/provenance/infrastructure/docker/.env.ec2
+sed -i "s/^NEO4J_PASSWORD=.*/NEO4J_PASSWORD=${NEW_PW}/" /opt/provenance/infrastructure/docker/.env.ec2
+
+# 3. Update the running database password BEFORE restarting
+docker exec provenance-ec2-postgres psql -U provenance -c "ALTER USER provenance PASSWORD '${NEW_PW}';"
+
+# 4. Restart all services
+sudo docker compose -f /opt/provenance/infrastructure/docker/docker-compose.ec2-dev.yml \
+  --env-file /opt/provenance/infrastructure/docker/.env.ec2 \
+  down && \
+sudo docker compose -f /opt/provenance/infrastructure/docker/docker-compose.ec2-dev.yml \
+  --env-file /opt/provenance/infrastructure/docker/.env.ec2 \
+  up -d
+
+# 5. Log the rotation
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] PostgreSQL and Neo4j passwords rotated" >> /opt/provenance/backups/key-rotation.log
+```
