@@ -33,6 +33,8 @@ volumes:
   neo4j_plugins:
   redpanda_data:
   opensearch_data:
+  caddy_data:
+  caddy_config:
 
 services:
 
@@ -561,3 +563,30 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Caddy — reverse proxy with automatic HTTPS (Let's Encrypt)
+  # Terminates TLS for dev.provenancelogic.com and routes to backends.
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: provenance-ec2-caddy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - provenance
+    depends_on:
+      - api
+      - web
+      - agent-query

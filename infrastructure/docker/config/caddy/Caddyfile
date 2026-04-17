@@ -1,0 +1,24 @@
+dev.provenancelogic.com {
+	# Caddy automatically obtains and renews TLS certificates from Let's Encrypt
+	# and redirects HTTP → HTTPS by default.
+
+	# API control plane — preserves /api/* path (NestJS serves routes under /api/v1/*)
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	# MCP / agent query layer — preserves /mcp/* path
+	handle /mcp/* {
+		reverse_proxy agent-query:3002
+	}
+
+	# Keycloak OIDC — preserves /auth/* path (Keycloak realm paths live under /auth/ or /realms/)
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+
+	# React frontend (default)
+	handle {
+		reverse_proxy web:3000
+	}
+}
