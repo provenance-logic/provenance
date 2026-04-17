@@ -286,6 +286,8 @@ AI agents in Provenance are first-class principals with their own identity model
 
 Provenance is Apache 2.0 licensed and welcomes contributions. Before contributing, please read:
 
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines and development setup
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) — community standards
 - [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) — understand the system before contributing
 
 High-value contributions at this stage:
@@ -311,7 +313,7 @@ Provenance extends the framework in one significant direction: **AI agents as fi
 
 ## License
 
-Provenance is licensed under the Apache License 2.0.
+Provenance is licensed under the [Apache License 2.0](./LICENSE).
 
 ---
 
