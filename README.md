@@ -99,6 +99,8 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active.
 
+**Live dev environment:** [https://dev.provenancelogic.com](https://dev.provenancelogic.com) — public-facing development deployment of the current `main` branch, served via Caddy with automatic HTTPS.
+
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | ✅ Complete |
@@ -238,6 +240,8 @@ provenance/
    - API: `http://localhost:3001`
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
+
+   Or try the live dev deployment: [https://dev.provenancelogic.com](https://dev.provenancelogic.com).
 
 ### EC2 Deployment
 

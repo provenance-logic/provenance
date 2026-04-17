@@ -199,10 +199,20 @@ Connectors that implement discovery mode perform two types of crawling:
 | 2 | Governance engine, OPA integration, marketplace, access control | End-to-end data mesh workflow — publish, discover, request access | ✅ Complete |
 | 3 | Lineage graph, emission API, trust score, observability dashboard, connector discovery | Trust infrastructure live — lineage, SLOs, trust score, auto-discovery | ✅ Complete |
 | 4 | MCP server, federated query layer, agent identity, semantic search, trust classification, audit log query API | Data 3.0 milestone — agents as first-class participants (9 MCP tools, SSE port 3002) | ✅ Complete |
-| 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. JWT agent auth complete (ADR-002). | 🔲 Active |
+| 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. Workstreams 5.1 (stability), 5.3 (JWT agent auth, ADR-002), 5.4 (data product completeness P1) complete; 5.2 (security essentials) partially complete — security group hardened, MCP API key rotated, Caddy reverse proxy live at https://dev.provenancelogic.com (Keycloak domain wiring pending). | 🔄 Active |
 | 6 | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | Production Scale — triggered by enterprise customers or funding, not a calendar date | 🔲 When Funded |
 
-**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 JWT agent authentication (ADR-002) complete as of April 16, 2026.
+**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 progress as of April 17, 2026:
+
+- ✅ **5.1 — Stability and Reliability** complete
+- 🔄 **5.2 — Security Essentials** partially complete: security group audit and tightening done; MCP API key rotated; Caddy reverse proxy installed with valid Let's Encrypt certificate live at https://dev.provenancelogic.com. Keycloak realm/client redirect URIs and web origins for the new domain pending next session.
+- ✅ **5.3 — JWT Agent Authentication** (ADR-002) complete as of April 16, 2026
+- ✅ **5.4 — Data Product Completeness P1** complete
+- ✅ Open source foundations landed this session: LICENSE (Apache 2.0), CONTRIBUTING.md, CODE_OF_CONDUCT.md, README.md rewritten to reflect actual platform state
+- ✅ Pre-existing test failures fixed
+- ✅ Infrastructure Readiness non-functional requirements (NF-IR.1–NF-IR.8) added to PRD — define the thresholds at which Phase 6 migration is triggered
+
+Live development environment: https://dev.provenancelogic.com
 
 ---
 

@@ -1097,7 +1097,7 @@ Phase 5 is redefined as "Open Source Ready." The goal is to make the platform re
 
 ---
 
-### 5.1 — Stability and Reliability
+### 5.1 — Stability and Reliability ✅ Complete (April 17, 2026)
 
 - Automated daily backups for PostgreSQL and Neo4j with documented and tested restore procedure
 - Docker restart policies ensuring all services auto-recover on failure without manual intervention
@@ -1105,13 +1105,13 @@ Phase 5 is redefined as "Open Source Ready." The goal is to make the platform re
 - Operational runbook documenting recovery procedures for common failure scenarios
 - Log rotation configured to prevent disk exhaustion
 
-### 5.2 — Security Essentials
+### 5.2 — Security Essentials 🔄 Partially Complete (April 17, 2026)
 
-- HTTPS enforced on all external endpoints — no unencrypted traffic
-- Security group audit — all EC2 security groups reviewed and tightened; no ports open that are not required
-- Credentials rotation procedure documented and executed — all secrets rotated, rotation schedule established
-- Environment variable audit — verified no secrets in code, logs, or version control
-- SSH key management — reviewed, documented, unnecessary access revoked
+- 🔄 HTTPS enforced on all external endpoints — Caddy reverse proxy installed on the EC2 dev host with a valid Let's Encrypt certificate live at https://dev.provenancelogic.com. Keycloak realm/client redirect URIs, web origins, and `VITE_KEYCLOAK_URL` / `VITE_API_BASE_URL` wiring for the new domain are pending the next session.
+- ✅ Security group audit — all EC2 security groups reviewed and tightened; no ports open that are not required
+- 🔄 Credentials rotation — MCP API key rotated this session; full rotation procedure and schedule for remaining secrets pending
+- ☐ Environment variable audit — verified no secrets in code, logs, or version control
+- ☐ SSH key management — reviewed, documented, unnecessary access revoked
 
 ### 5.3 — JWT Agent Authentication ✅ Complete (April 16, 2026)
 

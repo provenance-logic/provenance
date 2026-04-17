@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    allowedHosts: ['dev.provenancelogic.com'],
     proxy: {
       '/api': {
         target: 'http://api:3001',
