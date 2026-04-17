@@ -97,15 +97,16 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 ## Project Status
 
-Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is in progress with JWT agent authentication delivered.
+Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | Complete |
-| **Phase 2 — Governance & Marketplace** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | Complete |
-| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | Complete and verified |
-| **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | Complete |
-| **Phase 5 — Open Source Ready** | JWT agent auth (ADR-002), stability, security essentials, data product completeness, developer experience | Active — JWT auth complete |
+| **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | ✅ Complete |
+| **Phase 2 — Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
+| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
+| **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
+| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, developer experience | 🔄 Active |
+| **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
 
 ### Verification Status (Phase 3)
 
