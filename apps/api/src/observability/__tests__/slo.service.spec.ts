@@ -5,6 +5,7 @@ import { SloService } from '../slo.service.js';
 import { SloDeclarationEntity } from '../entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from '../entities/slo-evaluation.entity.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
+import { TrustScoreService } from '../../trust-score/trust-score.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -89,6 +90,7 @@ describe('SloService', () => {
         { provide: getRepositoryToken(SloDeclarationEntity), useValue: declRepo },
         { provide: getRepositoryToken(SloEvaluationEntity), useValue: evalRepo },
         { provide: getRepositoryToken(DataProductEntity), useValue: productRepo },
+        { provide: TrustScoreService, useValue: { recompute: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

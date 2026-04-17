@@ -13,6 +13,7 @@ import { DomainEntity } from '../../organizations/entities/domain.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import { OpaClient } from '../opa/opa-client.js';
 import { RegoCompiler } from '../compilation/rego-compiler.js';
+import { TrustScoreService } from '../../trust-score/trust-score.service.js';
 import type { DataProduct, RequestContext } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ describe('GovernanceService', () => {
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockRepo },
         { provide: OpaClient, useFactory: mockOpaClient },
         RegoCompiler,
+        { provide: TrustScoreService, useValue: { recompute: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

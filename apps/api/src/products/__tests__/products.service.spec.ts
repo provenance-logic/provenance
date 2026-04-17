@@ -13,6 +13,7 @@ import { LifecycleEventEntity } from '../entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
+import { SearchIndexingService } from '../../search/search-indexing.service.js';
 import type { DataClassification } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -147,6 +148,7 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
+        { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -265,7 +267,7 @@ describe('ProductsService', () => {
     });
 
     it('throws ConflictException when product is not in draft status', async () => {
-      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'published', ports: [] }));
+      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'deprecated', ports: [] }));
 
       await expect(
         service.updateProduct('org-1', 'domain-1', 'product-1', { name: 'X' }),
