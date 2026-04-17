@@ -165,14 +165,20 @@ provenance/
 │   │       ├── lineage/          # Neo4j lineage graph service
 │   │       ├── observability/    # SLOs, trust score computation
 │   │       ├── access/           # Access grants and requests
-│   │       └── marketplace/      # Discovery and search
+│   │       ├── agents/           # Agent identity and trust classification
+│   │       ├── search/           # OpenSearch integration
+│   │       └── trust-score/      # Trust score computation engine
+│   ├── agent-query/          # MCP server and agent query layer
+│   ├── embedding/            # Sentence-transformer embedding service
 │   └── web/                  # React frontend
 │       └── src/
 │           └── features/
 │               ├── governance/       # Policy Studio, Command Center, Compliance Monitor
 │               ├── publishing/       # Product authoring, domain dashboard
 │               ├── discovery/        # Marketplace, product detail
-│               └── lineage/          # Lineage Explorer (Cytoscape.js)
+│               ├── lineage/          # Lineage Explorer (Cytoscape.js)
+│               ├── observability/    # SLO dashboard and evaluation history
+│               └── trust-score/      # Trust score panel and breakdown
 ├── packages/
 │   ├── types/                # Shared TypeScript types
 │   ├── openapi/              # OpenAPI specifications
@@ -182,8 +188,7 @@ provenance/
 │   └── terraform/            # AWS EC2 provisioning
 ├── documents/
 │   ├── prd/                  # Product Requirements Document
-│   ├── architecture/         # Architecture document and ADRs
-│   └── api/                  # API reference (from OpenAPI specs)
+│   └── architecture/         # Architecture document and ADRs
 ├── CLAUDE.md
 └── README.md
 ```
@@ -269,10 +274,10 @@ AI agents in Provenance are first-class principals with their own identity model
 
 | Document | Description |
 |---|---|
-| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.0.md) | Complete requirements across all seven platform domains |
-| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.0.md) | MVP and production architecture, technology decisions, build sequence |
+| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.3.md) | Complete requirements across all seven platform domains |
+| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) | MVP and production architecture, technology decisions, build sequence |
 | [Architecture Decision Records](./documents/architecture/adr/) | Individual decision records for significant technology choices |
-| [API Reference](./documents/api/) | OpenAPI specifications for all platform APIs |
+| [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |
 | [TypeScript Lineage SDK](./packages/sdk-ts/) | TypeScript SDK for pipeline lineage emission |
 
 ---
@@ -281,9 +286,7 @@ AI agents in Provenance are first-class principals with their own identity model
 
 Provenance is Apache 2.0 licensed and welcomes contributions. Before contributing, please read:
 
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines and development setup
-- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) — community standards
-- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.0.md) — understand the system before contributing
+- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) — understand the system before contributing
 
 High-value contributions at this stage:
 - Additional connector implementations
@@ -308,7 +311,7 @@ Provenance extends the framework in one significant direction: **AI agents as fi
 
 ## License
 
-Provenance is licensed under the [Apache License 2.0](./LICENSE).
+Provenance is licensed under the Apache License 2.0.
 
 ---
 

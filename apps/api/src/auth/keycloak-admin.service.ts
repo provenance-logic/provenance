@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { getConfig } from '../config.js';
 
 export interface AgentClientCredentials {
@@ -8,7 +8,6 @@ export interface AgentClientCredentials {
 
 @Injectable()
 export class KeycloakAdminService {
-  private readonly logger = new Logger(KeycloakAdminService.name);
   private readonly baseUrl: string;
   private readonly realm: string;
   private readonly adminClientId: string;

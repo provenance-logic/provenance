@@ -6,13 +6,14 @@ import { AgentsService } from './agents.service.js';
 import { AgentIdentityEntity } from './entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from './entities/agent-trust-classification.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
 
 export { AgentsService };
 
 @Module({
   imports: [TypeOrmModule.forFeature([AgentIdentityEntity, AgentTrustClassificationEntity, PrincipalEntity])],
   controllers: [AgentsController, AuditController],
-  providers: [AgentsService],
+  providers: [AgentsService, KeycloakAdminService],
   exports: [AgentsService],
 })
 export class AgentsModule {}

@@ -490,6 +490,9 @@ services:
       DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
       NODE_ENV: development
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: provenance
+      DEPRECATION_WARNING_ONLY: "true"
     volumes:
       - ../../apps/agent-query:/app/apps/agent-query:cached
       - /app/apps/agent-query/node_modules
