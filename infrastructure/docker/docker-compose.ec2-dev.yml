@@ -43,6 +43,11 @@ services:
     image: postgres:16-alpine
     container_name: provenance-ec2-postgres
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_DB: provenance
       POSTGRES_USER: provenance
@@ -130,6 +135,11 @@ services:
     image: quay.io/keycloak/keycloak:24.0.3
     container_name: provenance-ec2-keycloak
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: start-dev --import-realm --http-enabled=true --hostname-strict=false --hostname-strict-https=false
     environment:
       KC_DB: postgres
@@ -195,6 +205,11 @@ services:
     image: openpolicyagent/opa:0.63.0
     container_name: provenance-ec2-opa
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command:
       - run
       - --server
@@ -223,6 +238,11 @@ services:
     image: neo4j:5.18-community
     container_name: provenance-ec2-neo4j
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-provenance_dev_password}
       NEO4J_PLUGINS: '["apoc"]'
@@ -254,6 +274,11 @@ services:
     image: opensearchproject/opensearch:2.13.0
     container_name: provenance-ec2-opensearch
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       cluster.name: provenance-search
       node.name: provenance-ec2-opensearch-node1
@@ -289,6 +314,11 @@ services:
     image: redpandadata/redpanda:v24.1.1
     container_name: provenance-ec2-redpanda
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command:
       - redpanda
       - start
@@ -354,6 +384,11 @@ services:
       target: development
     container_name: provenance-ec2-api
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       NODE_ENV: development
       PORT: 3001
@@ -430,6 +465,11 @@ services:
       target: development
     container_name: provenance-ec2-web
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://54.83.160.49:3001/api/v1}
       VITE_AGENT_BASE_URL: ${VITE_AGENT_BASE_URL:-http://54.83.160.49:3001/agent/v1}
@@ -460,6 +500,11 @@ services:
       dockerfile: Dockerfile
     container_name: provenance-ec2-embedding
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
     ports:
@@ -483,6 +528,11 @@ services:
       target: development
     container_name: provenance-ec2-agent-query
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PORT: 3002
       CONTROL_PLANE_URL: http://api:3001
