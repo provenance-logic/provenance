@@ -12,6 +12,12 @@ import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
 import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { DomainEntity } from '../organizations/entities/domain.entity.js';
+import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
+import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
+import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.entity.js';
 import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
@@ -29,6 +35,11 @@ import type {
   ProductVersionList,
   PublishProductRequest,
   ProductPublishedEvent,
+  ProductOwner,
+  ProductDomainTeam,
+  ProductFreshness,
+  ProductAccessStatus,
+  ProductColumnSchema,
   RequestContext,
 } from '@provenance/types';
 
@@ -45,6 +56,18 @@ export class ProductsService {
     private readonly lifecycleEventRepo: Repository<LifecycleEventEntity>,
     @InjectRepository(PrincipalEntity)
     private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectRepository(DomainEntity)
+    private readonly domainRepo: Repository<DomainEntity>,
+    @InjectRepository(SloDeclarationEntity)
+    private readonly sloDeclarationRepo: Repository<SloDeclarationEntity>,
+    @InjectRepository(SloEvaluationEntity)
+    private readonly sloEvaluationRepo: Repository<SloEvaluationEntity>,
+    @InjectRepository(AccessGrantEntity)
+    private readonly accessGrantRepo: Repository<AccessGrantEntity>,
+    @InjectRepository(AccessRequestEntity)
+    private readonly accessRequestRepo: Repository<AccessRequestEntity>,
+    @InjectRepository(SchemaSnapshotEntity)
+    private readonly schemaSnapshotRepo: Repository<SchemaSnapshotEntity>,
     private readonly governanceService: GovernanceService,
     private readonly kafkaProducerService: KafkaProducerService,
     private readonly searchIndexingService: SearchIndexingService,
@@ -117,13 +140,22 @@ export class ProductsService {
     return this.toDataProduct({ ...saved, ports: [] });
   }
 
-  async getProduct(orgId: string, domainId: string, productId: string): Promise<DataProduct> {
+  async getProduct(orgId: string, domainId: string, productId: string, ctx?: RequestContext): Promise<DataProduct> {
     const product = await this.productRepo.findOne({
       where: { id: productId, orgId, domainId },
       relations: ['ports'],
     });
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
-    return this.toDataProduct(product);
+
+    const [owner, domainTeam, freshness, accessStatus, columnSchema] = await Promise.all([
+      this.resolveOwner(product.ownerPrincipalId),
+      this.resolveDomainTeam(domainId),
+      this.resolveFreshness(orgId, productId),
+      ctx ? this.resolveAccessStatus(orgId, productId, ctx) : Promise.resolve(null),
+      this.resolveColumnSchema(),
+    ]);
+
+    return { ...this.toDataProduct(product), owner, domainTeam, freshness, accessStatus, columnSchema };
   }
 
   async updateProduct(
@@ -448,6 +480,91 @@ export class ProductsService {
       items: items.map((i) => this.toProductVersion(i)),
       meta: { total, limit, offset },
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enrichment resolvers (5.4 P1) — all return null on missing data, never throw
+  // ---------------------------------------------------------------------------
+
+  private async resolveOwner(ownerPrincipalId: string): Promise<ProductOwner | null> {
+    try {
+      const principal = await this.principalRepo.findOne({ where: { id: ownerPrincipalId } });
+      if (!principal) return null;
+      return { id: principal.id, displayName: principal.displayName, email: principal.email };
+    } catch { return null; }
+  }
+
+  private async resolveDomainTeam(domainId: string): Promise<ProductDomainTeam | null> {
+    try {
+      const domain = await this.domainRepo.findOne({ where: { id: domainId } });
+      if (!domain) return null;
+      const domainOwner = await this.principalRepo.findOne({ where: { id: domain.ownerPrincipalId } });
+      return {
+        id: domain.id,
+        name: domain.name,
+        ownerDisplayName: domainOwner?.displayName ?? null,
+        ownerEmail: domainOwner?.email ?? null,
+      };
+    } catch { return null; }
+  }
+
+  private async resolveFreshness(orgId: string, productId: string): Promise<ProductFreshness | null> {
+    try {
+      const decl = await this.sloDeclarationRepo.findOne({
+        where: { orgId, productId, sloType: 'freshness', active: true },
+        order: { createdAt: 'DESC' },
+      });
+      if (!decl) return null;
+      const evaluation = await this.sloEvaluationRepo.findOne({
+        where: { sloId: decl.id, orgId },
+        order: { evaluatedAt: 'DESC' },
+      });
+      if (!evaluation) return null;
+      return {
+        lastRefreshedAt: null,
+        sloType: decl.sloType,
+        passed: evaluation.passed,
+        measuredValue: evaluation.measuredValue ?? null,
+        evaluatedAt: evaluation.evaluatedAt.toISOString(),
+      };
+    } catch { return null; }
+  }
+
+  private async resolveAccessStatus(orgId: string, productId: string, ctx: RequestContext): Promise<ProductAccessStatus | null> {
+    try {
+      const principalId = ctx.principalId;
+      // Check for active grant
+      const grant = await this.accessGrantRepo.findOne({
+        where: { orgId, productId, granteePrincipalId: principalId },
+        order: { grantedAt: 'DESC' },
+      });
+      if (grant && !grant.revokedAt && (!grant.expiresAt || grant.expiresAt > new Date())) {
+        return {
+          status: 'granted',
+          grantedAt: grant.grantedAt.toISOString(),
+          expiresAt: grant.expiresAt?.toISOString() ?? null,
+        };
+      }
+      // Check for pending request
+      const request = await this.accessRequestRepo.findOne({
+        where: { orgId, productId, requesterPrincipalId: principalId, status: 'pending' },
+      });
+      if (request) return { status: 'pending', grantedAt: null, expiresAt: null };
+      // Check for denied request
+      const denied = await this.accessRequestRepo.findOne({
+        where: { orgId, productId, requesterPrincipalId: principalId, status: 'denied' },
+        order: { resolvedAt: 'DESC' },
+      });
+      if (denied) return { status: 'denied', grantedAt: null, expiresAt: null };
+      return { status: 'not_requested', grantedAt: null, expiresAt: null };
+    } catch { return null; }
+  }
+
+  private async resolveColumnSchema(): Promise<ProductColumnSchema | null> {
+    // No direct product-to-schema_snapshot FK exists yet.
+    // When a linking mechanism is added, this will query schemaSnapshotRepo.
+    void this.schemaSnapshotRepo;
+    return null;
   }
 
   // ---------------------------------------------------------------------------

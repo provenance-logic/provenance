@@ -198,6 +198,111 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updatedAt:
           $ref: "#/components/schemas/Timestamp"
+        owner:
+          $ref: "#/components/schemas/ProductOwner"
+          nullable: true
+          description: Resolved owner principal details. Present on getProduct responses.
+        domainTeam:
+          $ref: "#/components/schemas/ProductDomainTeam"
+          nullable: true
+          description: Domain team context. Present on getProduct responses.
+        freshness:
+          $ref: "#/components/schemas/ProductFreshness"
+          nullable: true
+          description: Most recent freshness SLO evaluation. Null if no freshness SLO is declared.
+        accessStatus:
+          $ref: "#/components/schemas/ProductAccessStatus"
+          nullable: true
+          description: Access status for the requesting principal. Null when no principal context is available.
+        columnSchema:
+          $ref: "#/components/schemas/ProductColumnSchema"
+          nullable: true
+          description: Column-level schema from the most recent connector schema snapshot. Null when no snapshot exists.
+
+    ProductOwner:
+      type: object
+      required: [id]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        displayName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+
+    ProductDomainTeam:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        ownerDisplayName:
+          type: string
+          nullable: true
+        ownerEmail:
+          type: string
+          nullable: true
+
+    ProductFreshness:
+      type: object
+      required: [sloType, passed, evaluatedAt]
+      properties:
+        lastRefreshedAt:
+          $ref: "#/components/schemas/Timestamp"
+          nullable: true
+          description: Timestamp of the last measured refresh, if available from the evaluation.
+        sloType:
+          type: string
+          description: The SLO type (typically 'freshness').
+        passed:
+          type: boolean
+        measuredValue:
+          type: number
+          nullable: true
+        evaluatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    ProductAccessStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [granted, pending, not_requested, denied]
+        grantedAt:
+          $ref: "#/components/schemas/Timestamp"
+          nullable: true
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+          nullable: true
+
+    ProductColumnSchema:
+      type: object
+      required: [columns, columnCount, capturedAt]
+      properties:
+        columns:
+          type: array
+          items:
+            type: object
+            required: [name, type, nullable]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+              nullable:
+                type: boolean
+        columnCount:
+          type: integer
+        rowEstimate:
+          type: integer
+          nullable: true
+        capturedAt:
+          $ref: "#/components/schemas/Timestamp"
 
     CreateDataProductRequest:
       type: object

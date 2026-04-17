@@ -56,6 +56,52 @@ export interface UpdatePortRequest {
 export type PortList = PaginatedList<Port>;
 
 // ---------------------------------------------------------------------------
+// Data Product — enrichment types (workstream 5.4 P1)
+// ---------------------------------------------------------------------------
+
+export interface ProductOwner {
+  id: Uuid;
+  displayName: string | null;
+  email: string | null;
+}
+
+export interface ProductDomainTeam {
+  id: Uuid;
+  name: string;
+  ownerDisplayName: string | null;
+  ownerEmail: string | null;
+}
+
+export interface ProductFreshness {
+  lastRefreshedAt: IsoTimestamp | null;
+  sloType: string;
+  passed: boolean;
+  measuredValue: number | null;
+  evaluatedAt: IsoTimestamp;
+}
+
+export type ProductAccessStatusValue = 'granted' | 'pending' | 'not_requested' | 'denied';
+
+export interface ProductAccessStatus {
+  status: ProductAccessStatusValue;
+  grantedAt: IsoTimestamp | null;
+  expiresAt: IsoTimestamp | null;
+}
+
+export interface ProductColumnSchemaColumn {
+  name: string;
+  type: string;
+  nullable: boolean;
+}
+
+export interface ProductColumnSchema {
+  columns: ProductColumnSchemaColumn[];
+  columnCount: number;
+  rowEstimate: number | null;
+  capturedAt: IsoTimestamp;
+}
+
+// ---------------------------------------------------------------------------
 // Data Product
 // ---------------------------------------------------------------------------
 
@@ -74,6 +120,11 @@ export interface DataProduct {
   ports: Port[];
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
+  owner?: ProductOwner | null;
+  domainTeam?: ProductDomainTeam | null;
+  freshness?: ProductFreshness | null;
+  accessStatus?: ProductAccessStatus | null;
+  columnSchema?: ProductColumnSchema | null;
 }
 
 export interface CreateDataProductRequest {

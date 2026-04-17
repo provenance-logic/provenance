@@ -11,6 +11,12 @@ import { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../entities/product-version.entity.js';
 import { LifecycleEventEntity } from '../entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
+import { DomainEntity } from '../../organizations/entities/domain.entity.js';
+import { SloDeclarationEntity } from '../../observability/entities/slo-declaration.entity.js';
+import { SloEvaluationEntity } from '../../observability/entities/slo-evaluation.entity.js';
+import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../../access/entities/access-request.entity.js';
+import { SchemaSnapshotEntity } from '../../connectors/entities/schema-snapshot.entity.js';
 import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
@@ -129,6 +135,7 @@ const mockPrincipalRepo = () => ({
 
 describe('ProductsService', () => {
   let service: ProductsService;
+  let module: Awaited<ReturnType<typeof Test.createTestingModule.prototype.compile>>;
   let productRepo: ReturnType<typeof mockRepo>;
   let portRepo: ReturnType<typeof mockRepo>;
   let versionRepo: ReturnType<typeof mockRepo>;
@@ -138,7 +145,7 @@ describe('ProductsService', () => {
   let kafkaProducerService: ReturnType<typeof mockKafkaProducerService>;
 
   beforeEach(async () => {
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         ProductsService,
         { provide: getRepositoryToken(DataProductEntity), useFactory: mockRepo },
@@ -149,6 +156,12 @@ describe('ProductsService', () => {
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
         { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined) } },
+        { provide: getRepositoryToken(DomainEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(SloDeclarationEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(SloEvaluationEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(AccessGrantEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(AccessRequestEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(SchemaSnapshotEntity), useFactory: mockRepo },
       ],
     }).compile();
 
@@ -246,6 +259,130 @@ describe('ProductsService', () => {
       await expect(
         service.getProduct('org-1', 'domain-1', 'missing'),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('includes owner with displayName and email', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      const domainRepo = module.get(getRepositoryToken(DomainEntity));
+      domainRepo.findOne.mockResolvedValue(null);
+      const sloRepo = module.get(getRepositoryToken(SloDeclarationEntity));
+      sloRepo.findOne.mockResolvedValue(null);
+      const principalRepoInner = module.get(getRepositoryToken(PrincipalEntity));
+      principalRepoInner.findOne
+        .mockResolvedValueOnce({ id: 'principal-1', displayName: 'Jane Doe', email: 'jane@example.com' });
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.owner).toEqual({
+        id: 'principal-1',
+        displayName: 'Jane Doe',
+        email: 'jane@example.com',
+      });
+    });
+
+    it('includes domainTeam with resolved owner', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      const domainRepo = module.get(getRepositoryToken(DomainEntity));
+      domainRepo.findOne.mockResolvedValue({
+        id: 'domain-1',
+        name: 'Sales',
+        ownerPrincipalId: 'domain-owner-1',
+      });
+      const sloRepo = module.get(getRepositoryToken(SloDeclarationEntity));
+      sloRepo.findOne.mockResolvedValue(null);
+      const principalRepoInner = module.get(getRepositoryToken(PrincipalEntity));
+      // resolveOwner and resolveDomainTeam run in parallel — both call principalRepo.findOne.
+      // Since they race, use mockResolvedValue for the domain owner (second call) and
+      // mockResolvedValueOnce for the product owner (first call).
+      principalRepoInner.findOne
+        .mockResolvedValueOnce({ id: 'principal-1', displayName: 'Jane', email: 'jane@ex.com' })
+        .mockResolvedValue({ id: 'domain-owner-1', displayName: 'Bob', email: 'bob@ex.com' });
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.domainTeam).toEqual({
+        id: 'domain-1',
+        name: 'Sales',
+        ownerDisplayName: 'Bob',
+        ownerEmail: 'bob@ex.com',
+      });
+    });
+
+    it('includes freshness from latest SLO evaluation', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      module.get(getRepositoryToken(DomainEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(PrincipalEntity)).findOne.mockResolvedValue(null);
+      const sloRepo = module.get(getRepositoryToken(SloDeclarationEntity));
+      sloRepo.findOne.mockResolvedValue({
+        id: 'slo-1', sloType: 'freshness', productId: 'product-1',
+      });
+      const evalRepo = module.get(getRepositoryToken(SloEvaluationEntity));
+      evalRepo.findOne.mockResolvedValue({
+        sloId: 'slo-1', passed: true, measuredValue: 3.5, evaluatedAt: now,
+      });
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.freshness).toEqual({
+        lastRefreshedAt: null, sloType: 'freshness',
+        passed: true, measuredValue: 3.5, evaluatedAt: now.toISOString(),
+      });
+    });
+
+    it('returns freshness as null when no freshness SLO exists', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      module.get(getRepositoryToken(DomainEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(PrincipalEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(SloDeclarationEntity)).findOne.mockResolvedValue(null);
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.freshness).toBeNull();
+    });
+
+    it('includes accessStatus when RequestContext is provided', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      module.get(getRepositoryToken(DomainEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(PrincipalEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(SloDeclarationEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(AccessGrantEntity)).findOne.mockResolvedValue({
+        grantedAt: now, expiresAt: null, revokedAt: null,
+      });
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1', mockCtx);
+
+      expect(result.accessStatus).toEqual({
+        status: 'granted', grantedAt: now.toISOString(), expiresAt: null,
+      });
+    });
+
+    it('returns accessStatus as null when no RequestContext is provided', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      module.get(getRepositoryToken(DomainEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(PrincipalEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(SloDeclarationEntity)).findOne.mockResolvedValue(null);
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.accessStatus).toBeNull();
+    });
+
+    it('returns columnSchema as null (no direct product-to-schema link exists)', async () => {
+      const entity = makeProductEntity({ ports: [] });
+      productRepo.findOne.mockResolvedValue(entity);
+      module.get(getRepositoryToken(DomainEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(PrincipalEntity)).findOne.mockResolvedValue(null);
+      module.get(getRepositoryToken(SloDeclarationEntity)).findOne.mockResolvedValue(null);
+
+      const result = await service.getProduct('org-1', 'domain-1', 'product-1');
+
+      expect(result.columnSchema).toBeNull();
     });
   });
 

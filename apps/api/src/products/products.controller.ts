@@ -66,8 +66,9 @@ export class ProductsController {
     @Param('orgId') orgId: string,
     @Param('domainId') domainId: string,
     @Param('productId') productId: string,
+    @ReqContext() ctx: RequestContext,
   ) {
-    return this.productsService.getProduct(orgId, domainId, productId);
+    return this.productsService.getProduct(orgId, domainId, productId, ctx);
   }
 
   @Patch(':productId')
