@@ -959,6 +959,47 @@ The following are exposed through the `get_product` MCP tool and verified workin
 
 ---
 
+## Infrastructure Readiness
+
+These non-functional requirements define the thresholds at which the Phase 5 (Open Source Ready) EC2 infrastructure is no longer sufficient and Phase 6 (Production Scale) planning or migration must be initiated. They exist to prevent the platform from degrading silently and to ensure that the transition to managed infrastructure is proactive rather than reactive.
+
+**NF-IR.1 — Disk Utilization Threshold**
+When primary EC2 EBS volume utilization exceeds 75% sustained over a 7-day period, Phase 6 planning shall be initiated. When utilization exceeds 90%, Phase 6 migration shall be treated as urgent.
+*Rationale:* PostgreSQL, Neo4j, and audit log growth are the primary drivers. At 75% there is still runway to plan and execute migration without emergency. At 90% the risk of service disruption from disk exhaustion is real.
+
+**NF-IR.2 — Memory Pressure Threshold**
+When average memory utilization on the primary EC2 instance exceeds 80% sustained over a 72-hour period, Phase 6 planning shall be initiated. When memory utilization causes any service to restart due to OOM conditions more than twice in a 30-day period, Phase 6 migration shall be treated as urgent.
+*Rationale:* All platform services share the same memory pool on the primary instance. Sustained high memory utilization causes unpredictable service degradation across all tenants simultaneously.
+
+**NF-IR.3 — API Response Time Degradation**
+When p95 API response time for standard control plane operations (product definition validation, marketplace search, trust score retrieval) exceeds 3x the baseline established during Phase 5 commissioning, sustained over a 48-hour period, Phase 6 planning shall be initiated.
+*Rationale:* Response time degradation under multi-tenant load is the most user-visible signal that the shared infrastructure is insufficient. 3x baseline provides a meaningful buffer before user experience is materially affected.
+*Dependency:* Baseline measurement requires Phase 5 workstream 5.1 (Stability and Reliability) monitoring to be in place first.
+
+**NF-IR.4 — MCP Query Degradation**
+When p95 MCP tool response time for single-product queries exceeds 5 seconds (against the 2 second target in NF6.1) sustained over a 24-hour period, Phase 6 planning shall be initiated.
+*Rationale:* Agent query performance is the most sensitive capability — agents operating at machine speed are more affected by latency than human users. Degradation here is a direct signal that the shared compute is insufficient for the agent workload.
+
+**NF-IR.5 — Recovery Time Objective**
+The platform shall be recoverable from a complete primary EC2 instance failure within 4 hours using the backup and restore procedures established in Phase 5. If actual recovery from any incident exceeds 4 hours, Phase 6 migration shall be treated as urgent.
+*Rationale:* A 4-hour RTO is acceptable for an open source pre-revenue platform with design partners but is not acceptable for paying customers with SLAs. Exceeding this threshold signals that the business has outgrown the EC2 architecture.
+*Dependency:* Recovery procedures depend on Phase 5 workstream 5.1 (Stability and Reliability) backup infrastructure being in place first.
+
+**NF-IR.6 — Tenant Scale Threshold**
+When the platform reaches 10 active organizations or 5,000 published data products, Phase 6 planning shall be initiated regardless of whether performance thresholds have been breached.
+*Rationale:* Multi-tenant load at this scale introduces resource contention patterns that are difficult to predict and debug on shared infrastructure. Planning should begin before problems emerge.
+
+**NF-IR.7 — Backup Restore Validation**
+Phase 5 backup procedures shall be validated by a successful test restore at least once per quarter. If a test restore fails or exceeds 2 hours, Phase 6 planning shall be initiated.
+*Rationale:* A backup that has never been successfully restored is not a backup. Failure to restore within 2 hours signals that the recovery process is too complex for the current setup.
+*Dependency:* Backup procedures depend on Phase 5 workstream 5.1 (Stability and Reliability) being complete first.
+
+**NF-IR.8 — Concurrent Session Threshold**
+When the platform sustains more than 50 concurrent MCP sessions over a 24-hour period, performance shall be benchmarked against NF6.1 targets. If targets are not met at this concurrency level, Phase 6 planning shall be initiated.
+*Rationale:* 50 concurrent MCP sessions is a reasonable proxy for meaningful multi-tenant agent workload that the EC2 setup may not handle without degradation.
+
+---
+
 ## Appendix A: Persona-to-Capability Mapping
 
 | Capability Area | Domain Teams | Consumers | Governance Teams | AI Agents | Platform Admins |
