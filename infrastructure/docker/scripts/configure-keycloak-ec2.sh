@@ -167,32 +167,71 @@ if run_kcadm get realms/provenance &>/dev/null; then
   fi
 
   # -------------------------------------------------------------------------
-  # Grant realm-management service account roles to the provenance-admin
-  # confidential client. These are required by KeycloakAdminService to:
-  #   - Create Keycloak users on invitation acceptance (manage-users)
-  #   - Look up users by email (query-users)
-  #   - Create dedicated Keycloak clients per agent per ADR-002 (manage-clients)
-  #   - Look up agent clients by clientId (query-clients)
-  # Idempotent: kcadm add-roles is a no-op when the role is already bound.
+  # provenance-admin — confidential service-account client used by the NestJS
+  # API for Keycloak management operations. Required for:
+  #   - Creating Keycloak users on invitation acceptance (manage-users)
+  #   - Looking up users by email (query-users)
+  #   - Creating dedicated Keycloak clients per agent per ADR-002 (manage-clients)
+  #   - Looking up agent clients by clientId (query-clients)
+  #
+  # The realm JSON declares this client for fresh imports, but existing
+  # keycloak_data volumes (provisioned before the client was added) will not
+  # have it. This block creates it if missing, then ensures the secret matches
+  # the KEYCLOAK_ADMIN_CLIENT_SECRET env var and grants realm-management roles
+  # to its service account. All operations are idempotent.
   # -------------------------------------------------------------------------
+  KC_ADMIN_CLIENT_SECRET="${KEYCLOAK_ADMIN_CLIENT_SECRET:-provenance-admin-dev-secret}"
+
   ADMIN_CLIENT_ID="$(run_kcadm get clients -r provenance -q clientId=provenance-admin --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+  if [ -z "$ADMIN_CLIENT_ID" ]; then
+    echo "Creating provenance-admin confidential client..."
+    CREATE_OUTPUT="$(run_kcadm create clients -r provenance \
+      -s 'clientId=provenance-admin' \
+      -s 'name=Provenance Admin' \
+      -s 'description=Confidential service account used by the NestJS API for Keycloak management operations — creating users on invite acceptance, provisioning agent clients (ADR-002), triggering email verification flows.' \
+      -s 'enabled=true' \
+      -s 'protocol=openid-connect' \
+      -s 'publicClient=false' \
+      -s 'bearerOnly=false' \
+      -s 'standardFlowEnabled=false' \
+      -s 'implicitFlowEnabled=false' \
+      -s 'directAccessGrantsEnabled=false' \
+      -s 'serviceAccountsEnabled=true' \
+      -s "secret=$KC_ADMIN_CLIENT_SECRET" \
+      -i 2>&1 | tr -d '\r')"
+    ADMIN_CLIENT_ID="$(echo "$CREATE_OUTPUT" | tail -n 1)"
+    echo "  provenance-admin: created (id=$ADMIN_CLIENT_ID)"
+  else
+    echo "  provenance-admin: already exists (id=$ADMIN_CLIENT_ID) — ensuring flags and secret"
+    # Ensure required flags are set on a pre-existing client, in case it was
+    # originally imported with different values.
+    run_kcadm update "clients/$ADMIN_CLIENT_ID" -r provenance \
+      -s 'publicClient=false' \
+      -s 'bearerOnly=false' \
+      -s 'standardFlowEnabled=false' \
+      -s 'implicitFlowEnabled=false' \
+      -s 'directAccessGrantsEnabled=false' \
+      -s 'serviceAccountsEnabled=true' \
+      -s "secret=$KC_ADMIN_CLIENT_SECRET" >/dev/null
+  fi
+
   if [ -n "$ADMIN_CLIENT_ID" ]; then
-    ADMIN_SA_USER_ID="$(run_kcadm get "clients/$ADMIN_CLIENT_ID/service-account-user" -r provenance --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
-    REALM_MGMT_CLIENT_ID="$(run_kcadm get clients -r provenance -q clientId=realm-management --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
-    if [ -n "$ADMIN_SA_USER_ID" ] && [ -n "$REALM_MGMT_CLIENT_ID" ]; then
-      echo "Granting realm-management roles to provenance-admin service account..."
-      for role in manage-users query-users manage-clients query-clients view-users view-realm; do
-        run_kcadm add-roles -r provenance \
+    echo "Granting realm-management roles to provenance-admin service account..."
+    # add-roles looks the service account up by its conventional username
+    # (service-account-<clientId>). realm-management is the built-in Keycloak
+    # client that owns the admin privileges.
+    for role in manage-users query-users manage-clients query-clients view-users view-realm; do
+      if run_kcadm add-roles -r provenance \
           --uusername "service-account-provenance-admin" \
           --cclientid realm-management \
-          --rolename "$role" 2>/dev/null || echo "    role '$role' already granted (or not available) — skipping"
-      done
-      echo "  provenance-admin: realm-management roles granted"
-    else
-      echo "  provenance-admin service account or realm-management client not found — skipping role grant"
-    fi
+          --rolename "$role" >/dev/null 2>&1; then
+        echo "    role '$role' granted"
+      else
+        echo "    role '$role' already granted (or not available) — skipping"
+      fi
+    done
   else
-    echo "  provenance-admin client not found — skipping service account role grant"
+    echo "  ERROR: failed to resolve provenance-admin client id after create/update — manual intervention required" >&2
   fi
 
   # -------------------------------------------------------------------------
