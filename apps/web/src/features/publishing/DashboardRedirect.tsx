@@ -8,7 +8,7 @@ interface DomainWithCount extends Domain {
   productCount: number;
 }
 
-type PageState = 'loading' | 'no-org' | 'no-domain' | 'ready' | 'error';
+type PageState = 'loading' | 'no-domain' | 'ready' | 'error';
 
 export function DashboardRedirect() {
   const navigate = useNavigate();
@@ -26,7 +26,9 @@ export function DashboardRedirect() {
         if (cancelled) return;
 
         if (orgs.items.length === 0) {
-          setState('no-org');
+          // F10.2 — a newly registered user with no organization lands directly
+          // on the self-serve org creation flow, no intermediate welcome card.
+          navigate('/onboarding/org', { replace: true });
           return;
         }
 
@@ -83,27 +85,6 @@ export function DashboardRedirect() {
       <Shell>
         <div className="rounded-md bg-red-50 p-4 border border-red-200">
           <p className="text-sm text-red-700">{error}</p>
-        </div>
-      </Shell>
-    );
-  }
-
-  if (state === 'no-org') {
-    return (
-      <Shell>
-        <div className="text-center py-16">
-          <div className="text-4xl mb-4">🏢</div>
-          <h2 className="text-lg font-semibold text-slate-900">Welcome to Provenance</h2>
-          <p className="mt-2 text-sm text-slate-500 max-w-md mx-auto">
-            You don't belong to an organization yet. Create one to start defining
-            domains and data products.
-          </p>
-          <button
-            onClick={() => navigate('/onboarding/org')}
-            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
-          >
-            Create Organization
-          </button>
         </div>
       </Shell>
     );
