@@ -63,7 +63,7 @@ export function DashboardRedirect() {
       }
     }
 
-    resolve();
+    void resolve();
     return () => { cancelled = true; };
   }, [navigate]);
 

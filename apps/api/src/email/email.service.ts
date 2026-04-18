@@ -60,17 +60,23 @@ export class EmailService implements OnModuleInit {
       return { messageId: `noop-${Date.now()}`, accepted: true };
     }
 
-    const result = await this.transporter.sendMail({
+    const result = (await this.transporter.sendMail({
       from: `"${config.EMAIL_FROM_NAME}" <${config.EMAIL_FROM_ADDRESS}>`,
       to: message.to,
       subject: message.subject,
       html: message.html,
       text: message.text,
+    })) as { messageId: string; accepted?: (string | { address: string })[] };
+
+    const acceptedList = result.accepted ?? [];
+    const accepted = acceptedList.some((entry) => {
+      const addr = typeof entry === 'string' ? entry : entry.address;
+      return addr.toLowerCase() === message.to.toLowerCase();
     });
 
     return {
       messageId: result.messageId,
-      accepted: (result.accepted as string[] | undefined)?.includes(message.to) ?? true,
+      accepted: acceptedList.length === 0 ? true : accepted,
     };
   }
 

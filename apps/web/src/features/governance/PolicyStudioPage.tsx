@@ -5,7 +5,6 @@ import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import type {
   PolicyDomain,
   PolicyImpactPreview,
-  EffectivePolicy,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -841,7 +840,7 @@ export function PolicyStudioPage() {
         const nextSaved = {} as Record<PolicyDomain, Record<string, unknown>>;
 
         for (const d of POLICY_DOMAINS) {
-          const existing = (list.items as EffectivePolicy[]).find(
+          const existing = list.items.find(
             (ep) => ep.policyDomain === d.key,
           );
           const rules = existing

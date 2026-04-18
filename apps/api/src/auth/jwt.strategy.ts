@@ -87,7 +87,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         const assignments = await this.roleAssignmentRepo.find({
           where: { principalId: resolvedPrincipalId, orgId },
         });
-        roles = assignments.map((a) => a.role as RoleType);
+        roles = assignments.map((a) => a.role);
       } catch {
         // If role lookup fails, proceed with empty roles
       }

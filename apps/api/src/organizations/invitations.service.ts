@@ -203,18 +203,20 @@ export class InvitationsService {
 
     const config = getConfig();
 
-    // Find or create the Keycloak user.
-    let kcUser = await this.keycloakAdmin.findUserByEmail(invitation.email);
-    if (!kcUser) {
-      const kcUserId = await this.keycloakAdmin.createUser({
+    // Find or create the Keycloak user. Resolved before the transaction so
+    // the id is available without non-null assertions inside it.
+    const existingKcUser = await this.keycloakAdmin.findUserByEmail(invitation.email);
+    const kcUser = existingKcUser ?? {
+      id: await this.keycloakAdmin.createUser({
         email: invitation.email,
         ...(dto.firstName !== undefined && { firstName: dto.firstName }),
         ...(dto.lastName !== undefined && { lastName: dto.lastName }),
         emailVerified: true,
         requiredActions: ['UPDATE_PASSWORD'],
-      });
-      kcUser = { id: kcUserId, email: invitation.email, emailVerified: true };
-    }
+      }),
+      email: invitation.email,
+      emailVerified: true,
+    };
 
     // Find or create the identity.principals row in a transaction that sets
     // org context first (RLS requires it for inserts into the identity schema).
@@ -223,13 +225,13 @@ export class InvitationsService {
       const principalRepo = mgr.getRepository(PrincipalEntity);
 
       let existing = await principalRepo.findOne({
-        where: { keycloakSubject: kcUser!.id },
+        where: { keycloakSubject: kcUser.id },
       });
       if (!existing) {
         const created = principalRepo.create({
           orgId: invitation.orgId,
           principalType: 'human_user',
-          keycloakSubject: kcUser!.id,
+          keycloakSubject: kcUser.id,
           email: invitation.email,
           displayName: this.composeDisplayName(dto.firstName, dto.lastName, invitation.email),
         });

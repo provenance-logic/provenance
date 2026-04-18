@@ -35,13 +35,13 @@ export function ObservabilityDashboard({ productId, orgId }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    loadData();
+    void loadData();
   }, [loadData]);
 
   const handleSloCreated = () => {
     setShowAddForm(false);
     setLoading(true);
-    loadData();
+    void loadData();
   };
 
   // Loading skeleton
@@ -71,7 +71,7 @@ export function ObservabilityDashboard({ productId, orgId }: Props) {
           {error}
           <button
             type="button"
-            onClick={() => { setLoading(true); loadData(); }}
+            onClick={() => { setLoading(true); void loadData(); }}
             className="ml-3 text-red-800 underline hover:no-underline font-medium"
           >
             Retry

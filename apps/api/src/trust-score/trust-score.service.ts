@@ -333,7 +333,7 @@ export class TrustScoreService {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
 
     // Find products with recent material events
-    const productIds = await this.historyRepo
+    const productIds: Array<{ product_id: string; org_id: string }> = await this.historyRepo
       .query(
         `
         SELECT DISTINCT product_id, org_id FROM (
@@ -352,7 +352,7 @@ export class TrustScoreService {
         WHERE product_id IS NOT NULL
         `,
         [tenMinutesAgo],
-      ) as Array<{ product_id: string; org_id: string }>;
+      );
 
     if (productIds.length > 0) {
       this.logger.log(`Cron recompute: ${productIds.length} products with recent changes`);

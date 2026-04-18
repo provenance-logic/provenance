@@ -39,7 +39,7 @@ export async function acceptInvitationPublic(
     body: JSON.stringify(dto),
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+    const body: unknown = await res.json().catch(() => ({}));
     const message = (body as { message?: string }).message ?? res.statusText;
     const err = new Error(message) as Error & { status: number };
     err.status = res.status;

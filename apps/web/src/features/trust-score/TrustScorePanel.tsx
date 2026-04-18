@@ -37,7 +37,7 @@ export function TrustScorePanel({ productId, orgId }: TrustScorePanelProps) {
 
   useEffect(() => {
     setLoading(true);
-    loadData();
+    void loadData();
   }, [loadData]);
 
   const handleRecompute = async () => {
@@ -83,7 +83,7 @@ export function TrustScorePanel({ productId, orgId }: TrustScorePanelProps) {
           {error}
           <button
             type="button"
-            onClick={() => { setLoading(true); loadData(); }}
+            onClick={() => { setLoading(true); void loadData(); }}
             className="ml-3 text-red-800 underline hover:no-underline font-medium"
           >
             Retry
@@ -102,7 +102,7 @@ export function TrustScorePanel({ productId, orgId }: TrustScorePanelProps) {
         <h2 className="text-sm font-semibold text-slate-700">Trust Score</h2>
         <button
           type="button"
-          onClick={handleRecompute}
+          onClick={() => { void handleRecompute(); }}
           disabled={recomputing}
           className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-60"
         >

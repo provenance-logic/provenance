@@ -285,7 +285,7 @@ export function ExceptionsPage() {
                   {isActive && (
                     <button
                       type="button"
-                      onClick={() => handleRevoke(ex.id)}
+                      onClick={() => { void handleRevoke(ex.id); }}
                       className="text-xs text-red-600 hover:underline flex-shrink-0 ml-4"
                     >
                       Revoke
@@ -301,7 +301,7 @@ export function ExceptionsPage() {
       {showCreate && (
         <CreateExceptionModal
           onClose={() => setShowCreate(false)}
-          onSubmit={handleCreate}
+          onSubmit={(dto) => { void handleCreate(dto); }}
           submitting={submitting}
         />
       )}

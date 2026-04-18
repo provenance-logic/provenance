@@ -223,10 +223,10 @@ function FreshnessBadge({ product }: { product: MarketplaceProductDetail }) {
 
 function extractFieldsFromContract(contract: Record<string, unknown> | null | undefined): Array<{ name: string; type: string; description: string | null; required: boolean }> {
   if (!contract || typeof contract !== 'object') return [];
-  const props = (contract as Record<string, unknown>).properties;
+  const props = contract.properties;
   if (!props || typeof props !== 'object') return [];
-  const requiredList = Array.isArray((contract as Record<string, unknown>).required)
-    ? ((contract as Record<string, unknown>).required as string[])
+  const requiredList = Array.isArray(contract.required)
+    ? (contract.required as string[])
     : [];
   return Object.entries(props as Record<string, unknown>).map(([name, def]) => {
     const d = (def ?? {}) as { type?: string; description?: string };

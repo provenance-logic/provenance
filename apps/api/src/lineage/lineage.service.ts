@@ -171,8 +171,8 @@ export class LineageService {
 
     const session: Session = this.driver.session();
     try {
-      const src = entry.sourceNode as Record<string, unknown>;
-      const tgt = entry.targetNode as Record<string, unknown>;
+      const src = entry.sourceNode;
+      const tgt = entry.targetNode;
       const srcLabel = this.sanitizeLabel(src.node_type as string);
       const tgtLabel = this.sanitizeLabel(tgt.node_type as string);
 
@@ -271,7 +271,7 @@ export class LineageService {
               type: (n.properties.node_type as string) ?? 'Unknown',
               label: (n.properties.display_name as string) ?? nodeId,
               metadata: n.properties.metadata
-                ? JSON.parse(n.properties.metadata as string)
+                ? (JSON.parse(n.properties.metadata as string) as Record<string, unknown>)
                 : {},
             });
           }
@@ -337,7 +337,7 @@ export class LineageService {
           type: (record.get('nodeType') as string) ?? 'Unknown',
           label: (record.get('displayName') as string) ?? nodeId,
           metadata: record.get('metadata')
-            ? JSON.parse(record.get('metadata') as string)
+            ? (JSON.parse(record.get('metadata') as string) as Record<string, unknown>)
             : {},
         });
       }
@@ -513,7 +513,7 @@ export class LineageService {
             type: (n.properties.node_type as string) ?? 'Unknown',
             label: (n.properties.display_name as string) ?? nodeId,
             metadata: n.properties.metadata
-              ? JSON.parse(n.properties.metadata as string)
+              ? (JSON.parse(n.properties.metadata as string) as Record<string, unknown>)
               : {},
           });
         }
@@ -556,7 +556,7 @@ export class LineageService {
           type: (record.get('nodeType') as string) ?? 'Unknown',
           label: (record.get('displayName') as string) ?? nodeId,
           metadata: record.get('metadata')
-            ? JSON.parse(record.get('metadata') as string)
+            ? (JSON.parse(record.get('metadata') as string) as Record<string, unknown>)
             : {},
         });
       }
