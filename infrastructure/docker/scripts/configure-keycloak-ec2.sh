@@ -82,6 +82,17 @@ if run_kcadm get realms/provenance &>/dev/null; then
   echo "  provenance realm: sslRequired=NONE, frontendUrl=$KC_FRONTEND_URL"
 
   # -------------------------------------------------------------------------
+  # Keycloak 24 ships with declarative user profile enabled by default, which
+  # silently drops any user attributes not declared in the profile schema
+  # (username/email/firstName/lastName). The provenance_* claims are projected
+  # from user attributes, so we must allow unmanaged attributes for admins.
+  # ADMIN_EDIT = admins can read/write; regular users cannot see them.
+  # -------------------------------------------------------------------------
+  run_kcadm update users/profile -r provenance \
+    -s 'unmanagedAttributePolicy="ADMIN_EDIT"' >/dev/null
+  echo "  provenance realm: unmanagedAttributePolicy=ADMIN_EDIT"
+
+  # -------------------------------------------------------------------------
   # Patch provenance-web client so the live realm has the production redirect
   # URIs and web origins without requiring a keycloak_data volume wipe + reimport.
   # Idempotent: rewrites the full arrays each run.
@@ -93,8 +104,69 @@ if run_kcadm get realms/provenance &>/dev/null; then
       -s 'redirectUris=["http://localhost:3000/*","http://54.83.160.49:3000/*","https://dev.provenancelogic.com/*"]' \
       -s 'webOrigins=["http://localhost:3000","http://54.83.160.49:3000","https://dev.provenancelogic.com"]'
     echo "  provenance-web: added https://dev.provenancelogic.com to redirectUris and webOrigins"
+
+    # -----------------------------------------------------------------------
+    # Ensure protocol mappers exist on provenance-web so access tokens carry
+    # provenance_principal_id, provenance_org_id, provenance_principal_type
+    # (projected from the corresponding user attributes).
+    # Idempotent: checks by mapper name before creating.
+    # -----------------------------------------------------------------------
+    existing_mappers="$(run_kcadm get "clients/$CLIENT_ID/protocol-mappers/models" -r provenance --fields name --format csv --noquotes 2>/dev/null || true)"
+    for claim in provenance_principal_id provenance_org_id provenance_principal_type; do
+      if echo "$existing_mappers" | grep -qx "$claim"; then
+        echo "  provenance-web: mapper '$claim' already exists — skipping"
+      else
+        run_kcadm create "clients/$CLIENT_ID/protocol-mappers/models" -r provenance \
+          -s "name=$claim" \
+          -s 'protocol=openid-connect' \
+          -s 'protocolMapper=oidc-usermodel-attribute-mapper' \
+          -s 'consentRequired=false' \
+          -s "config.\"user.attribute\"=$claim" \
+          -s "config.\"claim.name\"=$claim" \
+          -s 'config."jsonType.label"=String' \
+          -s 'config."id.token.claim"=true' \
+          -s 'config."access.token.claim"=true' \
+          -s 'config."userinfo.token.claim"=true' >/dev/null
+        echo "  provenance-web: created mapper '$claim'"
+      fi
+    done
   else
-    echo "  provenance-web client not found — skipping redirect URI update."
+    echo "  provenance-web client not found — skipping redirect URI and mapper update."
+  fi
+
+  # -------------------------------------------------------------------------
+  # Populate testuser's Keycloak user attributes from the platform DB so the
+  # protocol mappers have values to project. We look up the principal row by
+  # keycloak_subject and write its UUIDs back as user attributes. This makes
+  # the attributes reproducible across environments — UUIDs come from the DB
+  # of truth (identity.principals), not hardcoded.
+  # -------------------------------------------------------------------------
+  TESTUSER_ID="$(run_kcadm get users -r provenance -q username=testuser --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+  if [ -n "$TESTUSER_ID" ]; then
+    # Keycloak user's sub is the user id itself
+    PRINCIPAL_ROW="$(docker exec "${POSTGRES_CONTAINER:-provenance-ec2-postgres}" \
+      psql -U provenance -d provenance -t -A -F '|' -c \
+      "SELECT id, org_id, principal_type FROM identity.principals WHERE keycloak_subject='$TESTUSER_ID';" 2>/dev/null | tr -d '\r' | head -n 1)"
+    if [ -n "$PRINCIPAL_ROW" ]; then
+      P_ID="$(echo "$PRINCIPAL_ROW" | cut -d'|' -f1)"
+      O_ID="$(echo "$PRINCIPAL_ROW" | cut -d'|' -f2)"
+      P_TYPE="$(echo "$PRINCIPAL_ROW" | cut -d'|' -f3)"
+      echo "Setting testuser attributes from identity.principals row..."
+      # Keycloak user attributes are stored as JSON arrays of strings. The
+      # kcadm dot-notation -s 'attributes.foo=bar' silently no-ops for user
+      # attributes on Keycloak 24, so we pass the full JSON object instead.
+      USER_ATTRS="$(printf '{"provenance_principal_id":["%s"],"provenance_org_id":["%s"],"provenance_principal_type":["%s"]}' "$P_ID" "$O_ID" "$P_TYPE")"
+      run_kcadm update "users/$TESTUSER_ID" -r provenance \
+        -s "attributes=$USER_ATTRS"
+      echo "  testuser: provenance_principal_id=$P_ID"
+      echo "  testuser: provenance_org_id=$O_ID"
+      echo "  testuser: provenance_principal_type=$P_TYPE"
+    else
+      echo "  identity.principals row for testuser not found — skipping attribute seed."
+      echo "  (This is expected on a truly fresh install before first bootstrap.)"
+    fi
+  else
+    echo "  testuser not found in Keycloak — skipping attribute seed."
   fi
 else
   echo "  provenance realm does not exist yet — skipping."
