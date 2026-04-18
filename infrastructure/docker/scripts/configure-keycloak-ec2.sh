@@ -16,14 +16,14 @@
 # Prerequisites:
 #   - Keycloak container must be running and healthy
 #   - KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD env vars (defaults: admin / provenance_dev_admin)
-#   - KC_FRONTEND_URL env var (defaults to http://54.83.160.49:8080)
+#   - KC_FRONTEND_URL env var (defaults to https://auth.provenancelogic.com)
 
 set -euo pipefail
 
 KEYCLOAK_CONTAINER="${KEYCLOAK_CONTAINER:-provenance-ec2-keycloak}"
 KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-provenance_dev_admin}"
-KC_FRONTEND_URL="${KC_FRONTEND_URL:-http://54.83.160.49:8080}"
+KC_FRONTEND_URL="${KC_FRONTEND_URL:-https://auth.provenancelogic.com}"
 KEYCLOAK_URL="http://localhost:8080"
 
 # ---------------------------------------------------------------------------
