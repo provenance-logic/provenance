@@ -56,11 +56,13 @@
       "protocol": "openid-connect",
       "redirectUris": [
         "http://localhost:3000/*",
-        "http://54.83.160.49:3000/*"
+        "http://54.83.160.49:3000/*",
+        "https://dev.provenancelogic.com/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
-        "http://54.83.160.49:3000"
+        "http://54.83.160.49:3000",
+        "https://dev.provenancelogic.com"
       ],
       "defaultClientScopes": [
         "web-origins",

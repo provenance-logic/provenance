@@ -22,3 +22,10 @@ dev.provenancelogic.com {
 		reverse_proxy web:3000
 	}
 }
+
+auth.provenancelogic.com {
+	# Caddy automatically obtains and renews TLS certificates from Let's Encrypt
+	# and redirects HTTP → HTTPS by default. Keycloak serves /realms/*,
+	# /resources/*, and /admin/* natively at root — no path handling needed.
+	reverse_proxy keycloak:8080
+}

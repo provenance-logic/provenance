@@ -80,6 +80,22 @@ if run_kcadm get realms/provenance &>/dev/null; then
     -s "sslRequired=NONE" \
     -s "attributes.frontendUrl=$KC_FRONTEND_URL"
   echo "  provenance realm: sslRequired=NONE, frontendUrl=$KC_FRONTEND_URL"
+
+  # -------------------------------------------------------------------------
+  # Patch provenance-web client so the live realm has the production redirect
+  # URIs and web origins without requiring a keycloak_data volume wipe + reimport.
+  # Idempotent: rewrites the full arrays each run.
+  # -------------------------------------------------------------------------
+  CLIENT_ID="$(run_kcadm get clients -r provenance -q clientId=provenance-web --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+  if [ -n "$CLIENT_ID" ]; then
+    echo "Updating provenance-web client (id=$CLIENT_ID) redirectUris and webOrigins..."
+    run_kcadm update "clients/$CLIENT_ID" -r provenance \
+      -s 'redirectUris=["http://localhost:3000/*","http://54.83.160.49:3000/*","https://dev.provenancelogic.com/*"]' \
+      -s 'webOrigins=["http://localhost:3000","http://54.83.160.49:3000","https://dev.provenancelogic.com"]'
+    echo "  provenance-web: added https://dev.provenancelogic.com to redirectUris and webOrigins"
+  else
+    echo "  provenance-web client not found — skipping redirect URI update."
+  fi
 else
   echo "  provenance realm does not exist yet — skipping."
 fi

@@ -191,7 +191,7 @@ services:
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-provenance_dev_admin}
-      KC_FRONTEND_URL: ${KC_FRONTEND_URL:-http://54.83.160.49:8080}
+      KC_FRONTEND_URL: ${KC_FRONTEND_URL:-https://auth.provenancelogic.com}
     volumes:
       - ./scripts:/scripts:ro
     networks:
@@ -405,7 +405,7 @@ services:
       # Keycloak
       KEYCLOAK_REALM: provenance
       KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://auth.provenancelogic.com/realms/provenance}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       # Neo4j
@@ -473,9 +473,8 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://54.83.160.49:3001/api/v1}
-      VITE_AGENT_BASE_URL: ${VITE_AGENT_BASE_URL:-http://54.83.160.49:3001/agent/v1}
-      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8080}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://dev.provenancelogic.com/api/v1}
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-https://auth.provenancelogic.com}
       VITE_KEYCLOAK_REALM: provenance
       VITE_KEYCLOAK_CLIENT_ID: provenance-web
     volumes:
