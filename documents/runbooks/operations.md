@@ -174,6 +174,65 @@ If disk is above 90% and services are failing:
 
 ---
 
+## Keycloak Configuration
+
+The realm import (`provenance-realm.json`) only runs on a fresh `keycloak_data` volume. Everything that can't be captured by the import — per-environment frontend URL, live client redirect URIs, protocol mappers, unmanaged-attribute policy, and the `testuser` attribute seed — is applied by `infrastructure/docker/scripts/configure-keycloak-ec2.sh`. The script is idempotent and safe to run repeatedly.
+
+**Normal run:**
+
+```bash
+bash /opt/provenance/infrastructure/docker/scripts/configure-keycloak-ec2.sh
+```
+
+Expected tail:
+
+```
+provenance-web: added https://dev.provenancelogic.com to redirectUris and webOrigins
+provenance-web: mapper 'provenance_principal_id' already exists — skipping
+provenance-web: mapper 'provenance_org_id' already exists — skipping
+provenance-web: mapper 'provenance_principal_type' already exists — skipping
+Setting testuser attributes from identity.principals row...
+```
+
+### Gotcha — protocol mapper attributes after a fresh volume wipe
+
+On a truly fresh install (both `keycloak_data` **and** `postgres_data` volumes recreated), the `identity.principals` row for `testuser` does not exist until the API has bootstrapped — it is created by the first authenticated login / org bootstrap flow, not by the realm import. The configure script will print:
+
+```
+identity.principals row for testuser not found — skipping attribute seed.
+(This is expected on a truly fresh install before first bootstrap.)
+```
+
+When this happens, the protocol mappers are in place but they have no user attributes to project, so access tokens will not carry `provenance_principal_id` / `provenance_org_id` / `provenance_principal_type`. Downstream effects in the API: `RequestContext.orgId = ''` (empty string), role lookup short-circuited, org-scoped queries return nothing.
+
+**Recovery:**
+
+1. Log in to https://dev.provenancelogic.com once as `testuser` to trigger the principal-row bootstrap.
+2. Confirm the row exists:
+
+   ```bash
+   docker exec provenance-ec2-postgres psql -U provenance -d provenance \
+     -c "SELECT id, org_id, principal_type FROM identity.principals WHERE keycloak_subject='<testuser-sub>';"
+   ```
+3. Re-run the configure script:
+
+   ```bash
+   bash /opt/provenance/infrastructure/docker/scripts/configure-keycloak-ec2.sh
+   ```
+4. Confirm a fresh token carries the claims:
+
+   ```bash
+   TOKEN=$(curl -sf -X POST https://auth.provenancelogic.com/realms/provenance/protocol/openid-connect/token \
+     -d client_id=provenance-web -d grant_type=password \
+     -d username=testuser -d password=provenance_dev \
+     | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+   echo "$TOKEN" | python3 -c "import sys,base64,json; p=sys.stdin.read().strip().split('.')[1]; p+='='*(-len(p)%4); c=json.loads(base64.urlsafe_b64decode(p)); print({k:c.get(k) for k in ['provenance_principal_id','provenance_org_id','provenance_principal_type']})"
+   ```
+
+Any environment-specific overrides (different admin password, different Keycloak container name, different public hostname) are passed as env vars to the script — see the script header comment for names.
+
+---
+
 ## NF-IR Threshold Responses
 
 These thresholds are defined in the PRD (Infrastructure Readiness section). Each threshold indicates when Phase 6 planning must begin.

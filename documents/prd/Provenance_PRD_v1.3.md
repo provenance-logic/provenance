@@ -951,6 +951,19 @@ The following are exposed through the `get_product` MCP tool and verified workin
 | Popularity signal | 3 | Post-Phase 5 | Query frequency over last 30 days |
 | Community annotations | 3 | Post-Phase 5 | Consumer-supplied notes and ratings |
 
+### Walkthrough Findings — April 18, 2026
+
+A guided human walkthrough of the live https://dev.provenancelogic.com deployment after the Phase 5.2 HTTPS and Keycloak domain wiring completed identified a set of UI/UX and data-hygiene gaps in the marketplace and product detail flows. These are tracked here (rather than opened as standalone domain issues) because they all concern the completeness of the product detail surface and the marketplace experience built on top of it. All are scoped to Phase 5 or post-Phase-5 work — none block the open-source-ready milestone.
+
+| ID | Finding | Priority | Target |
+| --- | --- | --- | --- |
+| D9.W1 | Test and verification artifacts (e.g. *Phase 4b Verification Product*, *A5 Index Freshness Test*, *Semantic Search Test Product*) appear in the marketplace alongside realistic seed data. Cluttering the first impression of the platform. | 1 | Phase 5.6 (Developer Experience) — comprehensive seed data with explicit separation between demo fixtures and ad-hoc test artifacts; marketplace filter for lifecycle status already exists but deprecated products still surface. |
+| D9.W2 | *Request access* action is shown to every authenticated principal on every product — including products the principal already owns and products they already have access to. No hide-if-owner or hide-if-granted logic. | 2 | Phase 5 P1 extension — the `access_status_for_requesting_principal` field added in 5.4 is available in the API response; the product detail page needs to branch the CTA on it (`granted` → "You have access"; `owner` → hide; `pending` → "Request pending"; `not requested` → "Request access"). |
+| D9.W3 | Port `contractSchema` JSON shown on the port tab is obvious placeholder seed data, not a real schema. Contract is what differentiates a data product from a catalog entry — placeholder content undermines the pitch. | 1 | Phase 5.6 (Developer Experience) seed data overhaul — replace placeholder schemas with realistic, domain-plausible JSON Schema definitions matching the port's declared interface type. |
+| D9.W4 | The 5.4 P1 enrichment fields (column-level schema, ownership and stewardship, data freshness signals, access status for requesting principal) are returned in the `get_product` API response but not rendered in the product detail UI. Data exists; the surface has not been built. | 1 | Phase 5 follow-up to 5.4 — wire the new fields into the product detail page (new "Schema" and "Ownership" tab sections, freshness badge in the header, access status on the primary CTA). |
+| D9.W5 | The port display has no "How to use this" section — no endpoint URL, no sample client snippet, no connection string pattern, no authentication hint. A consumer cannot go from "I see this product" to "I am querying this product" without leaving the platform. | 2 | Phase 5 (or post-MVP per OS7.8 consumer connection experience) — add a per-port-interface-type connection panel: SQL/JDBC connection string template, REST cURL example, streaming topic coordinates, GraphQL endpoint + sample query, semantic endpoint usage note. |
+| D9.W6 | Lifecycle enforcement gaps in marketplace visibility — deprecated and decommissioned products still appear in default marketplace listing without prominent lifecycle badges. F2.11a covers index removal on decommission but the UI treatment of the transition window is inconsistent. | 2 | Phase 5 follow-up — marketplace filter default excludes `decommissioned`; deprecated products show a visible status badge and a "replacement product" reference when declared (see Domain 2 F2.19 replacement metadata). |
+
 ### Non-Functional Requirements
 
 | ID | Requirement |
@@ -1105,13 +1118,16 @@ Phase 5 is redefined as "Open Source Ready." The goal is to make the platform re
 - Operational runbook documenting recovery procedures for common failure scenarios
 - Log rotation configured to prevent disk exhaustion
 
-### 5.2 — Security Essentials 🔄 Partially Complete (April 17, 2026)
+### 5.2 — Security Essentials ✅ Complete (April 18, 2026)
 
-- 🔄 HTTPS enforced on all external endpoints — Caddy reverse proxy installed on the EC2 dev host with a valid Let's Encrypt certificate live at https://dev.provenancelogic.com. Keycloak realm/client redirect URIs, web origins, and `VITE_KEYCLOAK_URL` / `VITE_API_BASE_URL` wiring for the new domain are pending the next session.
+- ✅ HTTPS enforced on all external endpoints — Caddy reverse proxy with valid Let's Encrypt certificates live at https://dev.provenancelogic.com (frontend, API, MCP) and https://auth.provenancelogic.com (Keycloak). `X-Forwarded-Proto`, `X-Forwarded-Host`, and `Host` are forwarded explicitly; Keycloak runs with `KC_PROXY=edge` so generated URLs use `https://` and cookies are marked `Secure`.
+- ✅ Keycloak domain wiring — `KC_HOSTNAME=auth.provenancelogic.com`, realm `frontendUrl` attribute, client `redirectUris`/`webOrigins` updated, `unmanagedAttributePolicy=ADMIN_EDIT` set so Keycloak 24's declarative user profile accepts custom attributes. Frontend `VITE_KEYCLOAK_URL` and `VITE_API_BASE_URL` defaults point at the public hostnames.
+- ✅ JWT claims correctly plumbed — three `oidc-usermodel-attribute-mapper` protocol mappers on the `provenance-web` client populate `provenance_principal_id`, `provenance_org_id`, and `provenance_principal_type` claims; API issuer validation fixed (`KEYCLOAK_ISSUER_URL` is a base URL, not the full issuer). Full browser login flow verified.
+- ✅ Reproducibility — `configure-keycloak-ec2.sh` is idempotent and sets every Keycloak configuration that is not captured by the realm import: `sslRequired`, `frontendUrl`, client redirect URIs / web origins, protocol mappers, `unmanagedAttributePolicy`, and testuser attribute seed from `identity.principals`.
 - ✅ Security group audit — all EC2 security groups reviewed and tightened; no ports open that are not required
-- 🔄 Credentials rotation — MCP API key rotated this session; full rotation procedure and schedule for remaining secrets pending
-- ☐ Environment variable audit — verified no secrets in code, logs, or version control
-- ☐ SSH key management — reviewed, documented, unnecessary access revoked
+- ✅ Credentials rotation — MCP API key rotated; `infrastructure/scripts/rotate-mcp-key.sh` documents the rotation procedure for that key. Full rotation schedule for remaining secrets deferred with 5.7.
+- ☐ Environment variable audit — verified no secrets in code, logs, or version control (carryover — not yet formally audited this session)
+- ☐ SSH key management — reviewed, documented, unnecessary access revoked (carryover)
 
 ### 5.3 — JWT Agent Authentication ✅ Complete (April 16, 2026)
 

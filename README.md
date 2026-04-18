@@ -107,7 +107,7 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 | **Phase 2 — Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
 | **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
 | **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
-| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, developer experience | 🔄 Active |
+| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, developer experience | 🔄 Active — workstreams 5.1–5.4 complete; 5.5–5.7 remaining |
 | **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
 
 ### Verification Status (Phase 3)
