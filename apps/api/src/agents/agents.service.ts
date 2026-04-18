@@ -335,7 +335,7 @@ export class AgentsService {
     let activityCount24h = 0;
 
     try {
-      const lastActivity = await this.dataSource.query(
+      const lastActivity: { occurred_at: string }[] = await this.dataSource.query(
         `SELECT occurred_at FROM audit.audit_log
          WHERE agent_id = $1 AND action = 'mcp_tool_call'
          ORDER BY occurred_at DESC LIMIT 1`,
@@ -345,7 +345,7 @@ export class AgentsService {
         lastActivityAt = lastActivity[0].occurred_at;
       }
 
-      const countResult = await this.dataSource.query(
+      const countResult: { cnt: number }[] = await this.dataSource.query(
         `SELECT count(*)::int as cnt FROM audit.audit_log
          WHERE agent_id = $1 AND action = 'mcp_tool_call'
            AND occurred_at >= NOW() - INTERVAL '24 hours'`,

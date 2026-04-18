@@ -131,6 +131,33 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
+  # Mailhog — dev SMTP sink
+  # Captures all outbound email (verification, invitations, password resets)
+  # and exposes them in a web UI at :8025. In production this is replaced by
+  # AWS SES — see api service env vars for the switch.
+  # ---------------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: provenance-ec2-mailhog
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # HTTP UI
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8025 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
   # Keycloak — OIDC identity provider
   # ---------------------------------------------------------------------------
   keycloak:
@@ -170,6 +197,8 @@ services:
         condition: service_healthy
       keycloak-db-init:
         condition: service_completed_successfully
+      mailhog:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'"]
       interval: 10s
@@ -408,6 +437,21 @@ services:
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://auth.provenancelogic.com}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      # Keycloak admin client (user provisioning + agent client provisioning per ADR-002)
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-provenance-admin}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-provenance-admin-dev-secret}
+      # Email — dev uses Mailhog, production uses AWS SES via the same SMTP interface
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-noreply@provenancelogic.com}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Provenance}
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Public app base URL — used in invite acceptance links embedded in emails
+      APP_BASE_URL: ${APP_BASE_URL:-https://dev.provenancelogic.com}
       # Neo4j
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
@@ -450,6 +494,8 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/v1/health || exit 1"]
       interval: 15s

@@ -198,25 +198,25 @@ describe('TrustScoreService', () => {
   test('all 5 component queries run in parallel (Promise.all)', async () => {
     const callOrder: string[] = [];
 
-    complianceRepo.findOne.mockImplementation(async () => {
+    complianceRepo.findOne.mockImplementation(() => {
       callOrder.push('governance');
-      return { state: 'compliant' };
+      return Promise.resolve({ state: 'compliant' });
     });
-    sloService.getSloSummary.mockImplementation(async () => {
+    sloService.getSloSummary.mockImplementation(() => {
       callOrder.push('slo');
-      return { active_slos: 0, pass_rate_7d: 0 };
+      return Promise.resolve({ active_slos: 0, pass_rate_7d: 0 });
     });
-    lineageService.getUpstreamLineage.mockImplementation(async () => {
+    lineageService.getUpstreamLineage.mockImplementation(() => {
       callOrder.push('lineage');
-      return { productId: 'p', depth: 1, nodes: [{ id: 'p' }], edges: [] };
+      return Promise.resolve({ productId: 'p', depth: 1, nodes: [{ id: 'p' }], edges: [] });
     });
-    accessGrantRepo.createQueryBuilder().getCount.mockImplementation(async () => {
+    accessGrantRepo.createQueryBuilder().getCount.mockImplementation(() => {
       callOrder.push('usage');
-      return 0;
+      return Promise.resolve(0);
     });
-    exceptionRepo.count.mockImplementation(async () => {
+    exceptionRepo.count.mockImplementation(() => {
       callOrder.push('exception');
-      return 0;
+      return Promise.resolve(0);
     });
 
     await service.computeScore('org-1', 'product-1');

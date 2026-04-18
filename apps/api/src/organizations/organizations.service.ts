@@ -1,10 +1,21 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, Repository } from 'typeorm';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
+import { getConfig } from '../config.js';
 import { OrgEntity } from './entities/org.entity.js';
 import { DomainEntity } from './entities/domain.entity.js';
 import { PrincipalEntity } from './entities/principal.entity.js';
 import { RoleAssignmentEntity } from './entities/role-assignment.entity.js';
+import { PolicySchemaEntity } from '../governance/entities/policy-schema.entity.js';
+import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
+import { EmailService } from '../email/email.service.js';
+import { buildWelcomeEmail } from '../email/templates/welcome.js';
 import type {
   Organization,
   CreateOrganizationRequest,
@@ -18,10 +29,30 @@ import type {
   AddMemberRequest,
   MemberList,
   RequestContext,
+  PolicyDomain,
 } from '@provenance/types';
+
+export interface SelfServeOrganizationResponse {
+  organization: Organization;
+  principalId: string;
+  requiresTokenRefresh: true;
+}
+
+const DEFAULT_POLICY_DOMAINS: PolicyDomain[] = [
+  'product_schema',
+  'classification_taxonomy',
+  'versioning_deprecation',
+  'access_control',
+  'lineage',
+  'slo',
+  'agent_access',
+  'interoperability',
+];
 
 @Injectable()
 export class OrganizationsService {
+  private readonly logger = new Logger(OrganizationsService.name);
+
   constructor(
     @InjectRepository(OrgEntity)
     private readonly orgRepo: Repository<OrgEntity>,
@@ -31,6 +62,10 @@ export class OrganizationsService {
     private readonly principalRepo: Repository<PrincipalEntity>,
     @InjectRepository(RoleAssignmentEntity)
     private readonly roleAssignmentRepo: Repository<RoleAssignmentEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+    private readonly keycloakAdmin: KeycloakAdminService,
+    private readonly emailService: EmailService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -217,6 +252,156 @@ export class OrganizationsService {
       throw new NotFoundException(`Principal ${principalId} is not a member of organization ${orgId}`);
     }
     await this.roleAssignmentRepo.remove(assignments);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Self-serve organization creation (F10.2 — Domain 10)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates a new organization, seeds the default governance layer, and makes
+   * the calling Keycloak user the first org_admin — in a single transaction.
+   *
+   * Pre-condition: ctx has a valid keycloakSubject but no orgId yet. This is
+   * the post-registration flow: the user has just completed Keycloak signup,
+   * email verification, and is landing on the onboarding screen for the first
+   * time. No platform operator action is required.
+   */
+  async selfServeOrganization(
+    dto: CreateOrganizationRequest,
+    ctx: RequestContext,
+  ): Promise<SelfServeOrganizationResponse> {
+    if (!ctx.keycloakSubject) {
+      throw new BadRequestException('Missing Keycloak subject on request context');
+    }
+    if (ctx.orgId) {
+      throw new ConflictException(
+        'This account already belongs to an organization; cannot run self-serve signup.',
+      );
+    }
+
+    const existing = await this.orgRepo.findOne({ where: { slug: dto.slug } });
+    if (existing) {
+      throw new ConflictException(`Organization with slug '${dto.slug}' already exists`);
+    }
+
+    const result = await this.dataSource.transaction(async (mgr) => {
+      const orgRepo = mgr.getRepository(OrgEntity);
+      const principalRepo = mgr.getRepository(PrincipalEntity);
+      const roleRepo = mgr.getRepository(RoleAssignmentEntity);
+      const policySchemaRepo = mgr.getRepository(PolicySchemaEntity);
+
+      const org = await orgRepo.save(
+        orgRepo.create({
+          name: dto.name,
+          slug: dto.slug,
+          description: dto.description ?? null,
+          contactEmail: dto.contactEmail ?? ctx.email ?? null,
+          status: 'active',
+        }),
+      );
+
+      // Set RLS org context for inserts into identity / governance.
+      await mgr.query(`SET LOCAL "provenance.current_org_id" = $1`, [org.id]);
+
+      const principal = await principalRepo.save(
+        principalRepo.create({
+          orgId: org.id,
+          principalType: 'platform_admin',
+          keycloakSubject: ctx.keycloakSubject,
+          email: ctx.email ?? null,
+          displayName: ctx.displayName ?? null,
+        }),
+      );
+
+      await roleRepo.save(
+        roleRepo.create({
+          orgId: org.id,
+          principalId: principal.id,
+          role: 'org_admin',
+          domainId: null,
+          grantedBy: principal.id,
+        }),
+      );
+
+      await this.seedDefaultGovernanceLayer(policySchemaRepo, org.id);
+
+      return { org, principal };
+    });
+
+    // Bind Keycloak user attributes so future tokens carry the provenance_* claims.
+    try {
+      await this.keycloakAdmin.updateUserAttributes(ctx.keycloakSubject, {
+        provenance_principal_id: result.principal.id,
+        provenance_org_id: result.org.id,
+        provenance_principal_type: 'platform_admin',
+      });
+      await this.keycloakAdmin.assignRealmRoles(ctx.keycloakSubject, ['org_admin']);
+    } catch (err) {
+      this.logger.warn(
+        `Self-serve signup succeeded but Keycloak attribute binding failed for user ${ctx.keycloakSubject}: ${(err as Error).message}. ` +
+          `User will need their attributes bound before tokens carry provenance_* claims.`,
+      );
+    }
+
+    // Welcome email — best-effort, non-blocking failure mode.
+    if (ctx.email) {
+      try {
+        const config = getConfig();
+        await this.emailService.send(
+          buildWelcomeEmail({
+            recipientEmail: ctx.email,
+            recipientName: ctx.displayName ?? '',
+            organizationName: result.org.name,
+            appUrl: config.APP_BASE_URL,
+          }),
+        );
+      } catch (err) {
+        this.logger.warn(`Failed to send welcome email: ${(err as Error).message}`);
+      }
+    }
+
+    return {
+      organization: this.toOrganization(result.org),
+      principalId: result.principal.id,
+      requiresTokenRefresh: true,
+    };
+  }
+
+  private async seedDefaultGovernanceLayer(
+    policySchemaRepo: Repository<PolicySchemaEntity>,
+    orgId: string,
+  ): Promise<void> {
+    // One platform-default policy schema per governance domain. The
+    // schemaDefinition is the JSONSchema rule shape authors fill in when they
+    // publish a policy version via the Policy Authoring Studio.
+    const rows = DEFAULT_POLICY_DOMAINS.map((domain) =>
+      policySchemaRepo.create({
+        orgId,
+        policyDomain: domain,
+        schemaVersion: '1.0.0',
+        schemaDefinition: this.defaultPolicySchemaDefinition(domain),
+        isPlatformDefault: true,
+      }),
+    );
+    await policySchemaRepo.save(rows);
+  }
+
+  private defaultPolicySchemaDefinition(domain: PolicyDomain): Record<string, unknown> {
+    return {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      title: `Provenance default ${domain} policy schema`,
+      description: `Platform-default rule shape for the ${domain} governance domain. Seeded at organization creation; editable by governance members.`,
+      type: 'object',
+      properties: {
+        rules: {
+          type: 'array',
+          items: { type: 'object' },
+          default: [],
+        },
+      },
+      required: ['rules'],
+    };
   }
 
   // ---------------------------------------------------------------------------

@@ -126,10 +126,10 @@ export class ProductEnrichmentService {
     } catch { return null; }
   }
 
-  async resolveColumnSchema(): Promise<ProductColumnSchema | null> {
-    // No direct product-to-schema_snapshot FK exists yet.
-    // When a linking mechanism is added, this will query schemaSnapshotRepo.
+  // No direct product-to-schema_snapshot FK exists yet.
+  // When a linking mechanism is added, this will query schemaSnapshotRepo.
+  resolveColumnSchema(): Promise<ProductColumnSchema | null> {
     void this.schemaSnapshotRepo;
-    return null;
+    return Promise.resolve(null);
   }
 }

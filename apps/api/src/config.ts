@@ -47,6 +47,26 @@ const envSchema = z.object({
 
   // Anthropic API key (optional — enables NL query translation via Claude)
   ANTHROPIC_API_KEY: z.string().optional(),
+
+  // Email (Domain 10 — self-serve registration and invitations)
+  // 'smtp' routes through SMTP_HOST (Mailhog in dev, SES via SMTP relay in prod).
+  // 'ses' routes through AWS SES SDK.
+  // 'noop' disables outbound email (used in tests and local CI).
+  EMAIL_PROVIDER: z.enum(['smtp', 'ses', 'noop']).default('smtp'),
+  EMAIL_FROM_ADDRESS: z.string().email().default('noreply@provenancelogic.com'),
+  EMAIL_FROM_NAME: z.string().default('Provenance'),
+  SMTP_HOST: z.string().default('localhost'),
+  SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+
+  // App base URL — used to construct invite acceptance links in emails
+  APP_BASE_URL: z.string().url().default('http://localhost:3000'),
+
+  // Invitation defaults (F10.3 — governance-configurable per-org override lives
+  // in organizations.governance_configs under key 'invitation_ttl_hours')
+  INVITATION_DEFAULT_TTL_HOURS: z.coerce.number().int().positive().default(168),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

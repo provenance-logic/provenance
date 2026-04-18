@@ -15,9 +15,26 @@ interface AuthState {
    * though downstream DB lookups will not match in that case.
    */
   principalId: string | undefined;
+  /**
+   * Kick off a Keycloak login redirect. Protected pages call this when the
+   * user is not authenticated.
+   */
+  login: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+
+/**
+ * Routes that render without forcing a Keycloak login. Self-serve signup
+ * (F10.1) and invitation acceptance (F10.3) must be reachable by users who
+ * do not yet have a Keycloak session. Every other route goes through the
+ * RequireAuth wrapper which redirects to login on demand.
+ */
+const PUBLIC_PATH_PREFIXES = ['/accept-invite'];
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -29,9 +46,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (initialized.current) return;
     initialized.current = true;
 
+    // Public paths use check-sso (never forces a redirect) so an unauthenticated
+    // visitor can reach /accept-invite?token=... without first signing in.
+    // Everything else redirects to the Keycloak login page immediately.
+    const onLoad: 'login-required' | 'check-sso' = isPublicPath(window.location.pathname)
+      ? 'check-sso'
+      : 'login-required';
+
     keycloak
       .init({
-        onLoad: 'login-required',
+        onLoad,
         checkLoginIframe: false,
       })
       .then((authenticated) => {
@@ -44,9 +68,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Refresh token before expiry.
     const refreshInterval = setInterval(() => {
-      void keycloak.updateToken(60).catch(() => {
-        void keycloak.logout();
-      });
+      if (keycloak.authenticated) {
+        void keycloak.updateToken(60).catch(() => {
+          void keycloak.logout();
+        });
+      }
     }, 30_000);
 
     return () => clearInterval(refreshInterval);
@@ -68,8 +94,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     | undefined;
   const principalId = tokenParsed?.provenance_principal_id ?? tokenParsed?.sub;
 
+  const login = () => {
+    void keycloak.login({ redirectUri: window.location.href });
+  };
+
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak, principalId }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak, principalId, login }}>
       {children}
     </AuthContext.Provider>
   );
@@ -79,4 +109,25 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
+}
+
+/**
+ * Wraps protected routes. Redirects to the Keycloak login page if the user
+ * is not authenticated. Used by the AppRouter to gate everything except the
+ * listed PUBLIC_PATH_PREFIXES.
+ */
+export function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, login } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) login();
+  }, [isAuthenticated, login]);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <p className="text-sm text-slate-500">Redirecting to sign in…</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
 }

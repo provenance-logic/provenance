@@ -9,7 +9,7 @@ function fakeTokenResponse() {
   return {
     ok: true,
     status: 200,
-    json: async () => ({
+    json: () => Promise.resolve({
       access_token: 'admin-access-token',
       expires_in: 300,
       token_type: 'Bearer',
@@ -36,7 +36,7 @@ function fakeSecretResponse(secret: string) {
   return {
     ok: true,
     status: 200,
-    json: async () => ({ type: 'secret', value: secret }),
+    json: () => Promise.resolve({ type: 'secret', value: secret }),
   } as unknown as Response;
 }
 
@@ -45,7 +45,7 @@ function fakeConflictResponse() {
   return {
     ok: false,
     status: 409,
-    json: async () => ({ errorMessage: 'Client provenance-api already exists' }),
+    json: () => Promise.resolve({ errorMessage: 'Client provenance-api already exists' }),
   } as unknown as Response;
 }
 
@@ -54,7 +54,7 @@ function fakeUnauthorizedResponse() {
   return {
     ok: false,
     status: 401,
-    json: async () => ({ error: 'invalid_token' }),
+    json: () => Promise.resolve({ error: 'invalid_token' }),
   } as unknown as Response;
 }
 
@@ -71,7 +71,7 @@ function fakeClientListResponse(clients: Array<{ id: string; clientId: string }>
   return {
     ok: true,
     status: 200,
-    json: async () => clients,
+    json: () => Promise.resolve(clients),
   } as unknown as Response;
 }
 
@@ -264,7 +264,7 @@ describe('KeycloakAdminService', () => {
       const newSecretResponse = {
         ok: true,
         status: 200,
-        json: async () => ({ type: 'secret', value: 'rotated-secret' }),
+        json: () => Promise.resolve({ type: 'secret', value: 'rotated-secret' }),
       } as unknown as Response;
 
       fetchSpy

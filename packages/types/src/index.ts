@@ -13,3 +13,4 @@ export * from './marketplace.js';
 export * from './lineage.js';
 export * from './trust-score.js';
 export * from './slo.js';
+export * from './invitations.js';

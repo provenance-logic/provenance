@@ -142,7 +142,8 @@ export function LineageGraph({ graph, centralProductId, onNodeClick, isLoading }
     });
 
     cy.on('tap', 'node', (evt) => {
-      const id = evt.target.id() as string;
+      const target = evt.target as cytoscape.NodeSingular;
+      const id = target.id();
       const node = nodeMapRef.current.get(id);
       if (node) onNodeClickRef.current?.(node);
     });

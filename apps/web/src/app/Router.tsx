@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavShell } from '../shared/components/NavShell.js';
+import { RequireAuth } from '../auth/AuthProvider.js';
 import { DashboardRedirect } from '../features/publishing/DashboardRedirect.js';
 import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
@@ -10,6 +11,9 @@ import { CommandCenterPage } from '../features/governance/CommandCenterPage.js';
 import { PolicyStudioPage } from '../features/governance/PolicyStudioPage.js';
 import { ComplianceMonitorPage } from '../features/governance/ComplianceMonitorPage.js';
 import { ExceptionsPage } from '../features/governance/ExceptionsPage.js';
+import { NewOrganizationForm } from '../features/onboarding/NewOrganizationForm.js';
+import { AcceptInvitePage } from '../features/onboarding/AcceptInvitePage.js';
+import { DomainTeamPage } from '../features/team/DomainTeamPage.js';
 
 function ComingSoon({ title }: { title: string }) {
   return (
@@ -24,7 +28,19 @@ export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<NavShell />}>
+        {/* Public routes — no forced Keycloak login. Must match the
+            PUBLIC_PATH_PREFIXES list in AuthProvider. */}
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
+
+        {/* Everything below requires an authenticated session. */}
+        <Route
+          path="/"
+          element={
+            <RequireAuth>
+              <NavShell />
+            </RequireAuth>
+          }
+        >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardRedirect />} />
           <Route
@@ -39,7 +55,14 @@ export function AppRouter() {
             path="dashboard/:orgId/domains/:domainId/products/:productId"
             element={<ProductDetail />}
           />
+          <Route
+            path="dashboard/:orgId/domains/:domainId/team"
+            element={<DomainTeamPage />}
+          />
           <Route path="products" element={<Navigate to="/dashboard" replace />} />
+
+          {/* Onboarding — F10.2 self-serve org creation */}
+          <Route path="onboarding/org" element={<NewOrganizationForm />} />
 
           {/* Marketplace */}
           <Route path="marketplace" element={<MarketplacePage />} />

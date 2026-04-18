@@ -113,7 +113,7 @@ export function SloCard({ slo, orgId, productId }: Props) {
       {/* Evaluation history toggle */}
       <button
         type="button"
-        onClick={toggleEvals}
+        onClick={() => { void toggleEvals(); }}
         className="text-xs text-brand-600 hover:text-brand-800 font-medium focus:outline-none"
       >
         Evaluation History {evalsOpen ? '▲' : '▼'}

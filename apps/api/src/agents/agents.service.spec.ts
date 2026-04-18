@@ -94,7 +94,7 @@ function mockDataSource() {
     getRepository: jest.fn((entity: unknown) => {
       if (entity === AgentIdentityEntity) return managerAgentRepo;
       if (entity === AgentTrustClassificationEntity) return managerClassRepo;
-      throw new Error(`Unexpected entity: ${entity}`);
+      throw new Error(`Unexpected entity: ${String(entity)}`);
     }),
   };
 

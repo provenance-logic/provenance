@@ -179,7 +179,7 @@ export function AddSloForm({ orgId, productId, onCreated, onCancel }: Props) {
       <div className="flex items-center gap-3 pt-2">
         <button
           type="button"
-          onClick={handleSubmit}
+          onClick={() => { void handleSubmit(); }}
           disabled={!canSubmit || submitting}
           className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-60"
         >

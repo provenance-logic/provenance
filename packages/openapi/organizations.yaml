@@ -372,6 +372,64 @@ components:
 
 paths:
   # ------------------------------------------------------------------
+  # Self-serve signup (F10.2 — Domain 10)
+  # ------------------------------------------------------------------
+  /organizations/self-serve:
+    post:
+      operationId: selfServeOrganization
+      summary: Create an organization via self-serve signup and become its first Platform Administrator.
+      description: |
+        Self-service tenant provisioning — F10.2 from PRD v1.4 Domain 10.
+
+        The calling Keycloak user is made the first Platform Administrator.
+        This endpoint:
+          - Creates the organization tenant
+          - Seeds the default governance layer (one platform-default policy schema per governance domain)
+          - Creates the caller's platform principal record
+          - Grants the caller the org_admin role
+          - Binds the provenance_principal_id, provenance_org_id, and
+            provenance_principal_type attributes on the caller's Keycloak user
+            so future tokens carry the platform claims
+
+        No platform operator action is required. The caller's JWT does not
+        need a provenance_org_id claim (they have none yet); after this
+        endpoint succeeds the client MUST refresh their token to pick up the
+        newly bound attributes.
+      tags: [Organizations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [organization, principalId, requiresTokenRefresh]
+                properties:
+                  organization:
+                    $ref: "#/components/schemas/Organization"
+                  principalId:
+                    $ref: "#/components/schemas/Uuid"
+                  requiresTokenRefresh:
+                    type: boolean
+                    description: Always true — caller must refresh their Keycloak token to pick up the new provenance_* claims.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Slug already taken, or caller already has an organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ------------------------------------------------------------------
   # Organizations
   # ------------------------------------------------------------------
   /organizations:
