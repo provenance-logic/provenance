@@ -44,6 +44,9 @@ pnpm-debug.log*
 infrastructure/docker/config/keycloak/realms/*.json
 !infrastructure/docker/config/keycloak/realms/.gitkeep
 
+# Local backup archives (created by infrastructure/scripts/backup.sh)
+backups/
+
 # Terraform state — never commit state files
 infrastructure/terraform/.terraform/
 infrastructure/terraform/*.tfstate
