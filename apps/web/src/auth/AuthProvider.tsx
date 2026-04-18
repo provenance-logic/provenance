@@ -7,6 +7,14 @@ interface AuthState {
   isLoading: boolean;
   token: string | undefined;
   keycloak: KeycloakInstance;
+  /**
+   * Platform principal id (identity.principals.id). Read from the
+   * provenance_principal_id JWT claim (populated by the Keycloak protocol
+   * mapper). Falls back to the Keycloak sub if the claim is missing — useful
+   * for dev/bootstrap flows where the mapper has no attribute value yet,
+   * though downstream DB lookups will not match in that case.
+   */
+  principalId: string | undefined;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -55,8 +63,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
+  const tokenParsed = keycloak.tokenParsed as
+    | { sub?: string; provenance_principal_id?: string }
+    | undefined;
+  const principalId = tokenParsed?.provenance_principal_id ?? tokenParsed?.sub;
+
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak, principalId }}>
       {children}
     </AuthContext.Provider>
   );

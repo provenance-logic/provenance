@@ -5,6 +5,7 @@ import type { Client } from '@opensearch-project/opensearch';
 import { OPENSEARCH_CLIENT } from './opensearch.client.js';
 import { PRODUCT_INDEX } from './product-index.service.js';
 import { TrustScoreService } from './trust-score.service.js';
+import { ProductEnrichmentService } from '../products/product-enrichment.service.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../products/entities/product-version.entity.js';
@@ -28,6 +29,7 @@ import type {
   ComplianceStateValue,
   Port,
   AccessRequestList,
+  RequestContext,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,7 @@ export class MarketplaceService {
     private readonly grantRepo: Repository<AccessGrantEntity>,
     @InjectRepository(AccessRequestEntity)
     private readonly requestRepo: Repository<AccessRequestEntity>,
+    private readonly enrichmentService: ProductEnrichmentService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -253,15 +256,19 @@ export class MarketplaceService {
   // Product detail
   // ---------------------------------------------------------------------------
 
-  async getProductDetail(orgId: string | undefined, productId: string): Promise<MarketplaceProductDetail> {
+  async getProductDetail(orgId: string | undefined, productId: string, ctx?: RequestContext): Promise<MarketplaceProductDetail> {
     const product = await this.findProduct(productId, orgId, ['ports']);
     const resolvedOrgId = product.orgId;
 
-    const [complianceMap, domainMap, trustScoreMap, activeConsumerCount] = await Promise.all([
+    const [complianceMap, domainMap, trustScoreMap, activeConsumerCount, enrichment] = await Promise.all([
       this.fetchComplianceMap(resolvedOrgId, [productId]),
       this.fetchDomainMap(resolvedOrgId, [product.domainId]),
       this.fetchTrustScoreMap(resolvedOrgId, [productId]),
       this.countActiveConsumers(resolvedOrgId, productId),
+      this.enrichmentService.enrich(
+        { id: product.id, orgId: resolvedOrgId, domainId: product.domainId, ownerPrincipalId: product.ownerPrincipalId },
+        ctx,
+      ),
     ]);
 
     const base = this.toMarketplaceProduct(product, complianceMap, domainMap, trustScoreMap);
@@ -274,6 +281,7 @@ export class MarketplaceService {
       activeConsumerCount,
       ownerPrincipalId: product.ownerPrincipalId,
       createdAt: product.createdAt.toISOString(),
+      ...enrichment,
     };
   }
 

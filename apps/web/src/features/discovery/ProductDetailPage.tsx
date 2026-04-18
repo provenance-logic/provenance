@@ -15,7 +15,42 @@ import type {
   DataClassification,
   ComplianceStateValue,
   OutputPortInterfaceType,
+  ProductAccessStatusValue,
 } from '@provenance/types';
+
+// ---------------------------------------------------------------------------
+// Per-interface consumption guidance — surfaced on each output port so a
+// consumer can go from "I see this product" to "I am querying this product"
+// without leaving the platform. Patterns are illustrative defaults; real
+// connection details are the port owner's responsibility to fill in.
+// ---------------------------------------------------------------------------
+
+const CONSUMPTION_GUIDANCE: Record<OutputPortInterfaceType, { heading: string; body: string }> = {
+  sql_jdbc: {
+    heading: 'Connect via JDBC',
+    body:    'jdbc:<driver>://<host>:<port>/<database>?user=<principal>&sslmode=require',
+  },
+  rest_api: {
+    heading: 'Call the REST API',
+    body:    'curl -H "Authorization: Bearer $TOKEN" https://<base-url>/<resource>',
+  },
+  graphql: {
+    heading: 'Query via GraphQL',
+    body:    'POST https://<base-url>/graphql  with  { query }  — send an access token in Authorization',
+  },
+  streaming_topic: {
+    heading: 'Subscribe to the topic',
+    body:    'Topic: <topic-name>  ·  Brokers: <broker-list>  ·  Schema registry: <registry-url>',
+  },
+  file_object_export: {
+    heading: 'Read the exported files',
+    body:    '<bucket>/<prefix>/<partition>/...  — access via object-store SDK with the granted IAM role',
+  },
+  semantic_query_endpoint: {
+    heading: 'Query with natural language (agents)',
+    body:    'MCP tool: semantic_search  ·  arg: { productId, query }  — requires an agent trust classification',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Style maps
@@ -82,6 +117,11 @@ const TABS: { id: TabId; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
+  const ownerLine = product.owner
+    ? (product.owner.displayName ?? product.owner.email ?? product.owner.id)
+    : null;
+  const domainTeamOwner = product.domainTeam?.ownerDisplayName ?? product.domainTeam?.ownerEmail ?? null;
+
   return (
     <div className="space-y-4">
       <div className="bg-white border border-slate-200 rounded-xl p-5">
@@ -100,6 +140,31 @@ function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
               </span>
             ))}
           </div>
+        </div>
+      )}
+      {(product.owner || product.domainTeam) && (
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Ownership</h3>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            {ownerLine && (
+              <div>
+                <dt className="text-slate-400 text-xs">Product owner</dt>
+                <dd className="text-slate-700">{ownerLine}</dd>
+                {product.owner?.email && product.owner.email !== ownerLine && (
+                  <dd className="text-slate-500 text-xs">{product.owner.email}</dd>
+                )}
+              </div>
+            )}
+            {product.domainTeam && (
+              <div>
+                <dt className="text-slate-400 text-xs">Domain team</dt>
+                <dd className="text-slate-700">{product.domainTeam.name}</dd>
+                {domainTeamOwner && (
+                  <dd className="text-slate-500 text-xs">Lead: {domainTeamOwner}</dd>
+                )}
+              </div>
+            )}
+          </dl>
         </div>
       )}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
@@ -137,6 +202,41 @@ function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
       </div>
     </div>
   );
+}
+
+function FreshnessBadge({ product }: { product: MarketplaceProductDetail }) {
+  if (!product.freshness) return null;
+  const when = new Date(product.freshness.evaluatedAt).toLocaleDateString();
+  const cls = product.freshness.passed
+    ? 'bg-green-100 text-green-800 border-green-200'
+    : 'bg-red-100 text-red-800 border-red-200';
+  const label = product.freshness.passed ? 'Fresh' : 'Stale';
+  return (
+    <span
+      className={`px-2 py-0.5 rounded text-xs font-medium border ${cls}`}
+      title={`Freshness SLO evaluated ${when}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function extractFieldsFromContract(contract: Record<string, unknown> | null | undefined): Array<{ name: string; type: string; description: string | null; required: boolean }> {
+  if (!contract || typeof contract !== 'object') return [];
+  const props = (contract as Record<string, unknown>).properties;
+  if (!props || typeof props !== 'object') return [];
+  const requiredList = Array.isArray((contract as Record<string, unknown>).required)
+    ? ((contract as Record<string, unknown>).required as string[])
+    : [];
+  return Object.entries(props as Record<string, unknown>).map(([name, def]) => {
+    const d = (def ?? {}) as { type?: string; description?: string };
+    return {
+      name,
+      type: d.type ?? 'unknown',
+      description: d.description ?? null,
+      required: requiredList.includes(name),
+    };
+  });
 }
 
 function SchemaTab({ productId }: { productId: string }) {
@@ -220,61 +320,119 @@ function PortsTab({ ports }: { ports: Port[] }) {
 
   return (
     <div className="space-y-4">
-      {outputPorts.map((port) => (
-        <div key={port.id} className="bg-white border border-slate-200 rounded-xl p-5">
-          <div className="flex items-start justify-between gap-3 mb-3">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900">{port.name}</h3>
-              {port.description && (
-                <p className="text-xs text-slate-500 mt-0.5">{port.description}</p>
+      {outputPorts.map((port) => {
+        const fields   = extractFieldsFromContract(port.contractSchema);
+        const guidance = port.interfaceType ? CONSUMPTION_GUIDANCE[port.interfaceType] : null;
+
+        return (
+          <div key={port.id} className="bg-white border border-slate-200 rounded-xl p-5">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">{port.name}</h3>
+                {port.description && (
+                  <p className="text-xs text-slate-500 mt-0.5">{port.description}</p>
+                )}
+              </div>
+              {port.interfaceType && (
+                <span className={`px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${INTERFACE_COLORS[port.interfaceType]}`}>
+                  {INTERFACE_LABELS[port.interfaceType]}
+                </span>
               )}
             </div>
-            {port.interfaceType && (
-              <span className={`px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${INTERFACE_COLORS[port.interfaceType]}`}>
-                {INTERFACE_LABELS[port.interfaceType]}
-              </span>
+
+            {port.slaDescription && (
+              <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 mb-3">
+                <span className="font-medium text-slate-700">SLO: </span>
+                {port.slaDescription}
+              </div>
+            )}
+
+            {guidance && (
+              <div className="border border-brand-100 bg-brand-50 rounded-lg p-3 mb-3">
+                <p className="text-xs font-semibold text-brand-800 mb-1">How to consume — {guidance.heading}</p>
+                <code className="block text-xs font-mono text-brand-900 whitespace-pre-wrap break-all">
+                  {guidance.body}
+                </code>
+              </div>
+            )}
+
+            {fields.length > 0 ? (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Field</th>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Type</th>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Required</th>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fields.map((f) => (
+                      <tr key={f.name}>
+                        <td className="px-3 py-2 font-mono text-slate-900">{f.name}</td>
+                        <td className="px-3 py-2 font-mono text-brand-700">{f.type}</td>
+                        <td className="px-3 py-2 text-slate-500">{f.required ? 'Yes' : 'No'}</td>
+                        <td className="px-3 py-2 text-slate-600">{f.description ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : port.contractSchema ? (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-brand-600 hover:text-brand-800 font-medium select-none">
+                  View raw contract schema
+                </summary>
+                <pre className="mt-2 bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto text-xs leading-relaxed">
+                  {JSON.stringify(port.contractSchema, null, 2)}
+                </pre>
+              </details>
+            ) : (
+              <p className="text-xs text-slate-400 italic">
+                No contract schema declared yet — port owner has not published field definitions.
+              </p>
             )}
           </div>
-
-          {port.slaDescription && (
-            <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 mb-3">
-              <span className="font-medium text-slate-700">SLO: </span>
-              {port.slaDescription}
-            </div>
-          )}
-
-          {port.contractSchema && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-brand-600 hover:text-brand-800 font-medium select-none">
-                View contract schema
-              </summary>
-              <pre className="mt-2 bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto text-xs leading-relaxed">
-                {JSON.stringify(port.contractSchema, null, 2)}
-              </pre>
-            </details>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
+}
+
+type EffectiveAccessState = 'owner' | 'granted' | 'pending' | 'denied' | 'not_requested';
+
+function deriveAccessState(
+  product: MarketplaceProductDetail,
+  principalId: string | undefined,
+  submittedRequest: AccessRequest | null,
+): EffectiveAccessState {
+  if (principalId && product.ownerPrincipalId === principalId) return 'owner';
+  if (submittedRequest && submittedRequest.status === 'pending') return 'pending';
+  const status: ProductAccessStatusValue | undefined = product.accessStatus?.status;
+  if (status === 'granted')       return 'granted';
+  if (status === 'pending')       return 'pending';
+  if (status === 'denied')        return 'denied';
+  return 'not_requested';
 }
 
 function AccessTab({
   product,
   onRequestAccess,
+  effectiveState,
 }: {
   product: MarketplaceProductDetail;
   onRequestAccess: () => void;
+  effectiveState: EffectiveAccessState;
 }) {
-  const { keycloak } = useAuth();
-  const principalId = keycloak.tokenParsed?.sub;
+  const { principalId } = useAuth();
 
   const [myRequest, setMyRequest]   = useState<AccessRequest | null>(null);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    if (!principalId) return;
+    if (!principalId) { setLoading(false); return; }
     marketplaceApi.products.accessRequestsGlobal(product.id)
       .then((res) => {
         const req = res.items.find((r) => r.productId === product.id) ?? null;
@@ -290,36 +448,54 @@ function AccessTab({
   if (loading) return <LoadingState label="access status" />;
   if (error)   return <ErrorState message={error} />;
 
-  const hasActiveRequest = myRequest && myRequest.status === 'pending';
-  const approved         = myRequest && myRequest.status === 'approved';
-
   return (
     <div className="space-y-4">
-      {/* Current status */}
-      {approved && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-          <p className="text-sm font-semibold text-green-800">Access Approved</p>
-          <p className="text-xs text-green-700 mt-1">
-            Your access request was approved
-            {myRequest.resolvedAt ? ` on ${new Date(myRequest.resolvedAt).toLocaleDateString()}` : ''}.
+      {effectiveState === 'owner' && (
+        <div className="bg-brand-50 border border-brand-200 rounded-xl p-5">
+          <p className="text-sm font-semibold text-brand-800">You own this product</p>
+          <p className="text-xs text-brand-700 mt-1">
+            As the product owner you have full access. Access requests from consumers will be routed to you for review.
           </p>
-          {myRequest.resolutionNote && (
+        </div>
+      )}
+
+      {effectiveState === 'granted' && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-5">
+          <p className="text-sm font-semibold text-green-800">You have access</p>
+          <p className="text-xs text-green-700 mt-1">
+            {product.accessStatus?.grantedAt
+              ? `Granted ${new Date(product.accessStatus.grantedAt).toLocaleDateString()}`
+              : 'Your access grant is active.'}
+            {product.accessStatus?.expiresAt
+              ? ` · Expires ${new Date(product.accessStatus.expiresAt).toLocaleDateString()}`
+              : ''}
+          </p>
+          {myRequest?.resolutionNote && (
             <p className="text-xs text-green-700 mt-1">Note: {myRequest.resolutionNote}</p>
           )}
         </div>
       )}
 
-      {hasActiveRequest && (
+      {effectiveState === 'pending' && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5">
-          <p className="text-sm font-semibold text-yellow-800">Request Pending</p>
+          <p className="text-sm font-semibold text-yellow-800">Request pending</p>
           <p className="text-xs text-yellow-700 mt-1">
-            Your request is awaiting review by the data product owner. Submitted{' '}
-            {new Date(myRequest.requestedAt).toLocaleDateString()}.
+            Your request is awaiting review by the data product owner
+            {myRequest?.requestedAt ? `. Submitted ${new Date(myRequest.requestedAt).toLocaleDateString()}` : '.'}
           </p>
         </div>
       )}
 
-      {!approved && !hasActiveRequest && (
+      {effectiveState === 'denied' && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+          <p className="text-sm font-semibold text-red-800">Request denied</p>
+          <p className="text-xs text-red-700 mt-1">
+            A previous access request was denied. Contact the product owner before submitting a new request.
+          </p>
+        </div>
+      )}
+
+      {effectiveState === 'not_requested' && (
         <div className="bg-white border border-slate-200 rounded-xl p-5">
           <p className="text-sm text-slate-600 mb-4">
             You do not currently have access to this product.
@@ -334,7 +510,6 @@ function AccessTab({
         </div>
       )}
 
-      {/* Product stats */}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="text-sm font-semibold text-slate-700 mb-3">Access Overview</h3>
         <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -406,6 +581,7 @@ function PageSkeleton() {
 
 export function ProductDetailPage() {
   const { productId } = useParams<{ orgId: string; productId: string }>();
+  const { principalId } = useAuth();
   const [product, setProduct]           = useState<MarketplaceProductDetail | null>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
@@ -442,7 +618,8 @@ export function ProductDetailPage() {
     );
   }
 
-  const outputPorts = product.ports.filter((p) => p.portType === 'output');
+  const outputPorts     = product.ports.filter((p) => p.portType === 'output');
+  const effectiveState  = deriveAccessState(product, principalId, submittedRequest);
 
   function handleRequestSubmitted(req: AccessRequest) {
     setSubmittedRequest(req);
@@ -476,18 +653,35 @@ export function ProductDetailPage() {
                   {COMPLIANCE_LABEL[product.complianceState]}
                 </span>
               )}
+              <FreshnessBadge product={product} />
             </div>
             <p className="text-sm text-slate-500">
               {product.domainName} · v{product.version} · Updated {new Date(product.updatedAt).toLocaleDateString()}
             </p>
           </div>
 
-          {/* Primary CTA */}
-          {submittedRequest ? (
-            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
-              Request Pending
+          {/* Primary CTA — branches on ownership + current access state */}
+          {effectiveState === 'owner' && (
+            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-brand-50 text-brand-700 border border-brand-200">
+              You own this product
             </span>
-          ) : (
+          )}
+          {effectiveState === 'granted' && (
+            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-green-50 text-green-700 border border-green-200">
+              You have access
+            </span>
+          )}
+          {effectiveState === 'pending' && (
+            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
+              Request pending
+            </span>
+          )}
+          {effectiveState === 'denied' && (
+            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-red-50 text-red-700 border border-red-200">
+              Access denied
+            </span>
+          )}
+          {effectiveState === 'not_requested' && (
             <button
               type="button"
               onClick={() => setShowAccessRequest(true)}
@@ -538,6 +732,7 @@ export function ProductDetailPage() {
           <AccessTab
             product={product}
             onRequestAccess={() => setShowAccessRequest(true)}
+            effectiveState={effectiveState}
           />
         )}
       </div>

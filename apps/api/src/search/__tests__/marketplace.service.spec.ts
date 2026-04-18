@@ -4,6 +4,7 @@ import { MarketplaceService } from '../marketplace.service.js';
 import { TrustScoreService } from '../trust-score.service.js';
 import { OPENSEARCH_CLIENT } from '../opensearch.client.js';
 import { PRODUCT_INDEX } from '../product-index.service.js';
+import { ProductEnrichmentService } from '../../products/product-enrichment.service.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../../products/entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../../products/entities/product-version.entity.js';
@@ -68,6 +69,16 @@ const mockTrustScoreService = () => ({
   computeTrustScore: jest.fn().mockResolvedValue(1.0),
 });
 
+const mockEnrichmentService = () => ({
+  enrich: jest.fn().mockResolvedValue({
+    owner:         null,
+    domainTeam:    null,
+    freshness:     null,
+    accessStatus:  null,
+    columnSchema:  null,
+  }),
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -75,13 +86,15 @@ const mockTrustScoreService = () => ({
 describe('MarketplaceService', () => {
   let service: MarketplaceService;
   let osClient: ReturnType<typeof mockOsClient>;
+  let module: Awaited<ReturnType<ReturnType<typeof Test.createTestingModule>['compile']>>;
 
   beforeEach(async () => {
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         MarketplaceService,
         { provide: OPENSEARCH_CLIENT,                                  useFactory: mockOsClient          },
         { provide: TrustScoreService,                                  useFactory: mockTrustScoreService },
+        { provide: ProductEnrichmentService,                           useFactory: mockEnrichmentService },
         { provide: getRepositoryToken(DataProductEntity),              useFactory: mockRepo              },
         { provide: getRepositoryToken(PortDeclarationEntity),          useFactory: mockRepo              },
         { provide: getRepositoryToken(ProductVersionEntity),           useFactory: mockRepo              },
@@ -188,5 +201,72 @@ describe('MarketplaceService', () => {
 
     expect(result.total).toBe(0);
     expect(result.results).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Product detail — 5.4 P1 enrichment wiring
+  // ---------------------------------------------------------------------------
+
+  describe('getProductDetail — enrichment fields', () => {
+    const baseProduct = {
+      id: 'product-1',
+      orgId: 'org-1',
+      domainId: 'domain-1',
+      name: 'Orders',
+      slug: 'orders',
+      description: null,
+      status: 'published',
+      version: '1.0.0',
+      classification: 'internal',
+      ownerPrincipalId: 'principal-1',
+      tags: [],
+      ports: [],
+      createdAt: new Date('2024-01-01T00:00:00Z'),
+      updatedAt: new Date('2024-01-02T00:00:00Z'),
+    };
+
+    beforeEach(() => {
+      const dpRepo = (service as unknown as { productRepo: { findOne: jest.Mock; find: jest.Mock } }).productRepo;
+      dpRepo.findOne.mockResolvedValue(baseProduct);
+      dpRepo.find.mockResolvedValue([baseProduct]);
+    });
+
+    it('calls ProductEnrichmentService.enrich and merges the returned fields into the response', async () => {
+      const enrichment = module.get(ProductEnrichmentService) as ReturnType<typeof mockEnrichmentService>;
+      enrichment.enrich.mockResolvedValueOnce({
+        owner:        { id: 'principal-1', displayName: 'Alice', email: 'alice@example.com' },
+        domainTeam:   { id: 'domain-1', name: 'Finance', ownerDisplayName: 'Dana', ownerEmail: 'dana@example.com' },
+        freshness:    { lastRefreshedAt: null, sloType: 'freshness', passed: true, measuredValue: 0.99, evaluatedAt: '2024-01-02T00:00:00.000Z' },
+        accessStatus: { status: 'granted', grantedAt: '2024-01-01T00:00:00.000Z', expiresAt: null },
+        columnSchema: null,
+      });
+
+      const result = await service.getProductDetail('org-1', 'product-1');
+
+      expect(enrichment.enrich).toHaveBeenCalledTimes(1);
+      expect(result.owner).toEqual({ id: 'principal-1', displayName: 'Alice', email: 'alice@example.com' });
+      expect(result.domainTeam).toMatchObject({ name: 'Finance' });
+      expect(result.freshness).toMatchObject({ passed: true });
+      expect(result.accessStatus).toMatchObject({ status: 'granted' });
+      expect(result.columnSchema).toBeNull();
+    });
+
+    it('forwards ctx to enrich when provided', async () => {
+      const enrichment = module.get(ProductEnrichmentService) as ReturnType<typeof mockEnrichmentService>;
+      const ctx = {
+        principalId: 'principal-1',
+        orgId: 'org-1',
+        principalType: 'human_user' as const,
+        roles: [],
+        keycloakSubject: 'kc-1',
+      };
+
+      await service.getProductDetail('org-1', 'product-1', ctx);
+
+      expect(enrichment.enrich).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'product-1', orgId: 'org-1' }),
+        ctx,
+      );
+    });
   });
 });

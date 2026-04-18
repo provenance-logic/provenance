@@ -18,6 +18,7 @@ import { GovernanceModule } from '../governance/governance.module.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { SearchModule } from '../search/search.module.js';
 import { TrustScoreService } from '../search/trust-score.service.js';
+import { ProductEnrichmentModule } from './product-enrichment.module.js';
 
 export { ProductsService };
 
@@ -40,6 +41,7 @@ export { ProductsService };
     GovernanceModule,
     KafkaModule,
     SearchModule,
+    ProductEnrichmentModule,
   ],
   controllers: [ProductsController],
   providers: [ProductsService, TrustScoreService],

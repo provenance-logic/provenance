@@ -301,6 +301,26 @@ components:
               $ref: '#/components/schemas/Uuid'
             createdAt:
               $ref: '#/components/schemas/Timestamp'
+            owner:
+              $ref: './products.yaml#/components/schemas/ProductOwner'
+              nullable: true
+              description: Resolved owner principal details.
+            domainTeam:
+              $ref: './products.yaml#/components/schemas/ProductDomainTeam'
+              nullable: true
+              description: Domain team context.
+            freshness:
+              $ref: './products.yaml#/components/schemas/ProductFreshness'
+              nullable: true
+              description: Most recent freshness SLO evaluation. Null if no freshness SLO is declared.
+            accessStatus:
+              $ref: './products.yaml#/components/schemas/ProductAccessStatus'
+              nullable: true
+              description: Access status for the requesting principal. Null when no principal context is available.
+            columnSchema:
+              $ref: './products.yaml#/components/schemas/ProductColumnSchema'
+              nullable: true
+              description: Column-level schema from the most recent connector schema snapshot. Null when no snapshot exists.
 
     # ------------------------------------------------------------------
     # Schema endpoint

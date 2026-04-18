@@ -66,7 +66,7 @@ export class MarketplaceController {
     @ReqContext() ctx: RequestContext,
     @Param('productId') productId: string,
   ): Promise<MarketplaceProductDetail> {
-    return this.marketplaceService.getProductDetail(ctx.orgId, productId);
+    return this.marketplaceService.getProductDetail(ctx.orgId, productId, ctx);
   }
 
   @Get('products/:productId/schema')

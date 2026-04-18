@@ -8,6 +8,7 @@ import { ProductVersionEntity } from '../products/entities/product-version.entit
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
+import { ProductEnrichmentModule } from '../products/product-enrichment.module.js';
 import { opensearchClientProvider } from './opensearch.client.js';
 import { TrustScoreService } from './trust-score.service.js';
 import { ProductIndexService } from './product-index.service.js';
@@ -32,6 +33,7 @@ import { SemanticSearchController } from './semantic-search.controller.js';
       AccessRequestEntity,
     ]),
     KafkaModule,
+    ProductEnrichmentModule,
   ],
   providers: [
     opensearchClientProvider,

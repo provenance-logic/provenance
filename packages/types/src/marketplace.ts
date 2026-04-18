@@ -1,5 +1,15 @@
 import type { Uuid, IsoTimestamp, Slug, SemanticVersion, PaginatedList } from './common.js';
-import type { DataProductStatus, DataClassification, OutputPortInterfaceType, Port } from './products.js';
+import type {
+  DataProductStatus,
+  DataClassification,
+  OutputPortInterfaceType,
+  Port,
+  ProductOwner,
+  ProductDomainTeam,
+  ProductFreshness,
+  ProductAccessStatus,
+  ProductColumnSchema,
+} from './products.js';
 import type { ComplianceStateValue } from './governance.js';
 
 // ---------------------------------------------------------------------------
@@ -67,6 +77,11 @@ export interface MarketplaceProductDetail extends MarketplaceProduct {
   activeConsumerCount: number;
   ownerPrincipalId: Uuid;
   createdAt: IsoTimestamp;
+  owner?: ProductOwner | null;
+  domainTeam?: ProductDomainTeam | null;
+  freshness?: ProductFreshness | null;
+  accessStatus?: ProductAccessStatus | null;
+  columnSchema?: ProductColumnSchema | null;
 }
 
 // ---------------------------------------------------------------------------
