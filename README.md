@@ -5,7 +5,7 @@
 Provenance is an open-source, cloud-native platform that makes data mesh real — not as a philosophy, but as working software. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![PRD](https://img.shields.io/badge/docs-PRD%20v1.0-teal.svg)](./documents/prd)
+[![PRD](https://img.shields.io/badge/docs-PRD%20v1.4-teal.svg)](./documents/prd)
 [![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.0-teal.svg)](./documents/architecture)
 [![Status](https://img.shields.io/badge/status-Phase%205%20active-green.svg)]()
 
@@ -96,6 +96,8 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 ---
 
 ## Project Status
+
+> **⚠️ Development Paused (2026-04-18):** Active feature development is paused pending review of **PRD v1.4** and prioritization of the remaining Open Source Readiness blockers captured in [`documents/prd/implementation-status.md`](./documents/prd/implementation-status.md). New features will not be started until the blockers are triaged.
 
 Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active.
 
@@ -279,7 +281,8 @@ AI agents in Provenance are first-class principals with their own identity model
 
 | Document | Description |
 |---|---|
-| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.3.md) | Complete requirements across all seven platform domains |
+| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.4.md) | Complete requirements across all seven platform domains |
+| [Implementation Status](./documents/prd/implementation-status.md) | Current implementation gaps vs. PRD v1.4 and rationale for the development halt |
 | [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) | MVP and production architecture, technology decisions, build sequence |
 | [Architecture Decision Records](./documents/architecture/adr/) | Individual decision records for significant technology choices |
 | [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |

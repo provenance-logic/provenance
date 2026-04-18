@@ -2,7 +2,9 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.3.md` and `documents/architecture/Provenance_Architecture_v1.3.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.3.md`.
+
+> **⚠️ DEVELOPMENT HALTED (2026-04-18):** All new feature development is paused pending PRD v1.4 review. No new features will be started until the blockers surfaced in `documents/prd/implementation-status.md` are prioritized. See that document for the current gap analysis and the halt rationale.
 
 ---
 
@@ -165,6 +167,8 @@ provenance-platform/
 **OpenSearch indices:** `data_products` (kNN semantic, 384-dim, all-MiniLM-L6-v2) + `provenance-products` (BM25 keyword). Both active and complementary — do not merge.
 
 **Agent authentication (ADR-002, Phase 5 complete):** JWT-based authentication via Keycloak `client_credentials` grant. Each registered agent receives a dedicated Keycloak client at registration time. Agent Query Layer validates JWT on every MCP request (RS256, JWKS, exp, iss, `principal_type=ai_agent`). Verified `agent_id` and `org_id` extracted from JWT claims — identity is cryptographically verified, not self-reported. Supersedes the Phase 4 `X-Agent-Id` header pattern. See `documents/architecture/adr/ADR-002-jwt-agent-authentication.md`.
+
+**Lineage visualization (ADR-003):** Lineage graph rendering uses **React Flow** for the node/edge canvas with **Dagre** for automatic DAG layout. This supersedes the earlier D3-based approach. React Flow provides built-in pan/zoom, node selection, and custom node types; Dagre computes deterministic hierarchical positions for lineage DAGs. See `documents/architecture/adr/ADR-003-lineage-visualization.md`.
 
 ---
 
@@ -344,7 +348,8 @@ Live development environment: https://dev.provenancelogic.com
 
 ## Full Documentation
 
-* Product Requirements Document: `documents/prd/Provenance_PRD_v1.3.md`
+* Product Requirements Document: `documents/prd/Provenance_PRD_v1.4.md`
+* Implementation Status (current gaps and halt rationale): `documents/prd/implementation-status.md`
 * Architecture Document: `documents/architecture/Provenance_Architecture_v1.3.md`
-* Architecture Decision Records: `documents/architecture/adr/`
+* Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003)
 * API Reference: `documents/api/` (generated from OpenAPI specs)
