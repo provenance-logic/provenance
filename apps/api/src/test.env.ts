@@ -9,3 +9,5 @@ process.env['KEYCLOAK_CLIENT_ID'] = 'test';
 process.env['KEYCLOAK_ADMIN_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_ADMIN_CLIENT_ID'] = 'provenance-agent-provisioner';
 process.env['KEYCLOAK_ADMIN_CLIENT_SECRET'] = 'test-admin-secret';
+process.env['EMAIL_PROVIDER'] = 'noop';
+process.env['APP_BASE_URL'] = 'http://localhost:3000';

@@ -3,7 +3,9 @@
   "realm": "provenance",
   "displayName": "Provenance",
   "enabled": true,
-  "registrationAllowed": false,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "verifyEmail": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
@@ -12,6 +14,18 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "accessTokenLifespan": 300,
+  "smtpServer": {
+    "host": "mailhog",
+    "port": "1025",
+    "from": "noreply@provenancelogic.com",
+    "fromDisplayName": "Provenance",
+    "replyTo": "noreply@provenancelogic.com",
+    "replyToDisplayName": "Provenance",
+    "envelopeFrom": "noreply@provenancelogic.com",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
   "roles": {
     "realm": [
       {
@@ -134,6 +148,20 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect"
+    },
+    {
+      "clientId": "provenance-admin",
+      "name": "Provenance Admin",
+      "description": "Confidential service account used by the NestJS API for Keycloak management operations — creating users on invite acceptance, provisioning agent clients (ADR-002), triggering email verification flows.",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "secret": "provenance-admin-dev-secret"
     }
   ],
   "users": [

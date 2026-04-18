@@ -1,11 +1,14 @@
 import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { OrganizationsService } from '../organizations.service.js';
 import { OrgEntity } from '../entities/org.entity.js';
 import { DomainEntity } from '../entities/domain.entity.js';
 import { PrincipalEntity } from '../entities/principal.entity.js';
 import { RoleAssignmentEntity } from '../entities/role-assignment.entity.js';
+import { PolicySchemaEntity } from '../../governance/entities/policy-schema.entity.js';
+import { KeycloakAdminService } from '../../auth/keycloak-admin.service.js';
+import { EmailService } from '../../email/email.service.js';
 
 const mockOrgRepo = () => ({
   findAndCount: jest.fn(),
@@ -44,12 +47,71 @@ const mockRoleAssignmentRepo = () => ({
   remove: jest.fn(),
 });
 
+const mockPolicySchemaRepo = () => ({
+  create: jest.fn((dto: any) => dto),
+  save: jest.fn((rows: any) => rows),
+});
+
+let seededPolicyRows: any[] = [];
+const mockDataSource = () => ({
+  transaction: jest.fn(async (cb: (mgr: any) => Promise<any>) => {
+    seededPolicyRows = [];
+    const mgr: any = {
+      query: jest.fn().mockResolvedValue([]),
+      getRepository: (entity: any) => {
+        if (entity === OrgEntity) {
+          return {
+            create: jest.fn((dto: any) => dto),
+            save: jest.fn((e: any) => ({ id: 'org-new', createdAt: new Date(), updatedAt: new Date(), ...e })),
+          };
+        }
+        if (entity === PrincipalEntity) {
+          return {
+            create: jest.fn((dto: any) => dto),
+            save: jest.fn((e: any) => ({ id: 'principal-new', createdAt: new Date(), updatedAt: new Date(), ...e })),
+          };
+        }
+        if (entity === RoleAssignmentEntity) {
+          return {
+            create: jest.fn((dto: any) => dto),
+            save: jest.fn((e: any) => e),
+          };
+        }
+        if (entity === PolicySchemaEntity) {
+          return {
+            create: jest.fn((dto: any) => dto),
+            save: jest.fn((rows: any) => {
+              seededPolicyRows = Array.isArray(rows) ? rows : [rows];
+              return seededPolicyRows;
+            }),
+          };
+        }
+        return { findOne: jest.fn(), save: jest.fn() };
+      },
+    };
+    return cb(mgr);
+  }),
+});
+
+const mockKeycloakAdmin = () => ({
+  updateUserAttributes: jest.fn().mockResolvedValue(undefined),
+  assignRealmRoles: jest.fn().mockResolvedValue(undefined),
+  findUserByEmail: jest.fn(),
+  createUser: jest.fn(),
+});
+
+const mockEmailService = () => ({
+  send: jest.fn().mockResolvedValue({ messageId: 'm-1', accepted: true }),
+});
+
 describe('OrganizationsService', () => {
   let service: OrganizationsService;
   let orgRepo: ReturnType<typeof mockOrgRepo>;
   let domainRepo: ReturnType<typeof mockDomainRepo>;
   let principalRepo: ReturnType<typeof mockPrincipalRepo>;
   let roleAssignmentRepo: ReturnType<typeof mockRoleAssignmentRepo>;
+  let keycloakAdmin: ReturnType<typeof mockKeycloakAdmin>;
+  let emailService: ReturnType<typeof mockEmailService>;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -59,6 +121,10 @@ describe('OrganizationsService', () => {
         { provide: getRepositoryToken(DomainEntity), useFactory: mockDomainRepo },
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
         { provide: getRepositoryToken(RoleAssignmentEntity), useFactory: mockRoleAssignmentRepo },
+        { provide: getRepositoryToken(PolicySchemaEntity), useFactory: mockPolicySchemaRepo },
+        { provide: getDataSourceToken(), useFactory: mockDataSource },
+        { provide: KeycloakAdminService, useFactory: mockKeycloakAdmin },
+        { provide: EmailService, useFactory: mockEmailService },
       ],
     }).compile();
 
@@ -67,6 +133,8 @@ describe('OrganizationsService', () => {
     domainRepo = module.get(getRepositoryToken(DomainEntity));
     principalRepo = module.get(getRepositoryToken(PrincipalEntity));
     roleAssignmentRepo = module.get(getRepositoryToken(RoleAssignmentEntity));
+    keycloakAdmin = module.get(KeycloakAdminService);
+    emailService = module.get(EmailService);
   });
 
   // ---------------------------------------------------------------------------
@@ -296,6 +364,89 @@ describe('OrganizationsService', () => {
       roleAssignmentRepo.find.mockResolvedValue([]);
 
       await expect(service.removeMember('org-1', 'principal-unknown')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // selfServeOrganization (F10.2)
+  // ---------------------------------------------------------------------------
+
+  describe('selfServeOrganization', () => {
+    const freshCtx = {
+      principalId: 'kc-sub-new',
+      orgId: '',
+      principalType: 'human_user' as const,
+      roles: [],
+      keycloakSubject: 'kc-sub-new',
+      email: 'new-admin@example.com',
+      displayName: 'New Admin',
+    };
+
+    it('creates org, principal, org_admin assignment, and seeds default governance layer', async () => {
+      orgRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.selfServeOrganization(
+        { name: 'Acme', slug: 'acme' },
+        freshCtx,
+      );
+
+      expect(result.organization.slug).toBe('acme');
+      expect(result.principalId).toBeTruthy();
+      expect(result.requiresTokenRefresh).toBe(true);
+      expect(seededPolicyRows).toHaveLength(8);
+      expect(seededPolicyRows.every((r) => r.isPlatformDefault === true)).toBe(true);
+      expect(seededPolicyRows.map((r) => r.policyDomain).sort()).toEqual(
+        [
+          'access_control',
+          'agent_access',
+          'classification_taxonomy',
+          'interoperability',
+          'lineage',
+          'product_schema',
+          'slo',
+          'versioning_deprecation',
+        ],
+      );
+      expect(keycloakAdmin.updateUserAttributes).toHaveBeenCalledWith(
+        'kc-sub-new',
+        expect.objectContaining({
+          provenance_org_id: 'org-new',
+          provenance_principal_type: 'platform_admin',
+        }),
+      );
+      expect(keycloakAdmin.assignRealmRoles).toHaveBeenCalledWith('kc-sub-new', ['org_admin']);
+      expect(emailService.send).toHaveBeenCalled();
+    });
+
+    it('throws ConflictException if slug already exists', async () => {
+      orgRepo.findOne.mockResolvedValue({ id: 'org-existing', slug: 'acme' });
+
+      await expect(
+        service.selfServeOrganization({ name: 'Acme', slug: 'acme' }, freshCtx),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('throws ConflictException if caller already has an orgId', async () => {
+      await expect(
+        service.selfServeOrganization(
+          { name: 'Acme', slug: 'acme' },
+          { ...freshCtx, orgId: 'org-existing' },
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('succeeds even when Keycloak attribute binding or email send fails', async () => {
+      orgRepo.findOne.mockResolvedValue(null);
+      keycloakAdmin.updateUserAttributes.mockRejectedValue(new Error('keycloak unreachable'));
+      emailService.send.mockRejectedValue(new Error('smtp unreachable'));
+
+      const result = await service.selfServeOrganization(
+        { name: 'Beta', slug: 'beta' },
+        freshCtx,
+      );
+
+      expect(result.organization.slug).toBe('beta');
+      expect(result.requiresTokenRefresh).toBe(true);
     });
   });
 });

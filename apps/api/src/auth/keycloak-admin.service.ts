@@ -6,6 +6,12 @@ export interface AgentClientCredentials {
   keycloak_client_secret: string;
 }
 
+export interface KeycloakUserSummary {
+  id: string;
+  email: string;
+  emailVerified: boolean;
+}
+
 @Injectable()
 export class KeycloakAdminService {
   private readonly baseUrl: string;
@@ -137,6 +143,176 @@ export class KeycloakAdminService {
       keycloak_client_id: agentId,
       keycloak_client_secret: body.value,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Users — invitation acceptance and self-serve registration (F10.1, F10.3)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Find a Keycloak user by email address. Returns null if no such user exists.
+   * The exact=true query ensures only case-insensitive-exact matches are returned.
+   */
+  async findUserByEmail(email: string): Promise<KeycloakUserSummary | null> {
+    const token = await this.getAdminToken();
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users?email=${encodeURIComponent(email)}&exact=true`,
+      {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to query Keycloak users: ${res.status}`);
+    }
+    const users = await res.json() as Array<{ id: string; email: string; emailVerified?: boolean }>;
+    const match = users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (!match) return null;
+    return {
+      id: match.id,
+      email: match.email,
+      emailVerified: match.emailVerified ?? false,
+    };
+  }
+
+  /**
+   * Create a new Keycloak user. Returns the Keycloak user id.
+   * The invitation acceptance flow marks emailVerified=true because the
+   * invitation link itself proves email ownership; a separate UPDATE_PASSWORD
+   * required action is triggered so the invitee sets their own password.
+   */
+  async createUser(params: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    emailVerified?: boolean;
+    attributes?: Record<string, string[]>;
+    requiredActions?: string[];
+  }): Promise<string> {
+    const token = await this.getAdminToken();
+    const payload: Record<string, unknown> = {
+      username: params.email,
+      email: params.email,
+      enabled: true,
+      emailVerified: params.emailVerified ?? false,
+    };
+    if (params.firstName) payload.firstName = params.firstName;
+    if (params.lastName) payload.lastName = params.lastName;
+    if (params.attributes) payload.attributes = params.attributes;
+    if (params.requiredActions) payload.requiredActions = params.requiredActions;
+
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!res.ok) {
+      if (res.status === 409) {
+        throw new Error(`Keycloak user with email ${params.email} already exists`);
+      }
+      throw new Error(`Failed to create Keycloak user: ${res.status}`);
+    }
+    const location = res.headers.get('location') ?? '';
+    return location.substring(location.lastIndexOf('/') + 1);
+  }
+
+  /**
+   * Update a Keycloak user's platform attributes. Used to bind the provenance_*
+   * claims (principal_id, org_id, principal_type) so the protocol mappers have
+   * values to project into every issued token.
+   */
+  async updateUserAttributes(userId: string, attributes: Record<string, string>): Promise<void> {
+    const token = await this.getAdminToken();
+    const encoded: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(attributes)) {
+      encoded[k] = [v];
+    }
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ attributes: encoded }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to update Keycloak user attributes: ${res.status}`);
+    }
+  }
+
+  /**
+   * Send an execute-actions email to a Keycloak user. Commonly used to trigger
+   * UPDATE_PASSWORD after invitation acceptance so the invitee sets their own
+   * password via Keycloak's native flow.
+   */
+  async executeActionsEmail(
+    userId: string,
+    actions: string[],
+    redirectUri?: string,
+  ): Promise<void> {
+    const token = await this.getAdminToken();
+    const query = redirectUri
+      ? `?redirect_uri=${encodeURIComponent(redirectUri)}&client_id=provenance-web`
+      : '';
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}/execute-actions-email${query}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(actions),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to send Keycloak actions email: ${res.status}`);
+    }
+  }
+
+  /**
+   * Assign one or more realm roles to a Keycloak user.
+   */
+  async assignRealmRoles(userId: string, roleNames: string[]): Promise<void> {
+    const token = await this.getAdminToken();
+
+    const rolesRes = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/roles`,
+      { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } },
+    );
+    if (!rolesRes.ok) {
+      throw new Error(`Failed to list realm roles: ${rolesRes.status}`);
+    }
+    const allRoles = await rolesRes.json() as Array<{ id: string; name: string }>;
+    const bindings = allRoles
+      .filter((r) => roleNames.includes(r.name))
+      .map((r) => ({ id: r.id, name: r.name }));
+
+    if (bindings.length === 0) return;
+
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}/role-mappings/realm`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bindings),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to assign realm roles to user: ${res.status}`);
+    }
   }
 
   // ---------------------------------------------------------------------------

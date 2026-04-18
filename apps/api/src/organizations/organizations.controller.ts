@@ -48,6 +48,21 @@ export class OrganizationsController {
     return this.orgsService.createOrganization(dto);
   }
 
+  /**
+   * Self-serve tenant provisioning — F10.2. The calling Keycloak user becomes
+   * the first Platform Administrator. No operator involvement required. The
+   * caller's token does NOT need a provenance_org_id claim (they don't have
+   * an org yet); the endpoint will bind the claim after creating the org.
+   */
+  @Post('self-serve')
+  @HttpCode(HttpStatus.CREATED)
+  selfServeOrganization(
+    @Body() dto: CreateOrganizationRequest,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.orgsService.selfServeOrganization(dto, ctx);
+  }
+
   @Get(':orgId')
   getOrganization(@Param('orgId') orgId: string) {
     return this.orgsService.getOrganization(orgId);

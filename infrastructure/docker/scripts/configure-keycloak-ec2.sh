@@ -78,8 +78,40 @@ if run_kcadm get realms/provenance &>/dev/null; then
   echo "Configuring provenance realm..."
   run_kcadm update realms/provenance \
     -s "sslRequired=NONE" \
-    -s "attributes.frontendUrl=$KC_FRONTEND_URL"
-  echo "  provenance realm: sslRequired=NONE, frontendUrl=$KC_FRONTEND_URL"
+    -s "attributes.frontendUrl=$KC_FRONTEND_URL" \
+    -s "registrationAllowed=true" \
+    -s "registrationEmailAsUsername=true" \
+    -s "verifyEmail=true" \
+    -s "loginWithEmailAllowed=true" \
+    -s "resetPasswordAllowed=true"
+  echo "  provenance realm: sslRequired=NONE, frontendUrl=$KC_FRONTEND_URL, registrationAllowed=true, verifyEmail=true"
+
+  # -------------------------------------------------------------------------
+  # SMTP configuration for the provenance realm.
+  # Dev / EC2: Mailhog captures everything locally.
+  # Production: override KC_SMTP_* env vars to point at SES or equivalent.
+  # Idempotent — kcadm merges the smtpServer object on each run.
+  # -------------------------------------------------------------------------
+  KC_SMTP_HOST="${KC_SMTP_HOST:-mailhog}"
+  KC_SMTP_PORT="${KC_SMTP_PORT:-1025}"
+  KC_SMTP_FROM="${KC_SMTP_FROM:-noreply@provenancelogic.com}"
+  KC_SMTP_FROM_NAME="${KC_SMTP_FROM_NAME:-Provenance}"
+  KC_SMTP_AUTH="${KC_SMTP_AUTH:-false}"
+  KC_SMTP_SSL="${KC_SMTP_SSL:-false}"
+  KC_SMTP_STARTTLS="${KC_SMTP_STARTTLS:-false}"
+  KC_SMTP_USER="${KC_SMTP_USER:-}"
+  KC_SMTP_PASSWORD="${KC_SMTP_PASSWORD:-}"
+
+  SMTP_JSON="$(printf '{"host":"%s","port":"%s","from":"%s","fromDisplayName":"%s","replyTo":"%s","envelopeFrom":"%s","auth":"%s","ssl":"%s","starttls":"%s"' \
+    "$KC_SMTP_HOST" "$KC_SMTP_PORT" "$KC_SMTP_FROM" "$KC_SMTP_FROM_NAME" "$KC_SMTP_FROM" "$KC_SMTP_FROM" \
+    "$KC_SMTP_AUTH" "$KC_SMTP_SSL" "$KC_SMTP_STARTTLS")"
+  if [ "$KC_SMTP_AUTH" = "true" ] && [ -n "$KC_SMTP_USER" ]; then
+    SMTP_JSON="$SMTP_JSON$(printf ',"user":"%s","password":"%s"' "$KC_SMTP_USER" "$KC_SMTP_PASSWORD")"
+  fi
+  SMTP_JSON="$SMTP_JSON}"
+
+  run_kcadm update realms/provenance -s "smtpServer=$SMTP_JSON" >/dev/null
+  echo "  provenance realm: smtpServer -> host=$KC_SMTP_HOST port=$KC_SMTP_PORT from=$KC_SMTP_FROM"
 
   # -------------------------------------------------------------------------
   # Keycloak 24 ships with declarative user profile enabled by default, which
@@ -132,6 +164,35 @@ if run_kcadm get realms/provenance &>/dev/null; then
     done
   else
     echo "  provenance-web client not found — skipping redirect URI and mapper update."
+  fi
+
+  # -------------------------------------------------------------------------
+  # Grant realm-management service account roles to the provenance-admin
+  # confidential client. These are required by KeycloakAdminService to:
+  #   - Create Keycloak users on invitation acceptance (manage-users)
+  #   - Look up users by email (query-users)
+  #   - Create dedicated Keycloak clients per agent per ADR-002 (manage-clients)
+  #   - Look up agent clients by clientId (query-clients)
+  # Idempotent: kcadm add-roles is a no-op when the role is already bound.
+  # -------------------------------------------------------------------------
+  ADMIN_CLIENT_ID="$(run_kcadm get clients -r provenance -q clientId=provenance-admin --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+  if [ -n "$ADMIN_CLIENT_ID" ]; then
+    ADMIN_SA_USER_ID="$(run_kcadm get "clients/$ADMIN_CLIENT_ID/service-account-user" -r provenance --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+    REALM_MGMT_CLIENT_ID="$(run_kcadm get clients -r provenance -q clientId=realm-management --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+    if [ -n "$ADMIN_SA_USER_ID" ] && [ -n "$REALM_MGMT_CLIENT_ID" ]; then
+      echo "Granting realm-management roles to provenance-admin service account..."
+      for role in manage-users query-users manage-clients query-clients view-users view-realm; do
+        run_kcadm add-roles -r provenance \
+          --uusername "service-account-provenance-admin" \
+          --cclientid realm-management \
+          --rolename "$role" 2>/dev/null || echo "    role '$role' already granted (or not available) — skipping"
+      done
+      echo "  provenance-admin: realm-management roles granted"
+    else
+      echo "  provenance-admin service account or realm-management client not found — skipping role grant"
+    fi
+  else
+    echo "  provenance-admin client not found — skipping service account role grant"
   fi
 
   # -------------------------------------------------------------------------

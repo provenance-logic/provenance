@@ -1,0 +1,350 @@
+openapi: 3.1.0
+
+info:
+  title: Provenance Invitations API
+  version: 1.0.0
+  description: |
+    Self-serve invitation flow for Domain 10 (F10.3).
+
+    Organization admins and domain owners invite new members by email.
+    Invitees receive a time-limited acceptance link that, when consumed, creates
+    their Keycloak user (if one does not already exist), provisions a platform
+    principal, and grants the pre-assigned role.
+
+    The acceptance endpoint is public — the invitation token itself is the
+    bearer authorization, proving ownership of the invited email address.
+
+servers:
+  - url: /api/v1
+    description: Provenance control plane
+
+tags:
+  - name: Invitations
+    description: Time-limited membership invitations.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    RoleType:
+      type: string
+      enum: [org_admin, domain_owner, data_product_owner, consumer, governance_member]
+
+    InvitationStatus:
+      type: string
+      enum: [pending, accepted, expired]
+
+    Invitation:
+      type: object
+      required:
+        - id
+        - orgId
+        - email
+        - role
+        - invitedByPrincipalId
+        - expiresAt
+        - resendCount
+        - createdAt
+        - status
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        orgId: { $ref: "#/components/schemas/Uuid" }
+        email:
+          type: string
+          format: email
+        role: { $ref: "#/components/schemas/RoleType" }
+        domainId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        invitedByPrincipalId: { $ref: "#/components/schemas/Uuid" }
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+        consumedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        resendCount:
+          type: integer
+          minimum: 0
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        status: { $ref: "#/components/schemas/InvitationStatus" }
+
+    CreateInvitationRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+        role: { $ref: "#/components/schemas/RoleType" }
+        domainId:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            When present, scopes the role assignment to this domain. Required
+            for domain_owner and data_product_owner roles in most governance
+            configurations.
+
+    AcceptInvitationRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+          maxLength: 100
+        lastName:
+          type: string
+          maxLength: 100
+        password:
+          type: string
+          minLength: 12
+          description: |
+            Optional initial password. When omitted, Keycloak will send the
+            invitee an execute-actions email requiring UPDATE_PASSWORD at
+            their first login.
+
+    AcceptInvitationResponse:
+      type: object
+      required: [orgId, principalId, role, loginUrl]
+      properties:
+        orgId: { $ref: "#/components/schemas/Uuid" }
+        principalId: { $ref: "#/components/schemas/Uuid" }
+        role: { $ref: "#/components/schemas/RoleType" }
+        domainId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        loginUrl:
+          type: string
+          format: uri
+
+    InvitationList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+        meta:
+          type: object
+          required: [total, limit, offset]
+          properties:
+            total: { type: integer, minimum: 0 }
+            limit: { type: integer, minimum: 1, maximum: 100 }
+            offset: { type: integer, minimum: 0 }
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode: { type: integer }
+        error: { type: string }
+        message: { type: string }
+
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Forbidden:
+      description: Authenticated principal lacks permission for this operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Conflict:
+      description: Active invitation already exists for this email and role.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+paths:
+  /organizations/{orgId}/invitations:
+    parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+
+    get:
+      operationId: listInvitations
+      summary: List invitations for an organization.
+      tags: [Invitations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      operationId: createInvitation
+      summary: Invite a new member by email.
+      description: |
+        Creates a pending invitation and emails a time-limited acceptance link
+        to the invitee. Only org_admin or domain_owner may call this endpoint.
+      tags: [Invitations]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInvitationRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /organizations/{orgId}/invitations/{invitationId}/resend:
+    parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+      - name: invitationId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+
+    post:
+      operationId: resendInvitation
+      summary: Resend (and refresh) an existing invitation.
+      description: |
+        Extends the expiration window and re-sends the invitation email.
+        Does not create a duplicate record — increments resendCount instead.
+        Fails if the invitation has already been accepted.
+      tags: [Invitations]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400":
+          description: Invitation already accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /organizations/{orgId}/domains/{domainId}/invitations:
+    parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+      - name: domainId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+
+    get:
+      operationId: listDomainInvitations
+      summary: List invitations scoped to a specific domain.
+      description: |
+        Used by the domain team management UI (F7.22 / F10.4) to render the
+        pending invitations tab.
+      tags: [Invitations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /invitations/{token}/accept:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 32
+          maxLength: 128
+
+    post:
+      operationId: acceptInvitation
+      summary: Accept an invitation and complete registration.
+      description: |
+        Public endpoint — the invitation token is the bearer authorization.
+        Creates the Keycloak user if one does not already exist for the invited
+        email, provisions a platform principal, grants the pre-assigned role,
+        and marks the invitation consumed. The response includes a login URL
+        the invitee can use to complete sign-in via Keycloak.
+      tags: [Invitations]
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptInvitationRequest" }
+      responses:
+        "200":
+          description: OK — invitation accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AcceptInvitationResponse" }
+        "403":
+          description: Invitation expired or already consumed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No invitation found for this token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
