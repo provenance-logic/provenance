@@ -27,5 +27,14 @@ auth.provenancelogic.com {
 	# Caddy automatically obtains and renews TLS certificates from Let's Encrypt
 	# and redirects HTTP → HTTPS by default. Keycloak serves /realms/*,
 	# /resources/*, and /admin/* natively at root — no path handling needed.
-	reverse_proxy keycloak:8080
+	#
+	# Explicit header_up directives so Keycloak (KC_PROXY=edge) generates
+	# https:// URLs and sets Secure cookies. Caddy v2 sets these by default,
+	# but we keep them explicit for clarity and robustness against config drift.
+	reverse_proxy keycloak:8080 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-For {remote_host}
+	}
 }
