@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { ReqContext } from '../auth/request-context.decorator.js';
+import { AllowNoOrg } from '../auth/allow-no-org.decorator.js';
 import { OrganizationsService } from './organizations.service.js';
 import type {
   RequestContext,
@@ -56,6 +57,7 @@ export class OrganizationsController {
    * an org yet); the endpoint will bind the claim after creating the org.
    */
   @Post('self-serve')
+  @AllowNoOrg()
   @HttpCode(HttpStatus.CREATED)
   selfServeOrganization(
     @Body() dto: CreateOrganizationRequest,

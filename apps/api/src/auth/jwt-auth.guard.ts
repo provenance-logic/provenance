@@ -1,8 +1,11 @@
 import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
+import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
+import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { RequestContext } from '@provenance/types';
 
 interface AuthRequest {
@@ -15,11 +18,20 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   constructor(
     @InjectRepository(AgentIdentityEntity)
     private readonly agentRepo: Repository<AgentIdentityEntity>,
+    private readonly reflector: Reflector,
   ) {
     super();
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // @Public bypasses JWT entirely (used for token-authenticated endpoints
+    // like invitation acceptance).
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const request = context.switchToHttp().getRequest<AuthRequest>();
     const authHeader = request.headers?.authorization as string | undefined;
 
@@ -60,7 +72,24 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
-    // Fall through to normal Keycloak JWT validation
-    return super.canActivate(context) as Promise<boolean>;
+    // Normal Keycloak JWT validation.
+    const activated = (await (super.canActivate(context) as Promise<boolean>));
+    if (!activated) return false;
+
+    // Require a non-empty provenance_org_id claim on every route except those
+    // explicitly marked @AllowNoOrg — a caller without an org has no tenant
+    // scope and must not reach any tenant-scoped data path. The only
+    // authenticated-but-orgless endpoint is the self-serve org bootstrap.
+    const allowNoOrg = this.reflector.getAllAndOverride<boolean>(ALLOW_NO_ORG_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!allowNoOrg && !request.user?.orgId) {
+      throw new UnauthorizedException(
+        'Token is missing a provenance_org_id claim — complete org signup first',
+      );
+    }
+
+    return true;
   }
 }

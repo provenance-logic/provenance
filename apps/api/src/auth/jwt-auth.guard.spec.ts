@@ -1,5 +1,8 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
+import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
+import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 
 // ---------------------------------------------------------------------------
@@ -36,17 +39,29 @@ function mockAgentRepo() {
   };
 }
 
-function mockExecutionContext(headers: Record<string, string>): {
+function mockExecutionContext(
+  headers: Record<string, string>,
+  initialUser?: Record<string, unknown>,
+): {
   context: ExecutionContext;
   request: Record<string, unknown>;
 } {
   const request: Record<string, unknown> = { headers };
+  if (initialUser) request.user = initialUser;
   const context = {
     switchToHttp: () => ({
       getRequest: () => request,
     }),
+    getHandler: () => ({}),
+    getClass: () => ({}),
   } as unknown as ExecutionContext;
   return { context, request };
+}
+
+function mockReflector(metadata: Record<string, boolean> = {}): Reflector {
+  return {
+    getAllAndOverride: jest.fn((key: string) => metadata[key]),
+  } as unknown as Reflector;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +75,7 @@ describe('JwtAuthGuard — MCP_API_KEY with agent identity headers (Phase 5b-8)'
   beforeEach(() => {
     process.env.MCP_API_KEY = MCP_KEY;
     agentRepo = mockAgentRepo();
-    guard = new JwtAuthGuard(agentRepo as any);
+    guard = new JwtAuthGuard(agentRepo as any, mockReflector());
   });
 
   afterEach(() => {
@@ -171,9 +186,10 @@ describe('JwtAuthGuard — MCP_API_KEY with agent identity headers (Phase 5b-8)'
   // -----------------------------------------------------------------------
 
   it('does not interfere with normal JWT auth path', async () => {
-    const { context } = mockExecutionContext({
-      authorization: 'Bearer some-jwt-token',
-    });
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer some-jwt-token' },
+      { orgId: ORG_ID, principalId: 'p-1' },
+    );
 
     // super.canActivate would be called; we just verify it doesn't
     // enter the MCP_API_KEY branch
@@ -185,6 +201,87 @@ describe('JwtAuthGuard — MCP_API_KEY with agent identity headers (Phase 5b-8)'
     const result = await guard.canActivate(context);
     expect(result).toBe(true);
     expect(agentRepo.findOne).not.toHaveBeenCalled();
+
+    superActivate.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Empty-orgId enforcement — every JWT-authenticated route except @AllowNoOrg
+// must carry a provenance_org_id claim.
+// ---------------------------------------------------------------------------
+
+describe('JwtAuthGuard — provenance_org_id enforcement', () => {
+  let agentRepo: ReturnType<typeof mockAgentRepo>;
+
+  beforeEach(() => {
+    agentRepo = mockAgentRepo();
+  });
+
+  afterEach(() => {
+    delete process.env.MCP_API_KEY;
+  });
+
+  function withValidJwt(
+    user: Record<string, unknown>,
+    reflectorMetadata: Record<string, boolean> = {},
+  ) {
+    const guard = new JwtAuthGuard(agentRepo as any, mockReflector(reflectorMetadata));
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      user,
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+    return { guard, context, superActivate };
+  }
+
+  it('rejects a JWT with empty orgId on a normal route', async () => {
+    const { guard, context, superActivate } = withValidJwt({
+      orgId: '',
+      principalId: 'p-1',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+
+    superActivate.mockRestore();
+  });
+
+  it('allows a JWT with empty orgId when the route is @AllowNoOrg', async () => {
+    const { guard, context, superActivate } = withValidJwt(
+      { orgId: '', principalId: 'p-1' },
+      { [ALLOW_NO_ORG_KEY]: true },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('allows a JWT with a populated orgId on a normal route', async () => {
+    const { guard, context, superActivate } = withValidJwt({
+      orgId: '660e8400-e29b-41d4-a716-446655440001',
+      principalId: 'p-1',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('short-circuits JWT validation entirely when the route is @Public', async () => {
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector({ [IS_PUBLIC_KEY]: true }),
+    );
+    const { context } = mockExecutionContext({});
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(superActivate).not.toHaveBeenCalled();
 
     superActivate.mockRestore();
   });
