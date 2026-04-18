@@ -72,8 +72,20 @@ export class OrganizationsService {
   // Organizations
   // ---------------------------------------------------------------------------
 
-  async listOrganizations(limit: number, offset: number): Promise<OrganizationList> {
+  async listOrganizations(
+    ctx: RequestContext,
+    limit: number,
+    offset: number,
+  ): Promise<OrganizationList> {
+    // A caller with no provenance_org_id claim (e.g. a newly registered user
+    // who has not yet self-served an org) is not a member of any org and must
+    // see an empty list — that signal is what DashboardRedirect uses to route
+    // the user into /onboarding/org (F10.2).
+    if (!ctx.orgId) {
+      return { items: [], meta: { total: 0, limit, offset } };
+    }
     const [items, total] = await this.orgRepo.findAndCount({
+      where: { id: ctx.orgId },
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,

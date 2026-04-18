@@ -141,6 +141,41 @@ describe('OrganizationsService', () => {
   // Organizations
   // ---------------------------------------------------------------------------
 
+  describe('listOrganizations', () => {
+    const makeCtx = (orgId: string) => ({
+      principalId: 'p-1',
+      orgId,
+      principalType: 'human_user' as const,
+      roles: [],
+      keycloakSubject: 'kc-1',
+    });
+
+    it('returns an empty list when caller has no org claim', async () => {
+      const result = await service.listOrganizations(makeCtx(''), 20, 0);
+
+      expect(result.items).toEqual([]);
+      expect(result.meta).toEqual({ total: 0, limit: 20, offset: 0 });
+      expect(orgRepo.findAndCount).not.toHaveBeenCalled();
+    });
+
+    it('returns only the caller\'s own org, never other tenants', async () => {
+      const now = new Date();
+      const callerOrg = {
+        id: 'org-caller', name: 'Caller', slug: 'caller', description: null,
+        status: 'active', contactEmail: null, createdAt: now, updatedAt: now,
+      };
+      orgRepo.findAndCount.mockResolvedValue([[callerOrg], 1]);
+
+      const result = await service.listOrganizations(makeCtx('org-caller'), 20, 0);
+
+      expect(orgRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'org-caller' } }),
+      );
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].id).toBe('org-caller');
+    });
+  });
+
   describe('createOrganization', () => {
     it('creates and returns an organization when slug is unique', async () => {
       orgRepo.findOne.mockResolvedValue(null);

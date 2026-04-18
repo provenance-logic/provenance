@@ -36,10 +36,11 @@ export class OrganizationsController {
 
   @Get()
   listOrganizations(
+    @ReqContext() ctx: RequestContext,
     @Query('limit') limit = 20,
     @Query('offset') offset = 0,
   ) {
-    return this.orgsService.listOrganizations(Number(limit), Number(offset));
+    return this.orgsService.listOrganizations(ctx, Number(limit), Number(offset));
   }
 
   @Post()
