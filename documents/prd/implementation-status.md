@@ -1,0 +1,385 @@
+# Provenance Implementation Status
+
+**Last updated:** April 18, 2026
+**PRD version:** 1.4
+**Active phase:** Phase 5 - Open Source Ready
+
+This document tracks the implementation status of every requirement in the PRD. It is a living burndown checklist updated as Phase 5 progresses. The PRD is the authoritative requirements document; this document tracks what is built against it.
+
+**Status key:**
+- Implemented - fully built and verified working
+- Partially implemented - built but incomplete or not verified end-to-end
+- Not implemented - not yet built
+
+**Open source readiness flags:**
+- Blocker - must be resolved before presenting the platform as open source ready
+- Post-launch - important but not required for initial open source release
+
+---
+
+## Domain 1: Multi-Tenancy and Organization Model
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F1.1 | Organization as Top-Level Tenant | Implemented | Multi-tenant isolation verified |
+| F1.2 | Domain as First-Class Entity | Implemented | Domain CRUD working |
+| F1.3 | Domain Namespacing | Implemented | Namespace model in place |
+| F1.4 | Governance Layer as Distinct Entity | Implemented | Governance layer separation confirmed |
+| F1.5 | Identity and Principal Model | Implemented | Four principal types supported |
+| F1.6 | Role Assignment | Partially implemented | Role model exists; no UI for assignment (see F7.7) |
+| F1.7 | Domain Autonomy Boundaries | Implemented | Cross-domain isolation enforced |
+| F1.8 | Multi-Cloud Tenant Isolation | Implemented | Control/data plane separation enforced |
+| F1.9 | Self-Service Org Onboarding | Partially implemented | Operator involvement still required for new orgs; see Domain 10 |
+| F1.10 | Domain Lifecycle Management | Partially implemented | Creation and active operation working; deprecation/decommission not implemented |
+| NF1.1 | Cryptographic isolation | Implemented | |
+| NF1.2 | Scale targets | Not implemented | Not load tested |
+| NF1.3 | OIDC and SAML 2.0 | Implemented | Keycloak OIDC confirmed; SAML not verified |
+| NF1.4 | Audit log retention | Implemented | Audit log append-only |
+| NF1.5 | 99.99% availability | Not implemented | EC2 single instance; Phase 6 |
+
+---
+
+## Domain 2: Data Product Definition and Lifecycle
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F2.1 | Data Product as Governed Entity | Implemented | |
+| F2.2 | Data Product Definition as Code | Implemented | Machine-readable definition in place |
+| F2.3 | Governance-Configured Product Schema | Partially implemented | Schema exists; full configurability not verified |
+| F2.4 | Domain-Level Schema Extension | Not implemented | Blocker - Open source readiness |
+| F2.5 | Product Schema Versioning | Not implemented | |
+| F2.6 | Ports as Definitional | Implemented | Publication blocked without ports |
+| F2.7 | Port Types | Implemented | Five port types supported |
+| F2.8 | Output Port Interface Types | Partially implemented | Port types defined; connection details field not enforced |
+| F2.9 | Port Contract Enforcement | Partially implemented | Contract model exists; enforcement not fully verified |
+| F2.10 | Input Port Dependency Declaration | Implemented | Lineage registered on input port declaration |
+| F2.11 | Lifecycle States | Implemented | Draft/Published/Deprecated/Decommissioned |
+| F2.11a | Lifecycle Transition Endpoints | Implemented | Deprecate and decommission endpoints with index removal |
+| F2.11b | Mutable Fields on Published Products | Implemented | Name/description/tags mutable with auto re-index |
+| F2.12 | Publication Requirements | Partially implemented | Most requirements enforced; connection details not yet required |
+| F2.13 | Deprecation Process | Partially implemented | Endpoint exists; consumer notifications not implemented (Domain 11) |
+| F2.14 | Deprecation Override | Not implemented | |
+| F2.15 | Decommissioning Guard | Not implemented | |
+| F2.16 | Semantic Versioning | Implemented | MAJOR.MINOR.PATCH enforced |
+| F2.17 | Simultaneous Major Version Support | Not implemented | |
+| F2.18 | Semantic Change Declaration | Not implemented | |
+| F2.19 | Version Deprecation Schedule | Not implemented | |
+| F2.20 | Classification as Mandatory Attribute | Implemented | |
+| F2.21 | Classification Inheritance | Not implemented | |
+| F2.22 | Governance-Configured Metadata | Partially implemented | DCAT baseline in place; full configurability not verified |
+| F2.23 | Lineage Declaration | Implemented | |
+| F2.24 | AI Provenance Metadata | Implemented | |
+
+---
+
+## Domain 3: Connectivity and Source Integration
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F3.1 | Connector as First-Class Entity | Implemented | |
+| F3.2 | Connector Library | Partially implemented | Framework built; not all connectors implemented |
+| F3.3 | Connector Extensibility | Partially implemented | SDK framework exists; capability manifest not implemented |
+| F3.4 | Connector Validation | Implemented | Connectivity test on registration |
+| F3.5 | Connector Health Monitoring | Partially implemented | Health monitoring exists; observability port propagation not verified |
+| F3.6 | Credential Management | Implemented | Secrets Manager integration confirmed |
+| F3.7 | Connector Scope Isolation | Implemented | |
+| F3.8 | Source Registration | Implemented | |
+| F3.9 | Schema Inference | Partially implemented | Inference for some connector types |
+| F3.10 | Schema Drift Detection | Not implemented | |
+| F3.11 | Source Lineage Registration | Implemented | Lineage node created on registration |
+| F3.12 | Data Product as Input Source | Implemented | |
+| F3.13 | Access-Gated Input Declaration | Not implemented | |
+| F3.14 | Inter-Product Schema Propagation | Not implemented | |
+| F3.15 | Inter-Product SLO Dependency | Not implemented | |
+| F3.16 | Lineage Emission Endpoint | Implemented | |
+| F3.17 | Lineage Emission SDK | Partially implemented | TypeScript SDK exists; Python/Java/Scala not complete |
+| F3.18 | Observability Emission Endpoint | Implemented | |
+| F3.19 | Webhook and Event Notification | Not implemented | |
+| F3.20 | CI/CD Integration | Not implemented | |
+| F3.21 | Semantic Query Port Registration | Implemented | MCP routing in place |
+| F3.22 | Agent Source Discovery | Implemented | |
+| F3.23 | Connector Discovery Mode | Not implemented | Phase 5 |
+| F3.23a | Discovery Metadata Taxonomy | Not implemented | Phase 5 |
+| F3.24 | Discovery Scope: Databricks | Not implemented | Phase 5 |
+| F3.25 | Discovery Scope: dbt | Not implemented | Phase 5 |
+| F3.26 | Discovery Scope: Snowflake | Not implemented | Phase 5 |
+| F3.27 | Discovery Scope: Fivetran | Not implemented | Phase 5 |
+| F3.28 | Discovery Re-crawl | Not implemented | Phase 5 |
+| F3.29 | Discovery Conflict Resolution | Not implemented | Phase 5 |
+
+---
+
+## Domain 4: Governance Engine
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F4.1 | Governance as Computation | Implemented | OPA integration confirmed |
+| F4.2 | Right Thing is Easy Thing | Partially implemented | In-authoring validation works; not verified across all flows |
+| F4.3 | Governance Layer Separation | Implemented | |
+| F4.4 | Declarative Policy UI | Implemented | Policy Authoring Studio built |
+| F4.5 | Policy as Versioned Artifact | Implemented | |
+| F4.6 | Policy Domains | Partially implemented | Some policy domains implemented; all eight not verified |
+| F4.7 | Policy Rule Builder | Implemented | |
+| F4.8 | Policy Impact Preview | Implemented | |
+| F4.9 | Policy Grace Periods | Implemented | Temporal workflows for grace periods |
+| F4.10 | Policy Templates | Partially implemented | Some templates exist; regulatory templates not complete |
+| F4.11 | Global Policy Floor | Implemented | |
+| F4.12 | Domain Policy Extensions | Partially implemented | Extension model exists; not fully verified |
+| F4.13 | Effective Policy Computation | Implemented | |
+| F4.14 | Extension Inheritance Transparency | Partially implemented | |
+| F4.15 | Cross-Domain Policy Visibility | Not implemented | |
+| F4.16 | Publication-Time Enforcement | Implemented | OPA evaluation at publication |
+| F4.17 | Continuous Compliance Monitoring | Partially implemented | Monitoring exists; event-triggered near real-time not verified |
+| F4.18 | Compliance State | Implemented | Four compliance states |
+| F4.19 | Enforcement Actions | Partially implemented | Some actions implemented; Auto-Remediate not implemented |
+| F4.20 | Governance Override | Partially implemented | Exception model exists; auto-expiry not verified |
+| F4.21 | Classification Taxonomy Authoring | Implemented | |
+| F4.22 | Classification-Driven Enforcement | Implemented | |
+| F4.23 | Classification Change Governance | Partially implemented | |
+| F4.24 | Governance Dashboard | Implemented | |
+| F4.25 | Domain Compliance Reports | Not implemented | Blocker - Open source readiness |
+| F4.26 | Audit Export | Not implemented | Phase 5.7 |
+
+---
+
+## Domain 5: Lineage and Observability
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F5.1 | Lineage as a Graph | Implemented | Neo4j graph operational |
+| F5.2 | Lineage Node Types | Implemented | Six node types in graph |
+| F5.3 | Lineage Edge Types | Implemented | Five edge types with source markers |
+| F5.4 | Dual Lineage Assembly | Partially implemented | Declared and emitted working; discovered not implemented (Phase 5) |
+| F5.5 | Lineage Completeness Scoring | Partially implemented | Score computed; governance threshold configuration not verified |
+| F5.6 | Lineage Depth | Implemented | Arbitrary depth traversal |
+| F5.7 | Cross-Domain Lineage | Implemented | |
+| F5.8 | Emission Event Schema | Implemented | OpenLineage-aligned schema |
+| F5.9 | Emission Authentication | Implemented | |
+| F5.10 | Emission Idempotency | Implemented | Client-provided event ID deduplication |
+| F5.11 | Batch and Streaming Emission | Implemented | |
+| F5.12 | Agent Lineage Emission | Implemented | Agent provenance in lineage events |
+| F5.13 | Lineage Drift Detection | Not implemented | |
+| F5.14 | Lineage Graph API | Implemented | Upstream/downstream traversal, get_lineage MCP tool |
+| F5.15 | Lineage Visualization | Not implemented | Blocker - D3 rejected; React Flow / Dagre required |
+| F5.16 | Impact Analysis Workflow | Not implemented | |
+| F5.17 | Lineage Time Travel | Not implemented | |
+| F5.18 | Observability as a Port | Implemented | |
+| F5.19 | Observability Metric Categories | Partially implemented | Some categories implemented; not all eight verified |
+| F5.20 | SLO Declaration and Monitoring | Implemented | SLO health with trend data confirmed |
+| F5.21 | Observability Emission | Implemented | |
+| F5.22 | Consumer-Visible Observability | Implemented | |
+| F5.23 | Observability Alerting | Not implemented | Blocker - depends on Domain 11 |
+| F5.24 | Observability History | Partially implemented | 90-day retention not verified |
+| F5.25 | Trust Score | Implemented | Composite trust score with breakdown confirmed |
+| F5.26 | Agent Consumption Tracking | Implemented | Every MCP tool call logged |
+| F5.27 | Non-Determinism Lineage Markers | Implemented | |
+| F5.28 | Agent Observability Signals | Not implemented | |
+
+---
+
+## Domain 6: Agent Integration Layer
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F6.1 | Agent Identity as First-Class Principal | Implemented | |
+| F6.2 | Agent Identity Registration | Implemented | register_agent MCP tool working |
+| F6.3 | Agent Trust Classification | Implemented | Three tiers with behavioral definitions |
+| F6.3a | Classification Transition Rules | Implemented | Transition rules enforced |
+| F6.3b | Classification Scope | Implemented | Global scope with scope field ready |
+| F6.3c | Frozen Operations on Downgrade | Implemented | Temporal frozen state |
+| F6.3d | Audit Requirements for Classification Changes | Implemented | Audit log entries with reason field |
+| F6.4 | Agent Identity Lifecycle | Implemented | |
+| F6.5 | Model Version Binding | Implemented | |
+| F6.6 | Human Oversight Requirement | Implemented | Oversight contact required; auto-suspend on contact deactivation not verified |
+| F6.7 | Agent Access Grants | Partially implemented | Grant model exists; rate limits not enforced at infrastructure level |
+| F6.8 | Agent Access Scope Enforcement | Partially implemented | Application-level enforcement; infrastructure-level not verified |
+| F6.9 | Agent Access Policy | Not implemented | |
+| F6.10 | Dynamic Access Evaluation | Partially implemented | Evaluated at query time; not all policy dimensions verified |
+| F6.11 | Agent Activity Tracking and Audit Log Query API | Implemented | Audit log complete; query API with filters implemented |
+| F6.12 | Semantic Query Interface | Implemented | |
+| F6.13 | Query Protocol | Partially implemented | MCP and NL query working; GraphQL interface not verified |
+| F6.14 | MCP Server Compliance | Implemented | 9 tools operational via SSE port 3002 |
+| F6.15 | Query Planning | Implemented | |
+| F6.16 | Policy-Aware Query Execution | Partially implemented | OPA integration; not all policy dimensions verified |
+| F6.17 | Query Result Provenance | Implemented | Provenance envelope on query results |
+| F6.18 | Cross-Product Join Semantics | Partially implemented | |
+| F6.19 | Query Rate Limiting | Not implemented | |
+| F6.20 | Query Result Caching | Not implemented | |
+| F6.21 | Production-Capable Agent Registration | Implemented | |
+| F6.22 | Agent-Produced Data Product Publication | Partially implemented | |
+| F6.23 | Agent-Produced Product Ownership | Implemented | |
+| F6.24 | Human Review Workflow | Not implemented | Blocker - Open source readiness |
+| F6.25 | Agent Production Audit | Implemented | |
+| F6.26 | Semantic Data Product Discovery | Implemented | semantic_search MCP tool working |
+| F6.27 | Schema Exploration | Not implemented | get_product does not return schema (Phase 5) |
+| F6.28 | Semantic Annotation | Not implemented | |
+| F6.29 | Lineage-Aware Recommendation | Not implemented | |
+| F6.30 | Version-Aware Consumption | Not implemented | |
+
+---
+
+## Domain 7: Self-Service Experience
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F7.1 | Unified Platform Shell | Implemented | |
+| F7.2 | Persona-Adaptive Navigation | Partially implemented | Navigation adapts; not fully persona-segmented per v1.4 spec |
+| F7.3 | Context Switching | Implemented | |
+| F7.4 | Global Search | Implemented | |
+| F7.5 | Notifications | Not implemented | Blocker - Domain 11 not implemented |
+| F7.6 | Keyboard and Accessibility | Not implemented | WCAG 2.1 AA not verified |
+| F7.7 | Role Assignment UI | Not implemented | Blocker - requires Keycloak console today |
+| F7.8 | Progressive Disclosure | Partially implemented | |
+| F7.9 | Empty States | Partially implemented | Some surfaces have empty states |
+| F7.10 | Inline Contextual Help | Not implemented | |
+| F7.11 | Confirmation and Consequence Surfacing | Partially implemented | Some destructive actions have confirmation |
+| F7.12 | Responsive Design | Partially implemented | Desktop working; tablet not verified |
+| F7.13 | Theme Support | Not implemented | |
+| F7.14 | Domain Admin Dashboard | Implemented | Dashboard is primary domain admin surface |
+| F7.15 | Data Product Authoring Interface | Implemented | |
+| F7.16 | Port Configuration UI | Partially implemented | Port configuration exists; connection details completion indicator not implemented |
+| F7.17 | Schema Editor | Partially implemented | Basic schema editing; guided experience not implemented |
+| F7.18 | SLO Configuration UI | Implemented | |
+| F7.19 | Connector Management UI | Partially implemented | Connector management exists; discovery coverage scores not surfaced |
+| F7.20 | Product Lifecycle Management UI | Implemented | |
+| F7.21 | Versioning UI | Partially implemented | Version history exists; MAJOR version workflow not fully implemented |
+| F7.22 | Domain Team Management UI | Not implemented | Blocker - requires Keycloak console today |
+| F7.23 | Data Product Marketplace | Implemented | Marketplace operational |
+| F7.24 | Faceted Search and Filtering | Partially implemented | Some filtering; true faceted filtering not implemented |
+| F7.25 | Related Products and Join Recommendations | Not implemented | |
+| F7.26 | Data Product Detail Page | Partially implemented | Basic detail page; missing schema, ownership, freshness, access status |
+| F7.27 | Trust Score Transparency | Implemented | Trust score with breakdown confirmed |
+| F7.28 | Access Request Workflow | Partially implemented | Request flow exists; SLA display and connection package not implemented |
+| F7.29 | Access Request SLA and Escalation | Not implemented | Blocker - Open source readiness |
+| F7.30 | Consumer Workspace | Partially implemented | Active grants visible; SLA countdown not implemented |
+| F7.31 | Deprecation Impact Management | Not implemented | |
+| F7.32 | Governance Command Center | Implemented | |
+| F7.33 | Policy Authoring Studio | Implemented | |
+| F7.34 | Rule Builder UX | Implemented | |
+| F7.35 | Classification Taxonomy Manager | Implemented | |
+| F7.36 | Compliance Drill-Down | Partially implemented | |
+| F7.37 | Exception Management UI | Partially implemented | Exception model exists; auto-expiry display not verified |
+| F7.38 | Domain Compliance Reports UI | Not implemented | |
+| F7.39 | Access Request SLA Monitoring (Governance) | Not implemented | Depends on F7.29 |
+| F7.40 | Agent Registry UI | Implemented | |
+| F7.41 | Agent Activity Monitor | Implemented | |
+| F7.42 | Human Review Queue | Not implemented | Blocker - Open source readiness |
+| F7.43 | Agent Trust Classification UI | Implemented | |
+| F7.44 | Frozen Operations Queue | Implemented | |
+| F7.45 | Organization Administration | Partially implemented | Basic admin exists; role assignment requires Keycloak |
+| F7.46 | Onboarding Experience | Not implemented | Blocker - depends on Domain 10 |
+| F7.47 | Usage and Health Monitoring | Not implemented | |
+
+---
+
+## Domain 8: Operations and Workflow State
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F8.1 | Frozen Workflow State | Implemented | Temporal frozen state |
+| F8.2 | Frozen State Trigger: Classification Downgrade | Implemented | |
+| F8.3 | Frozen State Visibility | Implemented | Visible in governance command center |
+| F8.4 | Frozen State Audit | Implemented | Audit log entries on frozen state transitions |
+
+---
+
+## Domain 9: Data Product Detail Completeness
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| Column-level schema (Priority 1) | Not implemented | Phase 5 - Blocker |
+| Ownership and stewardship (Priority 1) | Not implemented | Phase 5 - Blocker |
+| Data freshness signals (Priority 1) | Not implemented | Phase 5 - Blocker |
+| Access status for requesting principal (Priority 1) | Not implemented | Phase 5 - Blocker |
+| Data quality signals (Priority 2) | Not implemented | Phase 5 |
+| Versioning and change history (Priority 2) | Not implemented | Phase 5 |
+| Contractual and compliance (Priority 2) | Not implemented | Phase 5 |
+| Volume and performance (Priority 2) | Not implemented | Phase 5 |
+
+---
+
+## Domain 10: Self-Serve Infrastructure
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F10.1 | Self-Service User Registration | Not implemented | Blocker |
+| F10.2 | Organization Creation at Registration | Not implemented | Blocker |
+| F10.3 | Invitation Flow | Not implemented | Blocker |
+| F10.4 | Domain Team Self-Management | Not implemented | Blocker - depends on F7.22 |
+| F10.5 | Connection Details Schema by Port Type | Not implemented | Blocker |
+| F10.6 | Connection Details Confidentiality | Not implemented | Blocker |
+| F10.7 | Connection Details Validation | Not implemented | Blocker |
+| F10.8 | Connection Package Generation | Not implemented | Blocker |
+| F10.9 | Agent Integration Package | Not implemented | Blocker |
+| F10.10 | Connection Package Refresh | Not implemented | |
+| F10.11 | Guided Schema Authoring | Not implemented | |
+| F10.12 | Schema Import from Connector | Partially implemented | Basic import exists; guided experience not implemented |
+| F10.13 | Schema Import from Upstream Product | Not implemented | |
+
+---
+
+## Domain 11: Notifications
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F11.1 | Notification Service | Not implemented | Blocker |
+| F11.2 | Delivery Channels | Not implemented | Blocker |
+| F11.3 | Notification Preferences | Not implemented | |
+| F11.4 | Notification Center UI | Not implemented | Blocker |
+| F11.5 | Notification Deduplication | Not implemented | |
+| F11.6 | Access Request Submitted | Not implemented | Blocker |
+| F11.7 | Access Request Approved | Not implemented | Blocker |
+| F11.8 | Access Request Denied | Not implemented | |
+| F11.9 | Access Request SLA Warning | Not implemented | Blocker |
+| F11.10 | Access Request SLA Breach | Not implemented | Blocker |
+| F11.11 | Access Grant Expiring | Not implemented | |
+| F11.12 | Product Deprecated | Not implemented | Blocker |
+| F11.13 | Product Decommissioned | Not implemented | |
+| F11.14 | Product Published | Not implemented | |
+| F11.15 | Schema Drift Detected | Not implemented | |
+| F11.16 | SLO Violation | Not implemented | Blocker |
+| F11.17 | Trust Score Significant Change | Not implemented | |
+| F11.18 | Connector Health Degraded | Not implemented | |
+| F11.19 | Policy Change Impact | Not implemented | |
+| F11.20 | Compliance Drift Detected | Not implemented | |
+| F11.21 | Grace Period Expiring | Not implemented | |
+| F11.22 | Classification Changed | Not implemented | |
+| F11.23 | Agent Classification Changed | Not implemented | |
+| F11.24 | Agent Suspended | Not implemented | |
+| F11.25 | Human Review Required | Not implemented | Blocker |
+| F11.26 | Frozen Operation Requires Disposition | Not implemented | |
+
+---
+
+## Open Source Readiness Summary
+
+### Blockers (must be resolved before open source ready)
+
+1. **F5.15 Lineage Visualization** - React Flow / Dagre not implemented; D3 rejected
+2. **F7.5 / Domain 11 Notifications** - Zero notification capability; access request flow, SLO violations, product deprecation all untriggered
+3. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
+4. **F7.22 Domain Team Management UI** - Requires Keycloak console; not self-serve
+5. **F7.29 Access Request SLA and Escalation** - No SLA enforcement; no escalation path
+6. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
+7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10
+8. **Domain 10 Self-Serve Infrastructure** - User registration, invitation flow, connection details, connection packages all not implemented. This is the most significant gap. The platform cannot be considered self-serve without this domain.
+9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
+
+### Post-Launch (important but not blocking)
+
+- F2.4 Domain-level schema extension
+- F2.14 Deprecation override
+- F2.15 Decommissioning guard
+- F3.23-F3.29 Connector discovery
+- F4.25 Domain compliance reports
+- F4.26 Audit export (Phase 5.7)
+- F5.13 Lineage drift detection
+- F5.16 Impact analysis workflow
+- F5.17 Lineage time travel
+- F5.23 Observability alerting (depends on Domain 11)
+- F6.24 Human review workflow
+- F6.27 Schema exploration in MCP
+- F7.24 True faceted filtering
+- F7.25 Related products and join recommendations
+- F7.31 Deprecation impact management
+- Domain 9 Priority 2 completeness items
