@@ -58,7 +58,12 @@ const envSchema = z.object({
   EMAIL_FROM_NAME: z.string().default('Provenance'),
   SMTP_HOST: z.string().default('localhost'),
   SMTP_PORT: z.coerce.number().int().positive().default(1025),
-  SMTP_SECURE: z.coerce.boolean().default(false),
+  // z.coerce.boolean() is unsafe for env vars: `Boolean("false")` is `true`,
+  // so any non-empty string coerces to true. Parse the literal string instead.
+  SMTP_SECURE: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
 
