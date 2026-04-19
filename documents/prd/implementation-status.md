@@ -29,7 +29,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F1.6 | Role Assignment | Partially implemented | Role model exists; no UI for assignment (see F7.7) |
 | F1.7 | Domain Autonomy Boundaries | Implemented | Cross-domain isolation enforced |
 | F1.8 | Multi-Cloud Tenant Isolation | Implemented | Control/data plane separation enforced |
-| F1.9 | Self-Service Org Onboarding | Implemented | Covered by F10.1 + F10.2 — Keycloak signup plus POST /organizations/self-serve binds the first platform admin with no operator involvement |
+| F1.9 | Self-Service Org Onboarding | Implemented | Covered by F10.1 + F10.2 + F10.3 — Keycloak signup, `POST /organizations/self-serve` binding the first platform admin, and the invitation flow for adding collaborators. End-to-end onboarding of a new org and its initial team is now fully self-serve; Workstream A of Domain 10 shipped in Phase 5. |
 | F1.10 | Domain Lifecycle Management | Partially implemented | Creation and active operation working; deprecation/decommission not implemented |
 | NF1.1 | Cryptographic isolation | Implemented | |
 | NF1.2 | Scale targets | Not implemented | Not load tested |
@@ -243,7 +243,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F7.19 | Connector Management UI | Partially implemented | Connector management exists; discovery coverage scores not surfaced |
 | F7.20 | Product Lifecycle Management UI | Implemented | |
 | F7.21 | Versioning UI | Partially implemented | Version history exists; MAJOR version workflow not fully implemented |
-| F7.22 | Domain Team Management UI | Not implemented | Blocker - requires Keycloak console today |
+| F7.22 | Domain Team Management UI | Partially implemented | `apps/web/src/features/team/DomainTeamPage.tsx` renders members, pending invitations, and revoke — but reads org-scoped members, not domain-scoped (see comment at `DomainTeamPage.tsx:157`). Strict domain isolation of membership still requires Keycloak console. Tracked with F10.4. |
 | F7.23 | Data Product Marketplace | Implemented | Marketplace operational |
 | F7.24 | Faceted Search and Filtering | Partially implemented | Some filtering; true faceted filtering not implemented |
 | F7.25 | Related Products and Join Recommendations | Not implemented | |
@@ -304,8 +304,8 @@ This document tracks the implementation status of every requirement in the PRD. 
 | --- | --- | --- | --- |
 | F10.1 | Self-Service User Registration | Implemented | Keycloak user signup + login verified end-to-end on dev.provenancelogic.com |
 | F10.2 | Organization Creation at Registration | Implemented | POST /organizations/self-serve binds org + platform_admin principal + seeds default governance layer; Keycloak attribute merge writes provenance_* claims onto the user so refreshed tokens carry them |
-| F10.3 | Invitation Flow | Not implemented | Blocker - backend service and acceptance endpoint exist but the flow is untested end to end |
-| F10.4 | Domain Team Self-Management | Not implemented | Blocker - depends on F7.22 |
+| F10.3 | Invitation Flow | Implemented | `POST /organizations/:orgId/invitations` in `apps/api/src/organizations/invitations.controller.ts` creates rows in `identity.invitations` (entity at `invitations/entities/invitation.entity.ts`), sends email via `apps/api/src/email/templates/invitation.ts`, accepted at public `POST /invitations/:token/accept` which binds `role_assignments` and Keycloak `provenance_*` attributes. Frontend acceptance at `apps/web/src/features/onboarding/AcceptInvitePage.tsx`, public route `/accept-invite`. Unit tests in `invitations.service.spec.ts` cover create/resend/accept. E2E tests not yet written. |
+| F10.4 | Domain Team Self-Management | Partially implemented | Frontend UI present at `apps/web/src/features/team/DomainTeamPage.tsx` (route `/dashboard/:orgId/domains/:domainId/team`) — members tab, invitations tab, revoke action. Backend gap: members tab reads org-scoped `listMembers()` not domain-scoped (see code comment `DomainTeamPage.tsx:157` "preserved for future domain-scoped filters"), and revoke calls org-level `members.remove()`. Strict domain-isolated membership management still requires Keycloak console. Tracked with F7.22. |
 | F10.5 | Connection Details Schema by Port Type | Not implemented | Blocker |
 | F10.6 | Connection Details Confidentiality | Not implemented | Blocker |
 | F10.7 | Connection Details Validation | Not implemented | Blocker |
@@ -358,11 +358,11 @@ This document tracks the implementation status of every requirement in the PRD. 
 1. **F5.15 Lineage Visualization** - React Flow / Dagre not implemented; D3 rejected
 2. **F7.5 / Domain 11 Notifications** - Zero notification capability; access request flow, SLO violations, product deprecation all untriggered
 3. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
-4. **F7.22 Domain Team Management UI** - Requires Keycloak console; not self-serve
+4. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
 5. **F7.29 Access Request SLA and Escalation** - No SLA enforcement; no escalation path
 6. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
-7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10
-8. **Domain 10 Self-Serve Infrastructure** - User registration (F10.1) and organization creation (F10.2) are now live. Invitation flow (F10.3, backend exists but untested end to end), connection details (F10.5–F10.7), and connection packages (F10.8–F10.9) remain unimplemented and are still blockers for self-serve readiness.
+7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10 Workstream B
+8. **Domain 10 Workstream B — Connection packages and schema authoring** - Connection details (F10.5–F10.7) and connection package generation (F10.8–F10.9) remain unimplemented. Workstream A (registration, org creation, invitations, Keycloak admin client, email service, V15 migration) shipped in Phase 5 and is no longer a blocker.
 9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
 
 ### Post-Launch (important but not blocking)

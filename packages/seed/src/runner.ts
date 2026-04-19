@@ -1,0 +1,149 @@
+import type { SeedConfig } from './config.js';
+import type { Logger } from './logger.js';
+import type { ApiClient } from './api-client.js';
+import type { KeycloakAdminClient } from './keycloak-client.js';
+import { seedOrgs } from './orgs/index.js';
+import { seedUsers } from './users/index.js';
+import { seedPolicies } from './policies/index.js';
+import { seedProducts } from './products/index.js';
+import { seedAgents } from './agents/index.js';
+import { seedLineageEdges } from './lineage/index.js';
+
+interface RunContext {
+  config: SeedConfig;
+  logger: Logger;
+  api: ApiClient;
+  keycloak: KeycloakAdminClient;
+}
+
+export async function runSeed(ctx: RunContext): Promise<void> {
+  const { logger } = ctx;
+
+  logger.info('seed: orgs');
+  const orgIdBySlug = new Map<string, string>();
+  for (const org of seedOrgs) {
+    const res = await ctx.api.post<{ id: string }>('/seed/organizations', {
+      slug: org.slug,
+      name: org.name,
+      description: org.description,
+      contactEmail: org.contactEmail,
+    });
+    orgIdBySlug.set(org.slug, res.id);
+    for (const domain of org.domains) {
+      await ctx.api.post('/seed/domains', {
+        orgId: res.id,
+        slug: domain.slug,
+        name: domain.name,
+        description: domain.description,
+        ownerEmail: domain.ownerEmail,
+      });
+    }
+  }
+
+  logger.info('seed: users');
+  for (const user of seedUsers) {
+    const orgId = orgIdBySlug.get(user.orgSlug);
+    if (!orgId) throw new Error(`unknown org slug: ${user.orgSlug}`);
+    const kc = await ctx.keycloak.ensureUser({
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      password: user.password,
+      attributes: {
+        provenance_org_id: orgId,
+        provenance_principal_type: 'human',
+      },
+    });
+    await ctx.api.post('/seed/principals', {
+      orgId,
+      keycloakUserId: kc.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      roles: user.roles,
+      domainSlugs: user.domainSlugs ?? [],
+    });
+  }
+
+  logger.info('seed: policies');
+  for (const policy of seedPolicies) {
+    const orgId = orgIdBySlug.get(policy.orgSlug);
+    if (!orgId) throw new Error(`unknown org slug: ${policy.orgSlug}`);
+    await ctx.api.post('/seed/policies', {
+      orgId,
+      policyKey: policy.policyKey,
+      title: policy.title,
+      description: policy.description,
+      appliesTo: policy.appliesTo,
+      regoModule: policy.regoModule,
+    });
+  }
+
+  logger.info('seed: products');
+  const productIdBySlug = new Map<string, string>();
+  for (const product of seedProducts) {
+    const orgId = orgIdBySlug.get(product.orgSlug);
+    if (!orgId) throw new Error(`unknown org slug: ${product.orgSlug}`);
+    const res = await ctx.api.post<{ id: string }>('/seed/products', {
+      orgId,
+      domainSlug: product.domainSlug,
+      slug: product.slug,
+      name: product.name,
+      description: product.description,
+      ownerEmail: product.ownerEmail,
+      tags: product.tags,
+      lifecycleState: product.lifecycleState,
+      freshnessSla: product.freshnessSla,
+      refreshCadence: product.refreshCadence,
+      ports: product.ports,
+    });
+    productIdBySlug.set(product.slug, res.id);
+  }
+
+  logger.info('seed: agents');
+  for (const agent of seedAgents) {
+    const orgId = orgIdBySlug.get(agent.orgSlug);
+    if (!orgId) throw new Error(`unknown org slug: ${agent.orgSlug}`);
+    const kcClient = await ctx.keycloak.ensureClientCredentialsClient({
+      clientId: `agent-${agent.agentSlug}`,
+      name: agent.displayName,
+      serviceAccountAttributes: {
+        provenance_org_id: orgId,
+        provenance_principal_type: 'ai_agent',
+        provenance_agent_slug: agent.agentSlug,
+      },
+    });
+    await ctx.api.post('/seed/agents', {
+      orgId,
+      agentSlug: agent.agentSlug,
+      displayName: agent.displayName,
+      description: agent.description,
+      trustClassification: agent.trustClassification,
+      oversightContactEmail: agent.oversightContactEmail,
+      keycloakClientId: kcClient.clientId,
+      keycloakClientSecret: kcClient.clientSecret,
+    });
+  }
+
+  logger.info('seed: lineage');
+  for (const edge of seedLineageEdges) {
+    const fromId = productIdBySlug.get(edge.fromProductSlug);
+    const toId = productIdBySlug.get(edge.toProductSlug);
+    if (!fromId || !toId) {
+      throw new Error(`lineage edge references unknown product: ${edge.fromProductSlug} -> ${edge.toProductSlug}`);
+    }
+    await ctx.api.post('/seed/lineage-edges', {
+      fromProductId: fromId,
+      toProductId: toId,
+      edgeType: edge.edgeType,
+      description: edge.description,
+    });
+  }
+
+  logger.info('seed: trust score kickoff');
+  for (const slug of productIdBySlug.keys()) {
+    await ctx.api.post(`/seed/trust-score-recompute/${productIdBySlug.get(slug)}`, {});
+  }
+
+  logger.info('seed complete');
+}

@@ -283,7 +283,7 @@ AI agents in Provenance are first-class principals with their own identity model
 |---|---|
 | [Product Requirements Document](./documents/prd/Provenance_PRD_v1.4.md) | Complete requirements across all seven platform domains |
 | [Implementation Status](./documents/prd/implementation-status.md) | Current implementation gaps vs. PRD v1.4 and rationale for the development halt |
-| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) | MVP and production architecture, technology decisions, build sequence |
+| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.4.md) | MVP and production architecture, technology decisions, build sequence |
 | [Architecture Decision Records](./documents/architecture/adr/) | Individual decision records for significant technology choices |
 | [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |
 | [TypeScript Lineage SDK](./packages/sdk-ts/) | TypeScript SDK for pipeline lineage emission |
@@ -296,7 +296,7 @@ Provenance is Apache 2.0 licensed and welcomes contributions. Before contributin
 
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines and development setup
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) — community standards
-- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.3.md) — understand the system before contributing
+- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.4.md) — understand the system before contributing
 
 High-value contributions at this stage:
 - Additional connector implementations

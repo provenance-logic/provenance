@@ -94,6 +94,10 @@ Replace `[git-sha]` with the specific commit SHA you want to demo. Using `main` 
 
 If any step fails, the script exits with a non-zero code and a message identifying the failure. Do not proceed to the demo if the smoke test fails.
 
+> **Idempotency warning — do not run demo-sync during a live demo session.**
+> `demo-sync.sh` re-runs `npm run seed` every time it executes. Whether that is data-preserving depends entirely on whether the seed API endpoints are implemented as upserts (idempotent) or plain inserts (duplicating on each run). As of this runbook, that behavior has not been independently verified.
+> Before running `demo-sync.sh` against a demo that already has live demo state (users who have clicked around, agents that have emitted lineage, etc.), either: (a) verify the seed endpoints are upsert-based by inspecting `POST /seed/*` handlers and their tests, or (b) run `demo-reset.sh --hard` first so the sync starts from a truncated base. The safe rule: treat `demo-sync.sh` as a between-demos operation, not a during-demo operation.
+
 ---
 
 ## Step 4 - Run the Smoke Test

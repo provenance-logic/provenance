@@ -2,7 +2,7 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.3.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.4.md`.
 
 > **⚠️ DEVELOPMENT HALTED (2026-04-18):** All new feature development is paused pending PRD v1.4 review. No new features will be started until the blockers surfaced in `documents/prd/implementation-status.md` are prioritized. See that document for the current gap analysis and the halt rationale.
 
@@ -380,7 +380,7 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 
 * Product Requirements Document: `documents/prd/Provenance_PRD_v1.4.md`
 * Implementation Status (current gaps and halt rationale): `documents/prd/implementation-status.md`
-* Architecture Document: `documents/architecture/Provenance_Architecture_v1.3.md`
+* Architecture Document: `documents/architecture/Provenance_Architecture_v1.4.md`
 * Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003)
 * API Reference: `documents/api/` (generated from OpenAPI specs)
 * Operations Runbook: `documents/runbooks/operations.md`
