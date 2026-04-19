@@ -177,14 +177,16 @@ describe('ProductsService', () => {
         {
           provide: EncryptionService,
           useValue: {
-            encrypt: jest.fn().mockImplementation(async (payload: Record<string, unknown>) => ({
-              version: 1,
-              iv: 'iv',
-              authTag: 'tag',
-              ciphertext: Buffer.from(JSON.stringify(payload)).toString('base64'),
-            })),
-            decrypt: jest.fn().mockImplementation(async (env: { ciphertext: string }) =>
-              JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8')),
+            encrypt: jest.fn().mockImplementation((payload: Record<string, unknown>) =>
+              Promise.resolve({
+                version: 1,
+                iv: 'iv',
+                authTag: 'tag',
+                ciphertext: Buffer.from(JSON.stringify(payload)).toString('base64'),
+              }),
+            ),
+            decrypt: jest.fn().mockImplementation((env: { ciphertext: string }) =>
+              Promise.resolve(JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8'))),
             ),
           },
         },

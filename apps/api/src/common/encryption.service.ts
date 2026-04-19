@@ -22,7 +22,7 @@ export interface EncryptedEnvelope {
   ciphertext: string;
 }
 
-const ENVELOPE_VERSION = 1 as const;
+const ENVELOPE_VERSION = 1;
 const KEY_LENGTH_BYTES = 32;
 const IV_LENGTH_BYTES = 12;
 
@@ -109,14 +109,8 @@ export class EncryptionService {
     if (!this.secretArn) {
       throw new Error('No encryption key source available');
     }
-    const client = new SecretsManagerClient({});
     const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
-    if (region) {
-      // Rebuild client with explicit region when one is set.
-      (client as unknown as { config: { region: () => Promise<string> } }).config = {
-        region: async () => region,
-      };
-    }
+    const client = new SecretsManagerClient(region ? { region } : {});
     try {
       const response = await client.send(
         new GetSecretValueCommand({ SecretId: this.secretArn }),

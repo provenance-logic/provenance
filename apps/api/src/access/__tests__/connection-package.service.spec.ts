@@ -67,8 +67,8 @@ describe('ConnectionPackageService', () => {
         {
           provide: EncryptionService,
           useValue: {
-            decrypt: jest.fn().mockImplementation(async (env: { ciphertext: string }) =>
-              JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8')),
+            decrypt: jest.fn().mockImplementation((env: { ciphertext: string }) =>
+              Promise.resolve(JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8'))),
             ),
             encrypt: jest.fn(),
           },
