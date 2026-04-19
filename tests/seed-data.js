@@ -24,7 +24,10 @@
 
 const BASE_URL = process.env.API_URL || 'http://localhost:3001';
 const KC_URL = process.env.KC_URL || 'http://localhost:8080';
-const KC_USERNAME = process.env.KC_USERNAME || 'testuser';
+// The realm is configured with registrationEmailAsUsername=true, which causes
+// direct-grant password flow to resolve the `username` parameter against email
+// (not against the legacy `testuser` handle). Use the email for login.
+const KC_USERNAME = process.env.KC_USERNAME || 'test@provenance.dev';
 const KC_PASSWORD = process.env.KC_PASSWORD || 'provenance_dev';
 
 // ── Helpers ────────────────────────────────────────────────────────────────

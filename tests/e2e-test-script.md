@@ -21,12 +21,15 @@ node tests/seed-data.js
 export API="http://localhost:3001/api/v1"
 export ORG_ID="e9213d00-264f-40ff-b1ee-52241bfe033e"
 
-# Get a fresh Keycloak token
+# Get a fresh Keycloak token. The realm is configured with
+# registrationEmailAsUsername=true, so the direct-grant `username` field
+# must be the email address — the legacy `testuser` handle returns
+# `user_not_found`.
 export TOKEN=$(curl -sf -X POST \
   http://localhost:8080/realms/provenance/protocol/openid-connect/token \
   -d 'client_id=provenance-web' \
   -d 'grant_type=password' \
-  -d 'username=testuser' \
+  -d 'username=test@provenance.dev' \
   -d 'password=provenance_dev' | jq -r '.access_token')
 
 # Helper: get domain ID by slug

@@ -5,7 +5,8 @@
 #
 # Prerequisites:
 #   - Keycloak, PostgreSQL, and the API container must be running
-#   - The "testuser" account must exist in the provenance realm
+#   - The test@provenance.dev account must exist in the provenance realm
+#     (username "testuser" in the realm import, email used for login)
 #   - At least one organisation and the "Platform Analytics" domain
 #     must already be created (done by first-run setup)
 #
@@ -28,7 +29,9 @@ fi
 
 KC_REALM="provenance"
 KC_CLIENT="provenance-web"
-KC_USER="testuser"
+# The realm has registrationEmailAsUsername=true, so direct-grant resolves
+# `username` against email. The legacy `testuser` handle returns user_not_found.
+KC_USER="test@provenance.dev"
 KC_PASS="provenance_dev"
 
 # ---------------------------------------------------------------------------
