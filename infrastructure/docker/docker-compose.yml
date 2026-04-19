@@ -472,6 +472,12 @@ services:
       # Temporal
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
+      # Port connection-details encryption (Domain 10 Workstream B — F10.6).
+      # Prod reads a 32-byte AES key from Secrets Manager via the ARN; dev
+      # stacks fall back to CONNECTION_DETAILS_DEV_KEY. The default is a
+      # throwaway key — never use it outside a disposable environment.
+      CONNECTION_DETAILS_SECRET_ARN: ${CONNECTION_DETAILS_SECRET_ARN:-}
+      CONNECTION_DETAILS_DEV_KEY: ${CONNECTION_DETAILS_DEV_KEY:-00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff}
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached

@@ -153,6 +153,10 @@ services:
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      # Port connection-details encryption (Domain 10 Workstream B — F10.6).
+      # Local dev uses a throwaway key so the API boots without cloud creds.
+      CONNECTION_DETAILS_SECRET_ARN: ${CONNECTION_DETAILS_SECRET_ARN:-}
+      CONNECTION_DETAILS_DEV_KEY: ${CONNECTION_DETAILS_DEV_KEY:-00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff}
       # Disabled services — connections fail gracefully (see comments above)
       REDPANDA_ENABLED: "false"
       OPENSEARCH_ENABLED: "false"

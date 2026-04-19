@@ -469,6 +469,13 @@ services:
       OPENSEARCH_ENABLED: "true"
       # Anthropic API (Claude) — NL query translation
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
+      # Port connection-details encryption (Domain 10 Workstream B — F10.6).
+      # Prod reads a 32-byte AES key from Secrets Manager via the ARN; the
+      # dev stack falls back to CONNECTION_DETAILS_DEV_KEY so the service
+      # can boot without cloud credentials. The default is throwaway — any
+      # details encrypted with it should be treated as public.
+      CONNECTION_DETAILS_SECRET_ARN: ${CONNECTION_DETAILS_SECRET_ARN:-}
+      CONNECTION_DETAILS_DEV_KEY: ${CONNECTION_DETAILS_DEV_KEY:-00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff}
       # Disabled services — connections fail gracefully
       TEMPORAL_ENABLED: "false"
     volumes:
