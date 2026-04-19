@@ -1,6 +1,6 @@
 # Provenance Implementation Status
 
-**Last updated:** April 18, 2026
+**Last updated:** April 19, 2026
 **PRD version:** 1.4
 **Active phase:** Phase 5 - Open Source Ready
 
@@ -29,7 +29,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F1.6 | Role Assignment | Partially implemented | Role model exists; no UI for assignment (see F7.7) |
 | F1.7 | Domain Autonomy Boundaries | Implemented | Cross-domain isolation enforced |
 | F1.8 | Multi-Cloud Tenant Isolation | Implemented | Control/data plane separation enforced |
-| F1.9 | Self-Service Org Onboarding | Partially implemented | Operator involvement still required for new orgs; see Domain 10 |
+| F1.9 | Self-Service Org Onboarding | Implemented | Covered by F10.1 + F10.2 — Keycloak signup plus POST /organizations/self-serve binds the first platform admin with no operator involvement |
 | F1.10 | Domain Lifecycle Management | Partially implemented | Creation and active operation working; deprecation/decommission not implemented |
 | NF1.1 | Cryptographic isolation | Implemented | |
 | NF1.2 | Scale targets | Not implemented | Not load tested |
@@ -302,9 +302,9 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
-| F10.1 | Self-Service User Registration | Not implemented | Blocker |
-| F10.2 | Organization Creation at Registration | Not implemented | Blocker |
-| F10.3 | Invitation Flow | Not implemented | Blocker |
+| F10.1 | Self-Service User Registration | Implemented | Keycloak user signup + login verified end-to-end on dev.provenancelogic.com |
+| F10.2 | Organization Creation at Registration | Implemented | POST /organizations/self-serve binds org + platform_admin principal + seeds default governance layer; Keycloak attribute merge writes provenance_* claims onto the user so refreshed tokens carry them |
+| F10.3 | Invitation Flow | Not implemented | Blocker - backend service and acceptance endpoint exist but the flow is untested end to end |
 | F10.4 | Domain Team Self-Management | Not implemented | Blocker - depends on F7.22 |
 | F10.5 | Connection Details Schema by Port Type | Not implemented | Blocker |
 | F10.6 | Connection Details Confidentiality | Not implemented | Blocker |
@@ -362,7 +362,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 5. **F7.29 Access Request SLA and Escalation** - No SLA enforcement; no escalation path
 6. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
 7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10
-8. **Domain 10 Self-Serve Infrastructure** - User registration, invitation flow, connection details, connection packages all not implemented. This is the most significant gap. The platform cannot be considered self-serve without this domain.
+8. **Domain 10 Self-Serve Infrastructure** - User registration (F10.1) and organization creation (F10.2) are now live. Invitation flow (F10.3, backend exists but untested end to end), connection details (F10.5–F10.7), and connection packages (F10.8–F10.9) remain unimplemented and are still blockers for self-serve readiness.
 9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
 
 ### Post-Launch (important but not blocking)
