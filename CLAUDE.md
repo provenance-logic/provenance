@@ -229,6 +229,24 @@ Live development environment: https://dev.provenancelogic.com
 
 ---
 
+## Demo Environment
+
+The demo environment is an on-demand clone provisioned per demo from git, with curated seed data. It is not a persistent staging tier. It spins up at T-24h before a demo and tears down after.
+
+- Domain: https://demo.provenancelogic.com
+- Keycloak: https://auth-demo.provenancelogic.com
+- Terraform: `infrastructure/terraform/demo/`
+- Seed package: `packages/seed/` (commands: `seed`, `seed:reset:soft`, `seed:reset:hard`, `seed:verify`)
+- Demo scripts: `infrastructure/scripts/demo-*.sh` (bootstrap, sync, smoke-test, reset)
+- Terraform state is local — back up `terraform.tfstate` after every apply
+
+Always run `demo-smoke-test.sh` before a demo. Do not proceed if it exits non-zero.
+
+For the full procedure see `documents/runbooks/demo-environment.md`.
+For the decision rationale see `documents/architecture/adr/ADR-004-demo-environment-strategy.md`.
+
+---
+
 ## Claude Code Patterns for This Project
 
 **Always spec-first.** Define or update the OpenAPI spec in `packages/openapi/` before writing implementation code. Generate types from the spec.
