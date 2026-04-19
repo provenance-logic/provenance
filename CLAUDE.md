@@ -259,6 +259,18 @@ Live development environment: https://dev.provenancelogic.com
 
 **Agent authentication is JWT-based (ADR-002).** Agents authenticate via Keycloak `client_credentials` JWTs validated at the Agent Query Layer. The Phase 4 `X-Agent-Id` header pattern has been superseded. Do not use self-reported identity for any new features.
 
+**`@AllowNoOrg` is reserved for bootstrap endpoints only.** The `JwtAuthGuard` enforces a non-empty `provenance_org_id` claim on every route. `@AllowNoOrg` waives that requirement — currently applied only to `POST /organizations/self-serve`, since a caller creating their first org by definition has no org yet. Do not apply `@AllowNoOrg` to any tenant-scoped data path.
+
+**`RequireOrg` gates every authenticated frontend route.** `apps/web/src/auth/AuthProvider.tsx` exports `RequireOrg`, which reads `keycloak.tokenParsed.provenance_org_id` and redirects to `/onboarding/org` when empty (except for `/onboarding/*` paths). All authenticated routes inside `AppRouter` go through it. The JWT claim is the source of truth — never resolve "does this user have an org?" by calling a tenant-scoped API endpoint (the API will reject no-org callers before that call succeeds).
+
+**Keycloak Admin API user updates must be GET-merge-PUT.** `PUT /admin/realms/{realm}/users/{id}` is a full-replace operation, not a merge. Sending only `{ attributes: {...} }` drops the other required fields (`email`, `username`, `firstName`, `lastName`) and trips user-profile validation with a 400. Always GET the current user, merge changes into the full representation, then PUT. See `KeycloakAdminService.updateUserAttributes` for the pattern.
+
+**`SET LOCAL config_param = $1` is NOT parameterizable in PostgreSQL.** The `$1` placeholder is not expanded — the statement throws `syntax error at or near "$1"`. Use `SELECT set_config('param_name', $1, true)` instead; the `is_local=true` flag scopes the change to the current transaction exactly like `SET LOCAL`. Applies everywhere we propagate `provenance.current_org_id` for row-level security.
+
+**Keycloak users are identified by email for login, by ID for admin APIs.** The realm has `registrationEmailAsUsername=true`, which causes Keycloak to rewrite a user's `username` field to match `email` on the next update after the setting is applied. Legacy username handles (e.g. `testuser`) stop resolving. In direct-grant token exchange, pass the email as `username`. In admin-API lookups, prefer `kcadm get users -q email=<addr>` over `-q username=<handle>` — it survives the rewrite.
+
+**Every bug fix lands an entry in the bug tracker.** Open issues live in `documents/bugs/open.md`; resolved ones move to `documents/bugs/resolved.md` with the fix commit. Before opening a new bug, grep `resolved.md` — the same root cause may have been diagnosed before.
+
 ---
 
 ## What to Build vs. What to Configure
@@ -353,3 +365,6 @@ Live development environment: https://dev.provenancelogic.com
 * Architecture Document: `documents/architecture/Provenance_Architecture_v1.3.md`
 * Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003)
 * API Reference: `documents/api/` (generated from OpenAPI specs)
+* Operations Runbook: `documents/runbooks/operations.md`
+* Open bugs: `documents/bugs/open.md`
+* Resolved bugs (searchable log of past root causes): `documents/bugs/resolved.md`
