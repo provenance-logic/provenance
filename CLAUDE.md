@@ -257,6 +257,8 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 
 **Never hardcode configuration.** All configuration via environment variables. Use Zod for env validation at startup.
 
+**A new env var must land in every config layer at once.** When adding a required env var to `apps/api/src/config.ts` (or any other service's Zod schema), in the same commit add it to: (a) `apps/api/src/test.env.ts` so jest boots; (b) all three `infrastructure/docker/docker-compose*.yml` files so every compose target boots; (c) `infrastructure/docker/.env.example` with documentation of what it does and how to generate a value. Missing any one of these silently breaks deployed environments the next time a stack is rebuilt (see R-010 in `documents/bugs/resolved.md`).
+
 **Never import across module boundaries directly.** Cross-module calls use the exported TypeScript interface, not the implementation file.
 
 **Always write an ADR for significant decisions.** Architecture Decision Records live in `documents/architecture/adr/`. Numbered, dated, with context, decision, and consequences.
