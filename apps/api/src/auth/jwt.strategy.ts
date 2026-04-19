@@ -22,6 +22,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly dataSource: DataSource,
   ) {
     const config = getConfig();
+    // KEYCLOAK_ISSUER_URL is the FULL issuer as it appears in the JWT `iss`
+    // claim (e.g. https://auth.example.com/realms/provenance). When unset,
+    // fall back to deriving it from the internal AUTH_SERVER_URL + realm.
+    // Appending /realms/{realm} to an already-full issuer URL double-nests
+    // the path and rejects every real token at the iss check.
+    const issuer = config.KEYCLOAK_ISSUER_URL
+      ?? `${config.KEYCLOAK_AUTH_SERVER_URL}/realms/${config.KEYCLOAK_REALM}`;
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -31,7 +38,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         jwksRequestsPerMinute: 10,
         jwksUri: `${config.KEYCLOAK_AUTH_SERVER_URL}/realms/${config.KEYCLOAK_REALM}/protocol/openid-connect/certs`,
       }),
-      issuer: `${config.KEYCLOAK_ISSUER_URL ?? config.KEYCLOAK_AUTH_SERVER_URL}/realms/${config.KEYCLOAK_REALM}`,
+      issuer,
       algorithms: ['RS256'],
     });
   }
@@ -113,7 +120,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     displayName: string | null;
   }): Promise<string | null> {
     return this.dataSource.transaction(async (mgr) => {
-      await mgr.query(`SET LOCAL "provenance.current_org_id" = $1`, [params.orgId]);
+      await mgr.query(
+        `SELECT set_config('provenance.current_org_id', $1, true)`,
+        [params.orgId],
+      );
       const repo = mgr.getRepository(PrincipalEntity);
       const saved = await repo.save(
         repo.create({

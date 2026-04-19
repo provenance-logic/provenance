@@ -221,7 +221,10 @@ export class InvitationsService {
     // Find or create the identity.principals row in a transaction that sets
     // org context first (RLS requires it for inserts into the identity schema).
     const principal = await this.dataSource.transaction(async (mgr) => {
-      await mgr.query(`SET LOCAL "provenance.current_org_id" = $1`, [invitation.orgId]);
+      await mgr.query(
+        `SELECT set_config('provenance.current_org_id', $1, true)`,
+        [invitation.orgId],
+      );
       const principalRepo = mgr.getRepository(PrincipalEntity);
 
       let existing = await principalRepo.findOne({

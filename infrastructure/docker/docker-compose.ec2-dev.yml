@@ -434,7 +434,7 @@ services:
       # Keycloak
       KEYCLOAK_REALM: provenance
       KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://auth.provenancelogic.com}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://auth.provenancelogic.com/realms/provenance}
       KEYCLOAK_CLIENT_ID: provenance-api
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       # Keycloak admin client (user provisioning + agent client provisioning per ADR-002)

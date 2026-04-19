@@ -3,6 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
+import { RolesGuard } from './roles.guard.js';
+import { OrganizationsController } from '../organizations/organizations.controller.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 
 // ---------------------------------------------------------------------------
@@ -284,5 +286,79 @@ describe('JwtAuthGuard — provenance_org_id enforcement', () => {
     expect(superActivate).not.toHaveBeenCalled();
 
     superActivate.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real-metadata regression tests — these exercise the live decorator wiring
+// against the actual OrganizationsController method references using a real
+// Reflector. They exist so that a future regression (e.g. someone removes
+// @AllowNoOrg from self-serve, or renames the metadata key) fails loudly here
+// instead of silently reintroducing the chicken-and-egg 401 for new users.
+// ---------------------------------------------------------------------------
+
+describe('JwtAuthGuard — real decorator wiring on OrganizationsController', () => {
+  function contextFor(handler: Function, initialUser: Record<string, unknown>): ExecutionContext {
+    const request: Record<string, unknown> = {
+      headers: { authorization: 'Bearer user-jwt' },
+      user: initialUser,
+    };
+    return {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => handler,
+      getClass: () => OrganizationsController,
+    } as unknown as ExecutionContext;
+  }
+
+  function buildGuard(): JwtAuthGuard {
+    const guard = new JwtAuthGuard(
+      { findOne: jest.fn() } as any,
+      new Reflector(),
+    );
+    jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockImplementation(function (_ctx: unknown) {
+        // Emulate @nestjs/passport: on successful JWT validation, super sets
+        // request.user and returns true. For the purpose of these tests, the
+        // caller has already seeded request.user via contextFor().
+        return true;
+      });
+    return guard;
+  }
+
+  it('self-serve with empty orgId is ALLOWED (real @AllowNoOrg metadata)', async () => {
+    const guard = buildGuard();
+    const ctx = contextFor(
+      OrganizationsController.prototype.selfServeOrganization,
+      { orgId: '', principalId: 'kc-sub' },
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('listOrganizations with empty orgId is REJECTED (no @AllowNoOrg)', async () => {
+    const guard = buildGuard();
+    const ctx = contextFor(
+      OrganizationsController.prototype.listOrganizations,
+      { orgId: '', principalId: 'kc-sub' },
+    );
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('listOrganizations with populated orgId is ALLOWED', async () => {
+    const guard = buildGuard();
+    const ctx = contextFor(
+      OrganizationsController.prototype.listOrganizations,
+      { orgId: 'org-1', principalId: 'p-1' },
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('RolesGuard does not require roles on self-serve (no @Roles decorator)', () => {
+    const rolesGuard = new RolesGuard(new Reflector());
+    const ctx = contextFor(
+      OrganizationsController.prototype.selfServeOrganization,
+      { orgId: '', principalId: 'kc-sub', roles: [] },
+    );
+    expect(rolesGuard.canActivate(ctx)).toBe(true);
   });
 });

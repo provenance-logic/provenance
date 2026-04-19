@@ -29,8 +29,9 @@ const envSchema = z.object({
   // Keycloak
   KEYCLOAK_REALM: z.string().min(1),
   KEYCLOAK_AUTH_SERVER_URL: z.string().url(),
-  // Public-facing issuer URL embedded in JWTs (matches KC_HOSTNAME / browser-visible URL).
-  // Defaults to KEYCLOAK_AUTH_SERVER_URL when running outside Docker.
+  // Full public-facing issuer URL exactly as it appears in the JWT `iss` claim
+  // (e.g. https://auth.example.com/realms/provenance). Leave unset to derive
+  // it from KEYCLOAK_AUTH_SERVER_URL + KEYCLOAK_REALM.
   KEYCLOAK_ISSUER_URL: z.string().url().optional(),
   KEYCLOAK_CLIENT_ID: z.string().min(1),
 

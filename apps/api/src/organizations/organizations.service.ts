@@ -313,8 +313,13 @@ export class OrganizationsService {
         }),
       );
 
-      // Set RLS org context for inserts into identity / governance.
-      await mgr.query(`SET LOCAL "provenance.current_org_id" = $1`, [org.id]);
+      // Set RLS org context for inserts into identity / governance. SET LOCAL
+      // does not accept bind parameters; set_config(..., is_local=true) is the
+      // parameterizable equivalent.
+      await mgr.query(
+        `SELECT set_config('provenance.current_org_id', $1, true)`,
+        [org.id],
+      );
 
       const principal = await principalRepo.save(
         principalRepo.create({

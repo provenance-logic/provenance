@@ -226,13 +226,36 @@ export class KeycloakAdminService {
    * Update a Keycloak user's platform attributes. Used to bind the provenance_*
    * claims (principal_id, org_id, principal_type) so the protocol mappers have
    * values to project into every issued token.
+   *
+   * Keycloak's PUT /users/{id} replaces the entire user representation — it
+   * does not merge. Sending only `{attributes:{...}}` drops email, username,
+   * etc. and trips user-profile required-field validation. So GET the current
+   * user, merge the incoming attributes into existing attributes, and PUT the
+   * complete object back.
    */
   async updateUserAttributes(userId: string, attributes: Record<string, string>): Promise<void> {
     const token = await this.getAdminToken();
-    const encoded: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(attributes)) {
-      encoded[k] = [v];
+
+    const getRes = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}`,
+      {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      },
+    );
+    if (!getRes.ok) {
+      throw new Error(`Failed to fetch Keycloak user for attribute update: ${getRes.status}`);
     }
+    const user = await getRes.json() as Record<string, unknown> & {
+      attributes?: Record<string, string[]>;
+    };
+
+    const mergedAttributes: Record<string, string[]> = { ...(user.attributes ?? {}) };
+    for (const [k, v] of Object.entries(attributes)) {
+      mergedAttributes[k] = [v];
+    }
+    const updated = { ...user, attributes: mergedAttributes };
+
     const res = await fetch(
       `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}`,
       {
@@ -241,11 +264,12 @@ export class KeycloakAdminService {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ attributes: encoded }),
+        body: JSON.stringify(updated),
       },
     );
     if (!res.ok) {
-      throw new Error(`Failed to update Keycloak user attributes: ${res.status}`);
+      const body = await res.text().catch(() => '');
+      throw new Error(`Failed to update Keycloak user attributes: ${res.status} ${body}`);
     }
   }
 

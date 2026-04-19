@@ -15,7 +15,10 @@ export class OrgContextMiddleware implements NestMiddleware {
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
     const orgId = (req as Request & { user?: { orgId?: string } }).user?.orgId;
     if (orgId) {
-      await this.dataSource.query(`SET LOCAL "provenance.current_org_id" = $1`, [orgId]);
+      await this.dataSource.query(
+        `SELECT set_config('provenance.current_org_id', $1, true)`,
+        [orgId],
+      );
     }
     next();
   }
