@@ -1,8 +1,19 @@
 # Provenance Technical Architecture Document
 
-**Version 1.3 — Companion to PRD v1.3**
+**Version 1.4 — Companion to PRD v1.4**
 **MVP and Production-Grade Specifications**
 **Confidential — Not for Distribution**
+
+> **Changelog — v1.3 → v1.4**
+> Domain 10 self-serve infrastructure — invitation flow, email service (nodemailer/SES), V15 migration (identity.invitations, organizations.governance_configs), RequireOrg frontend gate, @AllowNoOrg decorator pattern, Keycloak provenance-admin client for user provisioning.
+>
+> Section 3: New subsection added — MVP Self-Serve Infrastructure (Domain 10) covering registration flow, invitation flow, Keycloak admin client pattern, email service abstraction, and the V15 schema additions.
+>
+> Section 5: Phase 5 build sequence — Domain 10 Workstream A marked complete.
+>
+> Section 6: Technology decision register — email service abstraction added (nodemailer + Mailhog dev / SES production).
+>
+> Section 8: MVP summary updated — Domain 10 Workstream A self-serve infrastructure noted as complete.
 
 > **Changelog — v1.2 → v1.3**
 > Phase 5 redefined as "Open Source Ready" — lean, infrastructure-light scope replacing the original expensive managed services migration. Phase 6 "Production Scale" introduced as the funded future state for Kubernetes, managed AWS services, and enterprise security hardening.
@@ -320,6 +331,54 @@ Agent authentication uses Keycloak's OAuth2 `client_credentials` grant flow, imp
 
 **Credential lifecycle:** Secret rotation via `POST /agents/:agentId/rotate-secret` (governance or oversight contact). One-time migration for pre-existing agents via `POST /agents/:agentId/provision-credentials` (governance only). See `documents/architecture/adr/ADR-002-jwt-agent-authentication.md` for full decision record.
 
+### MVP Self-Serve Infrastructure (Domain 10) *(new v1.4 — Workstream A complete)*
+
+Domain 10 is the self-serve onboarding surface — how a new user lands on the platform, creates an org, invites collaborators, and gets provisioned in Keycloak. Workstream A (the infrastructure layer) shipped in Phase 5; Workstream B (the UX polish layer — notifications, dashboards, billing stubs) is deferred.
+
+**Registration flow:**
+
+1. Anonymous visitor hits the web app and chooses "Sign up." The React app redirects to Keycloak's hosted registration page (realm `provenance`, flow `registration`). We do not self-host the registration form — Keycloak handles email verification and password strength.
+2. On successful registration, Keycloak redirects back to the SPA with an OIDC token. The JWT carries no `provenance_org_id` because the user has not yet joined or created one.
+3. The SPA's `RequireOrg` guard (`apps/web/src/auth/AuthProvider.tsx`) reads `keycloak.tokenParsed.provenance_org_id`. When empty, it redirects to `/onboarding/org` (unless the path already starts with `/onboarding/*`).
+4. The onboarding page calls `POST /organizations/self-serve` on the control-plane API. That route is decorated with `@AllowNoOrg` — the only decorator that waives the `JwtAuthGuard`'s non-empty-org-claim requirement. By definition, a user creating their first org has no org yet.
+5. The API creates the `orgs` row, seeds a default `organizations.governance_configs` row (invitation TTL, default role, email template overrides), writes a `role_assignments` row making the caller an org admin, and returns the new `org_id`.
+6. The API then calls Keycloak Admin REST via the `provenance-admin` client (see below) to set the user's `provenance_org_id` attribute, triggering a token refresh on the SPA. `RequireOrg` re-evaluates and admits the user.
+
+**Invitation flow:**
+
+1. An org admin visits the team settings page and submits an email address and role. The SPA calls `POST /organizations/:orgId/invitations`.
+2. The API inserts a row into `identity.invitations` with a UUID token, `org_id`, role, `invited_by_principal_id`, and `expires_at = now() + governance_configs.invitation_ttl`.
+3. The API publishes an `invitation.created` event to Redpanda. The notifications module consumes it and renders the invitation email through the email service abstraction, using the org's `governance_configs` template overrides where present.
+4. The invitee clicks the email link (`/invitations/accept?token=<uuid>`). The SPA POSTs `/invitations/:token/accept`. That route is `@AllowNoOrg` — the invitee may not yet have an org on their JWT, or may be an anonymous visitor who needs to register first.
+5. If the invitee is not registered, the SPA redirects to Keycloak registration with the invitation token held in session storage, then retries `/invitations/:token/accept` after login.
+6. The API validates the token (not expired, not already accepted), writes a `role_assignments` row, marks the invitation accepted in `identity.invitations`, and sets the invitee's `provenance_org_id` via the Keycloak admin client. The invitee's next token carries the org claim.
+
+**Keycloak admin client (`provenance-admin`):**
+
+The control-plane API needs to write Keycloak user attributes (principal_id, org_id, principal_type) without asking for user consent. We provision a single service-account Keycloak client, `provenance-admin`, with `realm-management.manage-users` and `realm-management.query-users` scopes. The API caches the admin-client access token in memory for the token's lifetime minus 30 seconds and refreshes on demand. All admin-client calls go through `KeycloakAdminService`.
+
+A subtle but important rule is encoded in that service: `PUT /admin/realms/{realm}/users/{id}` is a full-replace, not a merge. Sending only `{ attributes: {...} }` drops required fields (`email`, `username`, `firstName`, `lastName`) and trips user-profile validation with a 400. All attribute updates are GET → merge → PUT. The pattern is enforced centrally in `KeycloakAdminService.updateUserAttributes`.
+
+**Email service abstraction:**
+
+The notifications module depends on an `EmailService` interface, not a concrete transport. Two implementations are wired by `NOTIFICATIONS_EMAIL_TRANSPORT` env var:
+
+| Transport | Env value | Use | Configuration |
+| --- | --- | --- | --- |
+| Nodemailer → Mailhog | `smtp` (dev default) | Local and dev-on-EC2. Captures outbound mail in Mailhog's UI at port 8025 — nothing leaves the host. | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` (boolean string coerced by Zod), `SMTP_USER`, `SMTP_PASS` (both optional for Mailhog) |
+| AWS SES | `ses` (production) | Production. IAM role on the platform runtime grants `ses:SendEmail` and `ses:SendRawEmail`. Domain verified and DKIM signed. | `AWS_REGION`, `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET` (optional — for engagement tracking) |
+
+Templates live in `apps/api/src/notifications/templates/` as MJML files compiled at build time. Per-org overrides for subject line and sender display name are stored in `organizations.governance_configs.email_templates` and merged over the defaults at send time.
+
+**V15 schema additions:**
+
+| Schema.Table | Key columns | Notes |
+| --- | --- | --- |
+| `identity.invitations` | `id uuid pk`, `org_id uuid fk`, `email citext`, `role text`, `token uuid unique`, `invited_by_principal_id uuid fk`, `status text check in ('pending','accepted','revoked','expired')`, `expires_at timestamptz`, `accepted_at timestamptz null`, `accepted_by_principal_id uuid fk null` | Indexed on `(org_id, status)` and `(email, status)`. Row-level security enforces `org_id` match for select/update. |
+| `organizations.governance_configs` | `org_id uuid pk fk`, `invitation_ttl interval default '7 days'`, `default_invite_role text default 'consumer'`, `email_templates jsonb default '{}'::jsonb`, `updated_at timestamptz` | One row per org. Backfilled by V15 migration for all existing orgs with defaults. |
+
+V15 also adds the `CITEXT` extension (if not already present) to normalize email lookups, and a trigger that transitions `identity.invitations.status` from `pending` to `expired` when `expires_at < now()` on select. Nightly Temporal workflow sweeps for expired invitations and emits `invitation.expired` for audit logging.
+
 ### MVP Security Architecture
 
 | Concern | Approach | Notes |
@@ -509,6 +568,7 @@ Before or alongside Phase 5 infrastructure hardening, the following Priority 1 d
 | Stability and reliability | Automated daily backups for PostgreSQL and Neo4j with tested restore procedure. Docker restart policies for auto-recovery. CloudWatch basic monitoring — EC2 health, disk, memory alerts. Operational runbook for common failure scenarios. Log rotation. | ~$10-20/month CloudWatch |
 | Security essentials | HTTPS enforced on all external endpoints. Security group audit and tightening. Credentials rotation procedure executed and documented. Environment variable audit — no secrets in code or logs. SSH key management review. | Zero |
 | JWT agent authentication ✅ | Keycloak `client_credentials` JWT auth for agents (ADR-002). Per-agent Keycloak client provisioned at registration. Agent Query Layer validates JWT (RS256/JWKS) on every MCP request. Session-bound identity replaces self-reported `agent_id`. Secret rotation and migration endpoints. 30-day deprecation mode. Complete April 16, 2026. | Zero |
+| Domain 10 Workstream A — Self-serve infrastructure ✅ | Invitation flow (`identity.invitations`), email service abstraction (nodemailer + Mailhog dev / SES production), V15 migration (invitations, `organizations.governance_configs`), `RequireOrg` frontend gate, `@AllowNoOrg` decorator, Keycloak `provenance-admin` client for user attribute provisioning. Workstream B (notifications UI, admin dashboards, billing stubs) deferred. Complete April 2026. | Zero (dev: Mailhog container, ~free; prod: SES at $0.10 per 1k emails) |
 | Data product completeness Priority 1 | Column-level schema, ownership/stewardship, freshness signals, and access status for requesting principal in get_product response. Data exists in platform today — this is API and MCP tool work only. | Zero |
 | Agent anomaly detection | Behavioral pattern analysis against audit log. Configurable thresholds per trust classification. Temporal escalation workflows to human oversight contacts. Auto-suspension on sustained anomaly. Temporal and audit log already operational. | Zero |
 | Developer experience | Local setup in under 30 minutes from clean clone on Mac and Linux. CONTRIBUTING.md. Comprehensive seed data. OpenAPI docs published. README reflects current state. | Zero |
