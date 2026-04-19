@@ -240,8 +240,14 @@ if run_kcadm get realms/provenance &>/dev/null; then
   # keycloak_subject and write its UUIDs back as user attributes. This makes
   # the attributes reproducible across environments — UUIDs come from the DB
   # of truth (identity.principals), not hardcoded.
+  #
+  # Lookup is by email, not by `username=testuser`: once this script applies
+  # registrationEmailAsUsername=true above, Keycloak rewrites the user's
+  # `username` field to match `email` on the next update, so the legacy
+  # handle stops resolving. Email is the stable identifier.
   # -------------------------------------------------------------------------
-  TESTUSER_ID="$(run_kcadm get users -r provenance -q username=testuser --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
+  TESTUSER_EMAIL="${TESTUSER_EMAIL:-test@provenance.dev}"
+  TESTUSER_ID="$(run_kcadm get users -r provenance -q "email=$TESTUSER_EMAIL" --fields id --format csv --noquotes 2>/dev/null | tail -n 1 | tr -d '\r')"
   if [ -n "$TESTUSER_ID" ]; then
     # Keycloak user's sub is the user id itself
     PRINCIPAL_ROW="$(docker exec "${POSTGRES_CONTAINER:-provenance-ec2-postgres}" \
@@ -261,12 +267,45 @@ if run_kcadm get realms/provenance &>/dev/null; then
       echo "  testuser: provenance_principal_id=$P_ID"
       echo "  testuser: provenance_org_id=$O_ID"
       echo "  testuser: provenance_principal_type=$P_TYPE"
+
+      # ---------------------------------------------------------------------
+      # Seed testuser's platform role assignment. JwtStrategy reads roles
+      # from identity.role_assignments, not from Keycloak realm roles, so
+      # without a row here the API's RolesGuard 403s every @Roles endpoint
+      # (invitations, member management, classification changes, etc.).
+      #
+      # Idempotent: the (org_id, principal_id, role, domain_id) unique
+      # constraint can't dedupe rows where domain_id IS NULL (NULLs compare
+      # as distinct), so guard with WHERE NOT EXISTS. The `provenance` role
+      # bypasses RLS, so the insert doesn't need a SET LOCAL org context.
+      # ---------------------------------------------------------------------
+      echo "Seeding testuser's platform role assignment (org_admin)..."
+      # psql prints the command tag (`INSERT 0 N`) on stdout even with -tA,
+      # so filter it out and only treat UUID rows from RETURNING as insertions.
+      INSERTED_ROLE="$(docker exec "${POSTGRES_CONTAINER:-provenance-ec2-postgres}" \
+        psql -U provenance -d provenance -tA -c "
+        INSERT INTO identity.role_assignments (org_id, principal_id, role, domain_id, granted_by)
+        SELECT '$O_ID', '$P_ID', 'org_admin', NULL, '$P_ID'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM identity.role_assignments
+          WHERE org_id = '$O_ID'
+            AND principal_id = '$P_ID'
+            AND role = 'org_admin'
+            AND domain_id IS NULL
+        )
+        RETURNING id;
+        " 2>/dev/null | tr -d '\r' | awk '$0 !~ /^(INSERT |COMMIT|BEGIN|ROLLBACK)/' | head -n 1)"
+      if [ -n "$INSERTED_ROLE" ]; then
+        echo "  testuser: role_assignments row created (role=org_admin, id=$INSERTED_ROLE)"
+      else
+        echo "  testuser: role_assignments row already present — skipping"
+      fi
     else
       echo "  identity.principals row for testuser not found — skipping attribute seed."
       echo "  (This is expected on a truly fresh install before first bootstrap.)"
     fi
   else
-    echo "  testuser not found in Keycloak — skipping attribute seed."
+    echo "  testuser ($TESTUSER_EMAIL) not found in Keycloak — skipping attribute seed."
   fi
 else
   echo "  provenance realm does not exist yet — skipping."

@@ -207,7 +207,7 @@ When this happens, the protocol mappers are in place but they have no user attri
 
 **Recovery:**
 
-1. Log in to https://dev.provenancelogic.com once as `testuser` to trigger the principal-row bootstrap.
+1. Log in to https://dev.provenancelogic.com once as `test@provenance.dev` (password `provenance_dev`) to trigger the principal-row bootstrap. The realm is configured with `registrationEmailAsUsername=true`, so the email is the login identifier — the legacy `testuser` handle does not resolve in the direct-grant flow.
 2. Confirm the row exists:
 
    ```bash
@@ -224,7 +224,7 @@ When this happens, the protocol mappers are in place but they have no user attri
    ```bash
    TOKEN=$(curl -sf -X POST https://auth.provenancelogic.com/realms/provenance/protocol/openid-connect/token \
      -d client_id=provenance-web -d grant_type=password \
-     -d username=testuser -d password=provenance_dev \
+     -d username=test@provenance.dev -d password=provenance_dev \
      | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
    echo "$TOKEN" | python3 -c "import sys,base64,json; p=sys.stdin.read().strip().split('.')[1]; p+='='*(-len(p)%4); c=json.loads(base64.urlsafe_b64decode(p)); print({k:c.get(k) for k in ['provenance_principal_id','provenance_org_id','provenance_principal_type']})"
    ```
