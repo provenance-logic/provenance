@@ -19,6 +19,102 @@ export type OutputPortInterfaceType =
   | 'semantic_query_endpoint';
 
 // ---------------------------------------------------------------------------
+// Connection details (F10.5) — one shape per output port interface type.
+// Full details (including credential fields) are only ever returned to a
+// principal with an active access grant (F10.6). Callers without a grant get
+// a redacted preview; unauthenticated callers get nothing.
+// ---------------------------------------------------------------------------
+
+export type SqlJdbcAuthMethod = 'username_password' | 'iam' | 'certificate';
+
+export interface SqlJdbcConnectionDetails {
+  kind: 'sql_jdbc';
+  host: string;
+  port: number;
+  database: string;
+  schema: string;
+  authMethod: SqlJdbcAuthMethod;
+  sslMode: 'disable' | 'require' | 'verify-ca' | 'verify-full';
+  jdbcUrlTemplate?: string;
+  username?: string;
+  password?: string;
+}
+
+export type RestApiAuthMethod = 'api_key' | 'oauth2' | 'bearer_token' | 'none';
+
+export interface RestApiConnectionDetails {
+  kind: 'rest_api';
+  baseUrl: string;
+  authMethod: RestApiAuthMethod;
+  apiVersion?: string;
+  requiredHeaders?: Record<string, string>;
+  rateLimit?: { requests: number; perSeconds: number };
+  apiKey?: string;
+  bearerToken?: string;
+  oauth2ClientId?: string;
+  oauth2ClientSecret?: string;
+  oauth2TokenUrl?: string;
+}
+
+export interface GraphQlConnectionDetails {
+  kind: 'graphql';
+  endpointUrl: string;
+  authMethod: RestApiAuthMethod;
+  introspectionEndpoint?: string;
+  apiKey?: string;
+  bearerToken?: string;
+}
+
+export type KafkaAuthMethod = 'sasl_plain' | 'sasl_scram' | 'mtls' | 'none';
+
+export interface KafkaConnectionDetails {
+  kind: 'streaming_topic';
+  bootstrapServers: string;
+  topic: string;
+  authMethod: KafkaAuthMethod;
+  consumerGroupPrefix?: string;
+  schemaRegistryUrl?: string;
+  saslUsername?: string;
+  saslPassword?: string;
+  clientCertPem?: string;
+  clientKeyPem?: string;
+}
+
+export type FileExportStorage = 's3' | 'gcs' | 'adls';
+export type FileExportAuthMethod = 'iam' | 'service_account' | 'access_key';
+
+export interface FileExportConnectionDetails {
+  kind: 'file_object_export';
+  storage: FileExportStorage;
+  bucket: string;
+  pathPrefix: string;
+  authMethod: FileExportAuthMethod;
+  fileFormat: 'parquet' | 'avro' | 'json' | 'csv' | 'orc';
+  compression?: 'none' | 'gzip' | 'snappy' | 'zstd';
+  storageEndpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  serviceAccountJson?: string;
+}
+
+export type ConnectionDetails =
+  | SqlJdbcConnectionDetails
+  | RestApiConnectionDetails
+  | GraphQlConnectionDetails
+  | KafkaConnectionDetails
+  | FileExportConnectionDetails;
+
+/** Redacted preview — host/endpoint level only, no credentials (F10.6). */
+export interface ConnectionDetailsPreview {
+  kind: OutputPortInterfaceType;
+  host?: string;
+  endpoint?: string;
+  bucket?: string;
+  topic?: string;
+  redacted: true;
+}
+
+// ---------------------------------------------------------------------------
 // Port
 // ---------------------------------------------------------------------------
 
@@ -32,6 +128,11 @@ export interface Port {
   interfaceType: OutputPortInterfaceType | null;
   contractSchema: Record<string, unknown> | null;
   slaDescription: string | null;
+  /** Full details only surfaced to principals with an active grant (F10.6). */
+  connectionDetails: ConnectionDetails | null;
+  /** Redacted view surfaced to authenticated principals without a grant. */
+  connectionDetailsPreview: ConnectionDetailsPreview | null;
+  connectionDetailsValidated: boolean;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -43,6 +144,7 @@ export interface DeclarePortRequest {
   interfaceType?: OutputPortInterfaceType;
   contractSchema?: Record<string, unknown>;
   slaDescription?: string;
+  connectionDetails?: ConnectionDetails;
 }
 
 export interface UpdatePortRequest {
@@ -51,6 +153,13 @@ export interface UpdatePortRequest {
   interfaceType?: OutputPortInterfaceType;
   contractSchema?: Record<string, unknown>;
   slaDescription?: string;
+  connectionDetails?: ConnectionDetails;
+}
+
+/** Response for POST /ports/:portId/test-connection (Phase B4 stub, 501). */
+export interface TestConnectionResponse {
+  status: 'not_implemented';
+  message: string;
 }
 
 export type PortList = PaginatedList<Port>;

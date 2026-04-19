@@ -73,6 +73,17 @@ const envSchema = z.object({
   // Invitation defaults (F10.3 — governance-configurable per-org override lives
   // in organizations.governance_configs under key 'invitation_ttl_hours')
   INVITATION_DEFAULT_TTL_HOURS: z.coerce.number().int().positive().default(168),
+
+  // Port connection details encryption (Domain 10 Workstream B — F10.6).
+  // CONNECTION_DETAILS_SECRET_ARN  — AWS Secrets Manager ARN holding the AES-256
+  //                                  master key. Used in production.
+  // CONNECTION_DETAILS_DEV_KEY     — 32-byte (64-char) hex fallback for local
+  //                                  and test runs. Ignored when the ARN is set.
+  CONNECTION_DETAILS_SECRET_ARN: z.string().optional(),
+  CONNECTION_DETAILS_DEV_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'must be a 64-character hex string')
+    .optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

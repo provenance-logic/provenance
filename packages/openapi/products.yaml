@@ -365,6 +365,129 @@ components:
           $ref: "#/components/schemas/PaginationMeta"
 
     # ------------------------------------------------------------------
+    # Connection details (F10.5) — per-interface-type shapes. Full details
+    # are only surfaced to principals with an active access grant (F10.6).
+    # Principals without a grant get ConnectionDetailsPreview (host/endpoint
+    # only). Unauthenticated callers see null on both fields.
+    # ------------------------------------------------------------------
+    SqlJdbcConnectionDetails:
+      type: object
+      required: [kind, host, port, database, schema, authMethod, sslMode]
+      properties:
+        kind:       { type: string, enum: [sql_jdbc] }
+        host:       { type: string }
+        port:       { type: integer, minimum: 1, maximum: 65535 }
+        database:   { type: string }
+        schema:     { type: string }
+        authMethod: { type: string, enum: [username_password, iam, certificate] }
+        sslMode:    { type: string, enum: [disable, require, verify-ca, verify-full] }
+        jdbcUrlTemplate: { type: string }
+        username:   { type: string }
+        password:   { type: string, description: "Write-only credential. Never returned on read." }
+
+    RestApiConnectionDetails:
+      type: object
+      required: [kind, baseUrl, authMethod]
+      properties:
+        kind:       { type: string, enum: [rest_api] }
+        baseUrl:    { type: string, format: uri }
+        authMethod: { type: string, enum: [api_key, oauth2, bearer_token, none] }
+        apiVersion: { type: string }
+        requiredHeaders:
+          type: object
+          additionalProperties: { type: string }
+        rateLimit:
+          type: object
+          required: [requests, perSeconds]
+          properties:
+            requests:    { type: integer, minimum: 1 }
+            perSeconds:  { type: integer, minimum: 1 }
+        apiKey:                 { type: string }
+        bearerToken:            { type: string }
+        oauth2ClientId:         { type: string }
+        oauth2ClientSecret:     { type: string }
+        oauth2TokenUrl:         { type: string, format: uri }
+
+    GraphQlConnectionDetails:
+      type: object
+      required: [kind, endpointUrl, authMethod]
+      properties:
+        kind:       { type: string, enum: [graphql] }
+        endpointUrl: { type: string, format: uri }
+        authMethod:  { type: string, enum: [api_key, oauth2, bearer_token, none] }
+        introspectionEndpoint: { type: string, format: uri }
+        apiKey:      { type: string }
+        bearerToken: { type: string }
+
+    KafkaConnectionDetails:
+      type: object
+      required: [kind, bootstrapServers, topic, authMethod]
+      properties:
+        kind:              { type: string, enum: [streaming_topic] }
+        bootstrapServers:  { type: string }
+        topic:             { type: string }
+        authMethod:        { type: string, enum: [sasl_plain, sasl_scram, mtls, none] }
+        consumerGroupPrefix: { type: string }
+        schemaRegistryUrl:   { type: string, format: uri }
+        saslUsername:      { type: string }
+        saslPassword:      { type: string }
+        clientCertPem:     { type: string }
+        clientKeyPem:      { type: string }
+
+    FileExportConnectionDetails:
+      type: object
+      required: [kind, storage, bucket, pathPrefix, authMethod, fileFormat]
+      properties:
+        kind:        { type: string, enum: [file_object_export] }
+        storage:     { type: string, enum: [s3, gcs, adls] }
+        bucket:      { type: string }
+        pathPrefix:  { type: string }
+        authMethod:  { type: string, enum: [iam, service_account, access_key] }
+        fileFormat:  { type: string, enum: [parquet, avro, json, csv, orc] }
+        compression: { type: string, enum: [none, gzip, snappy, zstd] }
+        storageEndpoint:    { type: string }
+        accessKeyId:        { type: string }
+        secretAccessKey:    { type: string }
+        serviceAccountJson: { type: string }
+
+    ConnectionDetails:
+      oneOf:
+        - $ref: "#/components/schemas/SqlJdbcConnectionDetails"
+        - $ref: "#/components/schemas/RestApiConnectionDetails"
+        - $ref: "#/components/schemas/GraphQlConnectionDetails"
+        - $ref: "#/components/schemas/KafkaConnectionDetails"
+        - $ref: "#/components/schemas/FileExportConnectionDetails"
+      discriminator:
+        propertyName: kind
+        mapping:
+          sql_jdbc:           "#/components/schemas/SqlJdbcConnectionDetails"
+          rest_api:           "#/components/schemas/RestApiConnectionDetails"
+          graphql:            "#/components/schemas/GraphQlConnectionDetails"
+          streaming_topic:    "#/components/schemas/KafkaConnectionDetails"
+          file_object_export: "#/components/schemas/FileExportConnectionDetails"
+
+    ConnectionDetailsPreview:
+      type: object
+      description: |
+        Host/endpoint-only preview returned to authenticated principals who do
+        not hold an active access grant. Never includes credential material.
+      required: [kind, redacted]
+      properties:
+        kind:     { $ref: "#/components/schemas/OutputPortInterfaceType" }
+        host:     { type: string }
+        endpoint: { type: string }
+        bucket:   { type: string }
+        topic:    { type: string }
+        redacted: { type: boolean, enum: [true] }
+
+    TestConnectionResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:  { type: string, enum: [not_implemented] }
+        message: { type: string }
+
+    # ------------------------------------------------------------------
     # Port
     # ------------------------------------------------------------------
     Port:
@@ -414,6 +537,26 @@ components:
           maxLength: 500
           nullable: true
           description: Human-readable SLA description (formal SLO declarations come in Phase 3).
+        connectionDetails:
+          allOf:
+            - $ref: "#/components/schemas/ConnectionDetails"
+          nullable: true
+          description: |
+            Full connection details with credentials. Present only when the
+            requesting principal holds an active access grant for this
+            product's port. Otherwise null (F10.6).
+        connectionDetailsPreview:
+          allOf:
+            - $ref: "#/components/schemas/ConnectionDetailsPreview"
+          nullable: true
+          description: |
+            Redacted preview returned to authenticated principals without an
+            active grant. Null when the caller is the owner/grantee (they get
+            connectionDetails instead) or unauthenticated (they get null on
+            both fields).
+        connectionDetailsValidated:
+          type: boolean
+          description: Whether automated validation (F10.7) has succeeded. Currently manual.
         createdAt:
           $ref: "#/components/schemas/Timestamp"
         updatedAt:
@@ -442,6 +585,11 @@ components:
         slaDescription:
           type: string
           maxLength: 500
+        connectionDetails:
+          $ref: "#/components/schemas/ConnectionDetails"
+          description: |
+            Port connection details keyed by the declared interfaceType.
+            Stored encrypted at rest. Must match the port's interfaceType.
 
     UpdatePortRequest:
       type: object
@@ -463,6 +611,8 @@ components:
         slaDescription:
           type: string
           maxLength: 500
+        connectionDetails:
+          $ref: "#/components/schemas/ConnectionDetails"
 
     PortList:
       type: object
@@ -842,6 +992,34 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /organizations/{orgId}/domains/{domainId}/products/{productId}/ports/{portId}/test-connection:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/DomainId"
+      - $ref: "#/components/parameters/ProductId"
+      - $ref: "#/components/parameters/PortId"
+
+    post:
+      operationId: testPortConnection
+      summary: Trigger a connectivity check against the port's declared endpoint (F10.7).
+      description: |
+        Currently stubbed — automated validation is not yet implemented.
+        Returns 501 with a message directing the user to manual validation.
+      tags: [Ports]
+      responses:
+        "501":
+          description: Not Implemented — automated validation pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestConnectionResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

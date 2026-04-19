@@ -40,4 +40,8 @@ export class AccessGrantEntity {
   /** Set when this grant was created via an approved access request. */
   @Column({ type: 'uuid', name: 'approval_request_id', nullable: true })
   approvalRequestId!: string | null;
+
+  /** Connection package generated at grant time (F10.8). Null for legacy grants. */
+  @Column({ name: 'connection_package', type: 'jsonb', nullable: true })
+  connectionPackage!: Record<string, unknown> | null;
 }

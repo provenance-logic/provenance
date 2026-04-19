@@ -39,6 +39,15 @@ export class PortDeclarationEntity {
   @Column({ name: 'sla_description', type: 'text', nullable: true })
   slaDescription!: string | null;
 
+  @Column({ name: 'connection_details', type: 'jsonb', nullable: true })
+  connectionDetails!: Record<string, unknown> | null;
+
+  @Column({ name: 'connection_details_validated', type: 'boolean', default: false })
+  connectionDetailsValidated!: boolean;
+
+  @Column({ name: 'connection_details_encrypted', type: 'boolean', default: false })
+  connectionDetailsEncrypted!: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

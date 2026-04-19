@@ -12,6 +12,7 @@ import type {
   UpdatePortRequest,
   ProductVersionList,
   ComplianceState,
+  TestConnectionResponse,
 } from '@provenance/types';
 
 const base = (orgId: string, domainId: string) =>
@@ -57,6 +58,12 @@ export const productsApi = {
 
     delete: (orgId: string, domainId: string, productId: string, portId: string) =>
       api.delete(`${base(orgId, domainId)}/${productId}/ports/${portId}`),
+
+    testConnection: (orgId: string, domainId: string, productId: string, portId: string) =>
+      api.post<TestConnectionResponse>(
+        `${base(orgId, domainId)}/${productId}/ports/${portId}/test-connection`,
+        {},
+      ),
   },
 
   versions: {

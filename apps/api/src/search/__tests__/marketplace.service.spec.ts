@@ -77,6 +77,11 @@ const mockEnrichmentService = () => ({
     accessStatus:  null,
     columnSchema:  null,
   }),
+  disclosePortConnectionDetails: jest.fn().mockResolvedValue({
+    connectionDetails: null,
+    connectionDetailsPreview: null,
+  }),
+  hasActiveGrant: jest.fn().mockResolvedValue(false),
 });
 
 // ---------------------------------------------------------------------------

@@ -8,11 +8,64 @@ import { SloEvaluationEntity } from '../../observability/entities/slo-evaluation
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../../access/entities/access-request.entity.js';
 import { SchemaSnapshotEntity } from '../../connectors/entities/schema-snapshot.entity.js';
+import { EncryptionService } from '../../common/encryption.service.js';
+import type { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
 
 const mockRepo = () => ({
   findOne: jest.fn().mockResolvedValue(null),
   find: jest.fn().mockResolvedValue([]),
 });
+
+const mockEncryptionService = () => ({
+  encrypt: jest.fn().mockImplementation((payload: Record<string, unknown>) =>
+    Promise.resolve({
+      version: 1,
+      iv: 'iv',
+      authTag: 'tag',
+      ciphertext: Buffer.from(JSON.stringify(payload)).toString('base64'),
+    }),
+  ),
+  decrypt: jest.fn().mockImplementation((env: { ciphertext: string }) =>
+    Promise.resolve(JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8'))),
+  ),
+});
+
+const encryptedEnvelope = (payload: Record<string, unknown>) => ({
+  version: 1,
+  iv: 'iv',
+  authTag: 'tag',
+  ciphertext: Buffer.from(JSON.stringify(payload)).toString('base64'),
+});
+
+const makePort = (overrides: Partial<PortDeclarationEntity> = {}): PortDeclarationEntity => ({
+  id: 'port-1',
+  orgId: 'org-1',
+  productId: 'product-1',
+  portType: 'output',
+  name: 'Orders Output',
+  description: null,
+  interfaceType: 'sql_jdbc',
+  contractSchema: null,
+  slaDescription: null,
+  connectionDetails: encryptedEnvelope({
+    kind: 'sql_jdbc',
+    host: 'db.example.com',
+    port: 5432,
+    database: 'orders',
+    schema: 'public',
+    authMethod: 'username_password',
+    sslMode: 'require',
+    password: 'hunter2',
+  }) as unknown as Record<string, unknown>,
+  connectionDetailsEncrypted: true,
+  connectionDetailsValidated: false,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  product: null as any,
+  ...overrides,
+});
+
+const productCtx = { id: 'product-1', orgId: 'org-1', ownerPrincipalId: 'owner-1' };
 
 const mockCtx = {
   principalId: 'principal-1',
@@ -42,6 +95,7 @@ describe('ProductEnrichmentService', () => {
         { provide: getRepositoryToken(AccessGrantEntity),     useFactory: mockRepo },
         { provide: getRepositoryToken(AccessRequestEntity),   useFactory: mockRepo },
         { provide: getRepositoryToken(SchemaSnapshotEntity),  useFactory: mockRepo },
+        { provide: EncryptionService,                         useFactory: mockEncryptionService },
       ],
     }).compile();
 
@@ -182,6 +236,83 @@ describe('ProductEnrichmentService', () => {
         undefined,
       );
       expect(result.accessStatus).toBeNull();
+    });
+  });
+
+  describe('disclosePortConnectionDetails', () => {
+    const grantedCtx = {
+      principalId: 'consumer-1',
+      orgId: 'org-1',
+      principalType: 'human_user' as const,
+      roles: [],
+      keycloakSubject: 'kc-1',
+    };
+
+    it('returns null/null for unauthenticated callers', async () => {
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, undefined);
+      expect(result).toEqual({ connectionDetails: null, connectionDetailsPreview: null });
+    });
+
+    it('returns full decrypted details when the principal has an active grant', async () => {
+      accessGrantRepo.findOne.mockResolvedValueOnce({
+        grantedAt: new Date(),
+        expiresAt: null,
+        revokedAt: null,
+      });
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, grantedCtx);
+      expect(result.connectionDetailsPreview).toBeNull();
+      expect(result.connectionDetails).toMatchObject({
+        kind: 'sql_jdbc',
+        host: 'db.example.com',
+        password: 'hunter2',
+      });
+    });
+
+    it('treats the product owner as a grantee (returns full details)', async () => {
+      const ownerCtx = { ...grantedCtx, principalId: 'owner-1' };
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, ownerCtx);
+      expect(result.connectionDetails).toMatchObject({ host: 'db.example.com' });
+      // Owner path must not hit the grants repo at all.
+      expect(accessGrantRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('returns a redacted preview with host and no credentials for authed non-grantees', async () => {
+      accessGrantRepo.findOne.mockResolvedValueOnce(null);
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, grantedCtx);
+      expect(result.connectionDetails).toBeNull();
+      expect(result.connectionDetailsPreview).toEqual({
+        kind: 'sql_jdbc',
+        host: 'db.example.com',
+        redacted: true,
+      });
+    });
+
+    it('treats a revoked grant as no grant', async () => {
+      accessGrantRepo.findOne.mockResolvedValueOnce({
+        grantedAt: new Date(),
+        expiresAt: null,
+        revokedAt: new Date(),
+      });
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, grantedCtx);
+      expect(result.connectionDetails).toBeNull();
+      expect(result.connectionDetailsPreview).toMatchObject({ redacted: true });
+    });
+
+    it('treats an expired grant as no grant', async () => {
+      accessGrantRepo.findOne.mockResolvedValueOnce({
+        grantedAt: new Date('2024-01-01'),
+        expiresAt: new Date('2024-01-02'),
+        revokedAt: null,
+      });
+      const result = await service.disclosePortConnectionDetails(makePort(), productCtx, grantedCtx);
+      expect(result.connectionDetails).toBeNull();
+      expect(result.connectionDetailsPreview).toMatchObject({ redacted: true });
+    });
+
+    it('returns null/null when the port has no connection details', async () => {
+      const port = makePort({ connectionDetails: null, connectionDetailsEncrypted: false });
+      const result = await service.disclosePortConnectionDetails(port, productCtx, grantedCtx);
+      expect(result).toEqual({ connectionDetails: null, connectionDetailsPreview: null });
     });
   });
 });

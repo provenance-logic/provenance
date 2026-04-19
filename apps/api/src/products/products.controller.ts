@@ -190,6 +190,16 @@ export class ProductsController {
     return this.productsService.deletePort(orgId, productId, portId);
   }
 
+  @Post(':productId/ports/:portId/test-connection')
+  @HttpCode(HttpStatus.NOT_IMPLEMENTED)
+  testConnection(
+    @Param('orgId') orgId: string,
+    @Param('productId') productId: string,
+    @Param('portId') portId: string,
+  ) {
+    return this.productsService.testConnection(orgId, productId, portId);
+  }
+
   // ---------------------------------------------------------------------------
   // Versions
   // ---------------------------------------------------------------------------

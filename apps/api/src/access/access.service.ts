@@ -16,6 +16,7 @@ import { AccessGrantEntity } from './entities/access-grant.entity.js';
 import { AccessRequestEntity } from './entities/access-request.entity.js';
 import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { ConnectionPackageService } from './connection-package.service.js';
 import { getConfig } from '../config.js';
 import type {
   AccessGrant,
@@ -31,6 +32,7 @@ import type {
   ApprovalEvent,
   ApprovalEventList,
   ApprovalEventAction,
+  ConnectionPackage,
 } from '@provenance/types';
 
 @Injectable()
@@ -48,6 +50,7 @@ export class AccessService {
     private readonly productRepo: Repository<DataProductEntity>,
     @Inject(TEMPORAL_CLIENT)
     private readonly temporalClient: Client,
+    private readonly connectionPackageService: ConnectionPackageService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -98,6 +101,7 @@ export class AccessService {
     dto: DirectGrantRequest,
     grantedByPrincipalId: string,
   ): Promise<AccessGrant> {
+    const connectionPackage = await this.generatePackage(orgId, dto.productId);
     const grant = this.grantRepo.create({
       orgId,
       productId: dto.productId,
@@ -106,9 +110,27 @@ export class AccessService {
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       accessScope: dto.accessScope ?? null,
       approvalRequestId: null,
+      connectionPackage: connectionPackage as unknown as Record<string, unknown> | null,
     });
     const saved = await this.grantRepo.save(grant);
     return this.toGrant(saved);
+  }
+
+  private async generatePackage(
+    orgId: string,
+    productId: string,
+  ): Promise<ConnectionPackage | null> {
+    try {
+      return await this.connectionPackageService.generateForProduct(orgId, productId);
+    } catch (err) {
+      // Grant creation should not fail because package generation failed — the
+      // consumer can still retrieve connection details via get_product once
+      // they have the grant. Log and continue.
+      this.logger.warn(
+        `Connection package generation failed for product ${productId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   async getGrant(orgId: string, grantId: string): Promise<AccessGrant> {
@@ -295,6 +317,10 @@ export class AccessService {
     request.resolutionNote = dto.note ?? null;
     const savedRequest = await this.requestRepo.save(request);
 
+    // Generate the connection package (F10.8) before saving so that the grant
+    // row carries it in the same transactional write.
+    const connectionPackage = await this.generatePackage(orgId, request.productId);
+
     // Create the resulting access grant.
     const grant = this.grantRepo.create({
       orgId,
@@ -304,6 +330,7 @@ export class AccessService {
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       accessScope: request.accessScope,
       approvalRequestId: request.id,
+      connectionPackage: connectionPackage as unknown as Record<string, unknown> | null,
     });
     const savedGrant = await this.grantRepo.save(grant);
 
@@ -447,6 +474,7 @@ export class AccessService {
       revokedBy: e.revokedBy,
       accessScope: e.accessScope,
       approvalRequestId: e.approvalRequestId,
+      connectionPackage: (e.connectionPackage as unknown as ConnectionPackage | null) ?? null,
     };
   }
 

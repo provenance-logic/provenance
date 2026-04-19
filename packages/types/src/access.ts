@@ -1,4 +1,5 @@
 import type { Uuid, IsoTimestamp, PaginatedList } from './common.js';
+import type { OutputPortInterfaceType } from './products.js';
 
 // ---------------------------------------------------------------------------
 // Enumerations
@@ -41,6 +42,40 @@ export interface AccessGrant {
   accessScope: AccessScope | null;
   /** Set when this grant was created via an approved access request. */
   approvalRequestId: Uuid | null;
+  /** Ready-to-use connection artifact per F10.8. Generated at grant time. */
+  connectionPackage: ConnectionPackage | null;
+}
+
+// ---------------------------------------------------------------------------
+// Connection package (F10.8) — a per-port ready-to-use artifact returned to
+// the consumer at grant time. One package per output port on the product;
+// packageVersion lets refresh flows (F10.10) show when it was last updated.
+// ---------------------------------------------------------------------------
+
+export interface ConnectionPackagePort {
+  portId: Uuid;
+  portName: string;
+  interfaceType: OutputPortInterfaceType;
+  /**
+   * Flexible bag of artifacts — shape depends on interfaceType. For example
+   * SQL/JDBC ports carry `jdbcUrl`, `pythonSnippet`, `sampleQuery`, and
+   * `dataDictionary`; REST ports carry `curlExample`, `postmanCollection`,
+   * `pythonSnippet`, `endpointReference`.
+   */
+  artifacts: Record<string, unknown>;
+}
+
+export interface ConnectionPackage {
+  packageVersion: number;
+  generatedAt: IsoTimestamp;
+  ports: ConnectionPackagePort[];
+  /** Agent integration guide (F10.9) — present when any port is agent-accessible. */
+  agentIntegration?: {
+    mcpToolCalls: string[];
+    examplePrompt: string;
+    trustScore: number | null;
+    governancePolicyVersion: string | null;
+  };
 }
 
 export interface DirectGrantRequest {
