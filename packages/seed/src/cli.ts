@@ -21,9 +21,15 @@ async function main(): Promise<void> {
         break;
       }
       case 'reset': {
-        if (flag === '--soft') await softReset(config, logger);
-        else if (flag === '--hard') await hardReset(config, logger);
-        else throw new Error('reset requires --soft or --hard');
+        if (flag === '--soft') {
+          await softReset(config, logger);
+        } else if (flag === '--hard') {
+          const api = createApiClient(config, logger);
+          const keycloak = createKeycloakClient(config, logger);
+          await hardReset({ config, logger, api, keycloak });
+        } else {
+          throw new Error('reset requires --soft or --hard');
+        }
         break;
       }
       case 'verify': {

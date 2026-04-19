@@ -40,12 +40,9 @@ if [ "$MODE" = "--soft" ]; then
   pnpm --filter @provenance/seed run seed:reset:soft \
     || fail "soft reset failed"
 else
-  log "running HARD reset — all seeded data will be truncated"
+  log "running HARD reset — all seeded data will be truncated and immediately re-seeded"
   pnpm --filter @provenance/seed run seed:reset:hard \
     || fail "hard reset failed"
-  log "re-seeding from scratch"
-  pnpm --filter @provenance/seed run seed \
-    || fail "re-seed failed after hard reset"
 fi
 
 # ---------------------------------------------------------------------------

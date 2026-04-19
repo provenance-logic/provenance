@@ -1,7 +1,10 @@
 import type { Client } from 'pg';
 import type { SeedConfig } from './config.js';
 import type { Logger } from './logger.js';
+import type { ApiClient } from './api-client.js';
+import type { KeycloakAdminClient } from './keycloak-client.js';
 import { withDb } from './db-client.js';
+import { runSeed } from './runner.js';
 
 export async function softReset(config: SeedConfig, logger: Logger): Promise<void> {
   logger.info('soft reset: clearing transactional demo state (audit log, lineage emissions, trust score history)');
@@ -28,7 +31,15 @@ export async function softReset(config: SeedConfig, logger: Logger): Promise<voi
   logger.info('soft reset: done');
 }
 
-export async function hardReset(config: SeedConfig, logger: Logger): Promise<void> {
+export interface HardResetContext {
+  config: SeedConfig;
+  logger: Logger;
+  api: ApiClient;
+  keycloak: KeycloakAdminClient;
+}
+
+export async function hardReset(ctx: HardResetContext): Promise<void> {
+  const { config, logger } = ctx;
   logger.warn('hard reset: dropping all seeded data from platform schemas');
   await withDb(config, async (db: Client) => {
     await db.query('BEGIN');
@@ -59,5 +70,7 @@ export async function hardReset(config: SeedConfig, logger: Logger): Promise<voi
       throw e;
     }
   });
-  logger.info('hard reset: platform schemas truncated — re-run `seed` to repopulate');
+  logger.info('hard reset: platform schemas truncated — re-seeding now');
+  await runSeed(ctx);
+  logger.info('hard reset: re-seed complete');
 }
