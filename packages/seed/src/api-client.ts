@@ -21,7 +21,7 @@ export function createApiClient(config: SeedConfig, logger: Logger): ApiClient {
     const res = await request(url, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const text = await res.body.text();
     if (res.statusCode >= 400) {

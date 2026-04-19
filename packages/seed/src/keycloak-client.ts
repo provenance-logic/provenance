@@ -50,7 +50,7 @@ export function createKeycloakClient(config: SeedConfig, logger: Logger): Keyclo
     return cachedToken.value;
   }
 
-  async function adminCall<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function adminCall<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
     const url = `${config.KEYCLOAK_URL}/admin/realms/${realm}${path}`;
     const res = await request(url, {
       method,
@@ -58,7 +58,7 @@ export function createKeycloakClient(config: SeedConfig, logger: Logger): Keyclo
         'content-type': 'application/json',
         authorization: `Bearer ${await token()}`,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const text = await res.body.text();
     if (res.statusCode >= 400) {
