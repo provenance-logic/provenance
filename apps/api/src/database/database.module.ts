@@ -5,6 +5,8 @@ import { OrgEntity } from '../organizations/entities/org.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
+import { InvitationEntity } from '../organizations/entities/invitation.entity.js';
+import { GovernanceConfigEntity } from '../organizations/entities/governance-config.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../products/entities/product-version.entity.js';
@@ -46,6 +48,8 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
             DomainEntity,
             PrincipalEntity,
             RoleAssignmentEntity,
+            InvitationEntity,
+            GovernanceConfigEntity,
             DataProductEntity,
             PortDeclarationEntity,
             ProductVersionEntity,
