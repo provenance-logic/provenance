@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import type { KeycloakInstance } from 'keycloak-js';
 import keycloak from './keycloak.js';
 
@@ -128,6 +129,37 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
         <p className="text-sm text-slate-500">Redirecting to sign in…</p>
       </div>
     );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Paths that are allowed to render without a bound organization. Everything
+ * else is tenant-scoped and will 401 on the API side (JwtAuthGuard requires
+ * a non-empty provenance_org_id claim on every route except @AllowNoOrg).
+ */
+const NO_ORG_PATH_PREFIXES = ['/onboarding/'];
+
+/**
+ * Redirects authenticated users whose JWT has no `provenance_org_id` claim
+ * (newly registered, not yet self-served) to `/onboarding/org`, so they
+ * cannot land on a route that would fire tenant-scoped API calls.
+ *
+ * The JWT claim is the single source of truth for org membership — reading
+ * it here avoids a chicken-and-egg API call against the tenant-scoped
+ * organizations endpoint to discover "do I have an org?".
+ */
+export function RequireOrg({ children }: { children: React.ReactNode }) {
+  const { keycloak } = useAuth();
+  const location = useLocation();
+
+  const orgId = (keycloak.tokenParsed as { provenance_org_id?: string } | undefined)
+    ?.provenance_org_id;
+
+  const isOnboardingPath = NO_ORG_PATH_PREFIXES.some((p) => location.pathname.startsWith(p));
+
+  if (!orgId && !isOnboardingPath) {
+    return <Navigate to="/onboarding/org" replace />;
   }
   return <>{children}</>;
 }

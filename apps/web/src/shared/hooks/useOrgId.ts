@@ -1,25 +1,14 @@
-import { useState, useEffect } from 'react';
 import { useAuth } from '../../auth/AuthProvider.js';
-import { organizationsApi } from '../api/organizations.js';
 
 /**
- * Resolves the current org ID. Prefers the JWT provenance_org_id claim;
- * falls back to fetching the first org from the API.
+ * Resolves the current org ID from the JWT provenance_org_id claim.
+ *
+ * RequireOrg gates all tenant-scoped routes, so any component reaching this
+ * hook already has a non-empty claim — there is no need to fall back to an
+ * API lookup (and doing so would 401 anyway: the API now rejects empty-org
+ * JWTs on every route except @AllowNoOrg).
  */
 export function useOrgId(): string | undefined {
   const { keycloak } = useAuth();
-  const fromToken = keycloak.tokenParsed?.provenance_org_id as string | undefined;
-  const [resolved, setResolved] = useState<string | undefined>(fromToken || undefined);
-
-  useEffect(() => {
-    if (fromToken) {
-      setResolved(fromToken);
-      return;
-    }
-    organizationsApi.list(1, 0).then((res) => {
-      if (res.items.length > 0) setResolved(res.items[0].id);
-    }).catch(() => {});
-  }, [fromToken]);
-
-  return resolved;
+  return keycloak.tokenParsed?.provenance_org_id as string | undefined;
 }

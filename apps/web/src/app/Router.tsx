@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavShell } from '../shared/components/NavShell.js';
-import { RequireAuth } from '../auth/AuthProvider.js';
+import { RequireAuth, RequireOrg } from '../auth/AuthProvider.js';
 import { DashboardRedirect } from '../features/publishing/DashboardRedirect.js';
 import { DomainDashboard } from '../features/publishing/DomainDashboard.js';
 import { NewProductForm } from '../features/publishing/NewProductForm.js';
@@ -37,7 +37,9 @@ export function AppRouter() {
           path="/"
           element={
             <RequireAuth>
-              <NavShell />
+              <RequireOrg>
+                <NavShell />
+              </RequireOrg>
             </RequireAuth>
           }
         >
