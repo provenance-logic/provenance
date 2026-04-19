@@ -12,6 +12,7 @@ import { PolicyStudioPage } from '../features/governance/PolicyStudioPage.js';
 import { ComplianceMonitorPage } from '../features/governance/ComplianceMonitorPage.js';
 import { ExceptionsPage } from '../features/governance/ExceptionsPage.js';
 import { NewOrganizationForm } from '../features/onboarding/NewOrganizationForm.js';
+import { NewDomainForm } from '../features/onboarding/NewDomainForm.js';
 import { AcceptInvitePage } from '../features/onboarding/AcceptInvitePage.js';
 import { DomainTeamPage } from '../features/team/DomainTeamPage.js';
 
@@ -65,6 +66,7 @@ export function AppRouter() {
 
           {/* Onboarding — F10.2 self-serve org creation */}
           <Route path="onboarding/org" element={<NewOrganizationForm />} />
+          <Route path="onboarding/domain" element={<NewDomainForm />} />
 
           {/* Marketplace */}
           <Route path="marketplace" element={<MarketplacePage />} />
