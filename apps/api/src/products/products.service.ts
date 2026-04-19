@@ -3,6 +3,8 @@ import {
   NotFoundException,
   ConflictException,
   UnprocessableEntityException,
+  BadRequestException,
+  NotImplementedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +18,8 @@ import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
 import { ProductEnrichmentService } from './product-enrichment.service.js';
+import { EncryptionService } from '../common/encryption.service.js';
+import { validateConnectionDetails } from './connection-details.schemas.js';
 import type {
   DataProduct,
   DataProductList,
@@ -31,6 +35,8 @@ import type {
   PublishProductRequest,
   ProductPublishedEvent,
   RequestContext,
+  ConnectionDetails,
+  OutputPortInterfaceType,
 } from '@provenance/types';
 
 @Injectable()
@@ -50,6 +56,7 @@ export class ProductsService {
     private readonly kafkaProducerService: KafkaProducerService,
     private readonly searchIndexingService: SearchIndexingService,
     private readonly enrichmentService: ProductEnrichmentService,
+    private readonly encryptionService: EncryptionService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -131,7 +138,21 @@ export class ProductsService {
       ctx,
     );
 
-    return { ...this.toDataProduct(product), ...enrichment };
+    // Per-port connection-details disclosure (F10.6) — full for granted
+    // principals (owner counts), redacted preview for authed-no-grant, nothing
+    // for unauthenticated. Runs sequentially because decrypt() is cheap and
+    // ports are small per product; parallelize if this becomes a hot path.
+    const baseDto = this.toDataProduct(product);
+    const discloseBase = { id: product.id, orgId: product.orgId, ownerPrincipalId: product.ownerPrincipalId };
+    const enrichedPorts: Port[] = [];
+    for (let i = 0; i < baseDto.ports.length; i++) {
+      const portEntity = product.ports[i];
+      const { connectionDetails, connectionDetailsPreview } =
+        await this.enrichmentService.disclosePortConnectionDetails(portEntity, discloseBase, ctx);
+      enrichedPorts.push({ ...baseDto.ports[i], connectionDetails, connectionDetailsPreview });
+    }
+
+    return { ...baseDto, ports: enrichedPorts, ...enrichment };
   }
 
   async updateProduct(
@@ -243,6 +264,21 @@ export class ProductsService {
       const names = missingContracts.map((p) => p.name).join(', ');
       throw new UnprocessableEntityException(
         `Output ports must have a contract schema: ${names}`,
+      );
+    }
+
+    // 4b. Connection details required on every output port (F10.5).
+    // Semantic query endpoints are platform-populated and exempted from the
+    // authoring-time requirement — the federated query layer fills them in.
+    const missingConnectionDetails = outputPorts.filter(
+      (p) =>
+        p.interfaceType !== 'semantic_query_endpoint' &&
+        (p.connectionDetails === null || p.connectionDetails === undefined),
+    );
+    if (missingConnectionDetails.length > 0) {
+      const names = missingConnectionDetails.map((p) => p.name).join(', ');
+      throw new UnprocessableEntityException(
+        `Output ports must have connection details: ${names}`,
       );
     }
 
@@ -393,6 +429,9 @@ export class ProductsService {
     productId: string,
     dto: DeclarePortRequest,
   ): Promise<Port> {
+    const { connectionDetails, connectionDetailsEncrypted } =
+      await this.prepareConnectionDetails(dto.interfaceType, dto.connectionDetails);
+
     const port = this.portRepo.create({
       orgId,
       productId,
@@ -402,6 +441,9 @@ export class ProductsService {
       interfaceType: dto.interfaceType ?? null,
       contractSchema: dto.contractSchema ?? null,
       slaDescription: dto.slaDescription ?? null,
+      connectionDetails,
+      connectionDetailsEncrypted,
+      connectionDetailsValidated: false,
     });
     const saved = await this.portRepo.save(port);
     return this.toPort(saved);
@@ -426,8 +468,27 @@ export class ProductsService {
     if (dto.interfaceType !== undefined) port.interfaceType = dto.interfaceType;
     if (dto.contractSchema !== undefined) port.contractSchema = dto.contractSchema;
     if (dto.slaDescription !== undefined) port.slaDescription = dto.slaDescription;
+    if (dto.connectionDetails !== undefined) {
+      const effectiveInterfaceType = dto.interfaceType ?? port.interfaceType;
+      const { connectionDetails, connectionDetailsEncrypted } =
+        await this.prepareConnectionDetails(effectiveInterfaceType, dto.connectionDetails);
+      port.connectionDetails = connectionDetails;
+      port.connectionDetailsEncrypted = connectionDetailsEncrypted;
+      // Changing connection details invalidates any prior connectivity check.
+      port.connectionDetailsValidated = false;
+    }
     const saved = await this.portRepo.save(port);
     return this.toPort(saved);
+  }
+
+  async testConnection(orgId: string, productId: string, portId: string): Promise<never> {
+    const port = await this.portRepo.findOne({ where: { id: portId, orgId, productId } });
+    if (!port) throw new NotFoundException(`Port ${portId} not found`);
+    // F10.7 — automated connectivity check is not yet implemented. The endpoint
+    // is intentionally reachable so the UI can surface the expected message.
+    throw new NotImplementedException(
+      'Automated connection validation is not yet implemented. Mark the port as tested manually via the UI.',
+    );
   }
 
   async deletePort(orgId: string, productId: string, portId: string): Promise<void> {
@@ -524,8 +585,53 @@ export class ProductsService {
       interfaceType: entity.interfaceType,
       contractSchema: entity.contractSchema,
       slaDescription: entity.slaDescription,
+      // Default mapper never surfaces decrypted details or previews — that
+      // gating logic lives in ProductEnrichmentService (F10.6). Callers that
+      // need disclosure must enrich explicitly.
+      connectionDetails: null,
+      connectionDetailsPreview: null,
+      connectionDetailsValidated: entity.connectionDetailsValidated ?? false,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connection details helpers (F10.5 / F10.6)
+  // ---------------------------------------------------------------------------
+
+  private async prepareConnectionDetails(
+    interfaceType: OutputPortInterfaceType | null | undefined,
+    details: ConnectionDetails | undefined,
+  ): Promise<{
+    connectionDetails: Record<string, unknown> | null;
+    connectionDetailsEncrypted: boolean;
+  }> {
+    if (details === undefined) {
+      return { connectionDetails: null, connectionDetailsEncrypted: false };
+    }
+    if (!interfaceType) {
+      throw new BadRequestException(
+        'connectionDetails requires an interfaceType on the port',
+      );
+    }
+    // Zod validation throws on interface-mismatch or missing required fields.
+    let validated: ConnectionDetails;
+    try {
+      validated = validateConnectionDetails(interfaceType, details);
+    } catch (err) {
+      throw new BadRequestException(
+        `connectionDetails did not validate for interfaceType '${interfaceType}': ${
+          (err as Error).message
+        }`,
+      );
+    }
+    const envelope = await this.encryptionService.encrypt(
+      validated as unknown as Record<string, unknown>,
+    );
+    return {
+      connectionDetails: envelope as unknown as Record<string, unknown>,
+      connectionDetailsEncrypted: true,
     };
   }
 

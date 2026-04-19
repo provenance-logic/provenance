@@ -15,6 +15,7 @@ import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
 import { ProductEnrichmentService } from '../product-enrichment.service.js';
+import { EncryptionService } from '../../common/encryption.service.js';
 import type { DataClassification } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,13 @@ const makeOutputPortEntity = (
   interfaceType: 'rest_api',
   contractSchema: { type: 'object' },
   slaDescription: null,
+  connectionDetails: {
+    kind: 'rest_api',
+    baseUrl: 'https://api.example.com',
+    authMethod: 'api_key',
+  },
+  connectionDetailsValidated: false,
+  connectionDetailsEncrypted: false,
   createdAt: now,
   updatedAt: now,
   product: null as any,
@@ -107,6 +115,9 @@ const makeDiscoveryPortEntity = (): PortDeclarationEntity => ({
   interfaceType: null,
   contractSchema: null,
   slaDescription: null,
+  connectionDetails: null,
+  connectionDetailsValidated: false,
+  connectionDetailsEncrypted: false,
   createdAt: now,
   updatedAt: now,
   product: null as any,
@@ -151,7 +162,32 @@ describe('ProductsService', () => {
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
         { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined) } },
-        { provide: ProductEnrichmentService, useValue: { enrich: jest.fn().mockResolvedValue({ owner: null, domainTeam: null, freshness: null, accessStatus: null, columnSchema: null }) } },
+        {
+          provide: ProductEnrichmentService,
+          useValue: {
+            enrich: jest.fn().mockResolvedValue({
+              owner: null, domainTeam: null, freshness: null, accessStatus: null, columnSchema: null,
+            }),
+            disclosePortConnectionDetails: jest
+              .fn()
+              .mockResolvedValue({ connectionDetails: null, connectionDetailsPreview: null }),
+            hasActiveGrant: jest.fn().mockResolvedValue(false),
+          },
+        },
+        {
+          provide: EncryptionService,
+          useValue: {
+            encrypt: jest.fn().mockImplementation(async (payload: Record<string, unknown>) => ({
+              version: 1,
+              iv: 'iv',
+              authTag: 'tag',
+              ciphertext: Buffer.from(JSON.stringify(payload)).toString('base64'),
+            })),
+            decrypt: jest.fn().mockImplementation(async (env: { ciphertext: string }) =>
+              JSON.parse(Buffer.from(env.ciphertext, 'base64').toString('utf8')),
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -363,6 +399,70 @@ describe('ProductsService', () => {
       expect(result.portType).toBe('output');
       expect(result.name).toBe('Orders Output');
     });
+
+    it('validates and encrypts connectionDetails when supplied', async () => {
+      const entity = makeOutputPortEntity();
+      portRepo.create.mockImplementation((d: Partial<PortDeclarationEntity>) => ({ ...entity, ...d }));
+      portRepo.save.mockImplementation((e: PortDeclarationEntity) => Promise.resolve(e));
+
+      await service.declarePort('org-1', 'product-1', {
+        portType: 'output',
+        name: 'Orders Output',
+        interfaceType: 'sql_jdbc',
+        contractSchema: { type: 'object' },
+        connectionDetails: {
+          kind: 'sql_jdbc',
+          host: 'db.example.com',
+          port: 5432,
+          database: 'orders',
+          schema: 'public',
+          authMethod: 'username_password',
+          sslMode: 'require',
+          username: 'reader',
+          password: 'hunter2',
+        },
+      });
+
+      const saved = portRepo.save.mock.calls[0][0] as PortDeclarationEntity;
+      expect(saved.connectionDetailsEncrypted).toBe(true);
+      // Encrypted envelope, not raw plaintext.
+      expect(saved.connectionDetails).toEqual(
+        expect.objectContaining({ version: 1, iv: expect.any(String), authTag: expect.any(String) }),
+      );
+    });
+
+    it('rejects connectionDetails that do not match the declared interfaceType', async () => {
+      await expect(
+        service.declarePort('org-1', 'product-1', {
+          portType: 'output',
+          name: 'Bad Port',
+          interfaceType: 'rest_api',
+          connectionDetails: {
+            kind: 'sql_jdbc',
+            host: 'x',
+            port: 5432,
+            database: 'd',
+            schema: 's',
+            authMethod: 'iam',
+            sslMode: 'require',
+          } as any,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('rejects connectionDetails on a port with no interfaceType', async () => {
+      await expect(
+        service.declarePort('org-1', 'product-1', {
+          portType: 'discovery',
+          name: 'Discovery',
+          connectionDetails: {
+            kind: 'rest_api',
+            baseUrl: 'https://api.example.com',
+            authMethod: 'none',
+          } as any,
+        }),
+      ).rejects.toThrow();
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -503,6 +603,22 @@ describe('ProductsService', () => {
         makeProductEntity({
           ports: [
             makeOutputPortEntity({ contractSchema: null }),
+            makeDiscoveryPortEntity(),
+          ],
+        }),
+      );
+
+      await expect(
+        service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('throws UnprocessableEntityException when an output port is missing connection details (F10.5)', async () => {
+      principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'keycloak-sub-1' });
+      productRepo.findOne.mockResolvedValue(
+        makeProductEntity({
+          ports: [
+            makeOutputPortEntity({ connectionDetails: null }),
             makeDiscoveryPortEntity(),
           ],
         }),

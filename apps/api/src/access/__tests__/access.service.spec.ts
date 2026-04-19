@@ -11,6 +11,7 @@ import { AccessRequestEntity } from '../entities/access-request.entity.js';
 import { ApprovalEventEntity } from '../entities/approval-event.entity.js';
 import { TEMPORAL_CLIENT } from '../temporal/temporal-client.provider.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
+import { ConnectionPackageService } from '../connection-package.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -58,6 +59,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   revokedBy: null,
   accessScope: null,
   approvalRequestId: null,
+  connectionPackage: null,
   ...overrides,
 });
 
@@ -117,6 +119,10 @@ describe('AccessService', () => {
         { provide: getRepositoryToken(ApprovalEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity),   useFactory: mockRepo },
         { provide: TEMPORAL_CLIENT, useFactory: mockTemporalClient },
+        {
+          provide: ConnectionPackageService,
+          useValue: { generateForProduct: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 
@@ -146,6 +152,47 @@ describe('AccessService', () => {
 
       expect(grantRepo.save).toHaveBeenCalled();
       expect(result.productId).toBe('product-1');
+    });
+
+    it('generates and persists a connection package on the grant (F10.8)', async () => {
+      const grant = makeGrant();
+      grantRepo.create.mockImplementation((d: Partial<AccessGrantEntity>) => ({
+        ...grant,
+        ...d,
+      }));
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+      const pkg = { packageVersion: 1, generatedAt: '2026-04-19T00:00:00Z', ports: [] };
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } })
+        .connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(pkg);
+
+      const result = await service.createGrant(
+        'org-1',
+        { productId: 'product-1', granteePrincipalId: 'principal-2' },
+        'principal-1',
+      );
+
+      expect(cps.generateForProduct).toHaveBeenCalledWith('org-1', 'product-1');
+      const saved = grantRepo.save.mock.calls[0][0] as AccessGrantEntity;
+      expect(saved.connectionPackage).toEqual(pkg);
+      expect(result.connectionPackage).toEqual(pkg);
+    });
+
+    it('does not fail grant creation when package generation throws', async () => {
+      const grant = makeGrant();
+      grantRepo.create.mockReturnValue(grant);
+      grantRepo.save.mockResolvedValue(grant);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } })
+        .connectionPackageService;
+      cps.generateForProduct.mockRejectedValueOnce(new Error('decrypt failed'));
+
+      await expect(
+        service.createGrant(
+          'org-1',
+          { productId: 'product-1', granteePrincipalId: 'principal-2' },
+          'principal-1',
+        ),
+      ).resolves.toBeDefined();
     });
   });
 

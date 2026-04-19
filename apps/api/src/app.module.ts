@@ -1,5 +1,6 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CommonModule } from './common/common.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -18,6 +19,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    CommonModule,
     DatabaseModule,
     AuthModule,
     HealthModule,

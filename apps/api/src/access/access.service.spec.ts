@@ -12,6 +12,7 @@ import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { TEMPORAL_CLIENT } from './temporal/temporal-client.provider.js';
 import { createApprovalActivities } from './temporal/approval.activities.js';
+import { ConnectionPackageService } from './connection-package.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -60,6 +61,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   revokedBy: null,
   accessScope: null,
   approvalRequestId: null,
+  connectionPackage: null,
   ...overrides,
 });
 
@@ -130,6 +132,10 @@ describe('AccessService', () => {
         { provide: getRepositoryToken(ApprovalEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity),   useFactory: mockRepo },
         { provide: TEMPORAL_CLIENT, useFactory: mockTemporalClient },
+        {
+          provide: ConnectionPackageService,
+          useValue: { generateForProduct: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 

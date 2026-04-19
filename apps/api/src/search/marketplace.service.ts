@@ -274,10 +274,26 @@ export class MarketplaceService {
     const base = this.toMarketplaceProduct(product, complianceMap, domainMap, trustScoreMap);
     const governanceScore = trustScoreMap.get(productId) ?? 1.0;
 
+    // Per-port connection-details disclosure (F10.6). Same gating as the
+    // draft-view get_product path: owner / active grant → full; authed no-grant
+    // → redacted preview; unauthenticated → null on both.
+    const discloseBase = {
+      id: product.id,
+      orgId: resolvedOrgId,
+      ownerPrincipalId: product.ownerPrincipalId,
+    };
+    const ports: Port[] = [];
+    for (const portEntity of product.ports ?? []) {
+      const basePort = this.toPort(portEntity);
+      const { connectionDetails, connectionDetailsPreview } =
+        await this.enrichmentService.disclosePortConnectionDetails(portEntity, discloseBase, ctx);
+      ports.push({ ...basePort, connectionDetails, connectionDetailsPreview });
+    }
+
     return {
       ...base,
       trustScoreBreakdown: this.buildTrustScoreBreakdown(governanceScore),
-      ports: (product.ports ?? []).map((p) => this.toPort(p)),
+      ports,
       activeConsumerCount,
       ownerPrincipalId: product.ownerPrincipalId,
       createdAt: product.createdAt.toISOString(),
@@ -625,6 +641,9 @@ export class MarketplaceService {
       interfaceType: entity.interfaceType,
       contractSchema: entity.contractSchema,
       slaDescription: entity.slaDescription,
+      connectionDetails: null,
+      connectionDetailsPreview: null,
+      connectionDetailsValidated: entity.connectionDetailsValidated ?? false,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };

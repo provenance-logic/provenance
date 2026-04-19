@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
@@ -8,12 +8,18 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.entity.js';
+import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
+import { DataProductEntity } from './entities/data-product.entity.js';
+import { EncryptionService, type EncryptedEnvelope } from '../common/encryption.service.js';
 import type {
   ProductOwner,
   ProductDomainTeam,
   ProductFreshness,
   ProductAccessStatus,
   ProductColumnSchema,
+  ConnectionDetails,
+  ConnectionDetailsPreview,
+  OutputPortInterfaceType,
   RequestContext,
 } from '@provenance/types';
 
@@ -34,6 +40,8 @@ interface EnrichableProduct {
 
 @Injectable()
 export class ProductEnrichmentService {
+  private readonly logger = new Logger(ProductEnrichmentService.name);
+
   constructor(
     @InjectRepository(PrincipalEntity)       private readonly principalRepo:     Repository<PrincipalEntity>,
     @InjectRepository(DomainEntity)          private readonly domainRepo:        Repository<DomainEntity>,
@@ -42,6 +50,7 @@ export class ProductEnrichmentService {
     @InjectRepository(AccessGrantEntity)     private readonly accessGrantRepo:   Repository<AccessGrantEntity>,
     @InjectRepository(AccessRequestEntity)   private readonly accessRequestRepo: Repository<AccessRequestEntity>,
     @InjectRepository(SchemaSnapshotEntity)  private readonly schemaSnapshotRepo: Repository<SchemaSnapshotEntity>,
+    private readonly encryptionService: EncryptionService,
   ) {}
 
   async enrich(product: EnrichableProduct, ctx?: RequestContext): Promise<ProductEnrichmentFields> {
@@ -131,5 +140,120 @@ export class ProductEnrichmentService {
   resolveColumnSchema(): Promise<ProductColumnSchema | null> {
     void this.schemaSnapshotRepo;
     return Promise.resolve(null);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connection details disclosure (F10.6)
+  //
+  // Full connectionDetails are returned only when the requesting principal has
+  // an active (non-revoked, non-expired) access grant. Authenticated principals
+  // without a grant see a host/endpoint-only redacted preview. Unauthenticated
+  // callers see neither — both fields return null. The product owner is
+  // treated as having a grant for their own product.
+  // ---------------------------------------------------------------------------
+
+  async hasActiveGrant(
+    orgId: string,
+    productId: string,
+    principalId: string,
+  ): Promise<boolean> {
+    try {
+      const grant = await this.accessGrantRepo.findOne({
+        where: { orgId, productId, granteePrincipalId: principalId },
+        order: { grantedAt: 'DESC' },
+      });
+      if (!grant) return false;
+      if (grant.revokedAt) return false;
+      if (grant.expiresAt && grant.expiresAt <= new Date()) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async disclosePortConnectionDetails(
+    port: PortDeclarationEntity,
+    product: Pick<DataProductEntity, 'id' | 'orgId' | 'ownerPrincipalId'>,
+    ctx: RequestContext | undefined,
+  ): Promise<{
+    connectionDetails: ConnectionDetails | null;
+    connectionDetailsPreview: ConnectionDetailsPreview | null;
+  }> {
+    // Unauthenticated — nothing is disclosed.
+    if (!ctx || !ctx.principalId) {
+      return { connectionDetails: null, connectionDetailsPreview: null };
+    }
+    if (!port.interfaceType || port.connectionDetails === null) {
+      return { connectionDetails: null, connectionDetailsPreview: null };
+    }
+
+    const isOwner = product.ownerPrincipalId === ctx.principalId;
+    const hasGrant = isOwner
+      ? true
+      : await this.hasActiveGrant(product.orgId, product.id, ctx.principalId);
+
+    if (hasGrant) {
+      const full = await this.decryptStoredDetails(port);
+      if (!full) {
+        // Decrypt failed — fall back to preview rather than throwing.
+        return {
+          connectionDetails: null,
+          connectionDetailsPreview: this.buildPreview(port.interfaceType, null),
+        };
+      }
+      return {
+        connectionDetails: full,
+        connectionDetailsPreview: null,
+      };
+    }
+
+    // Authenticated but not authorized — return redacted preview.
+    const plaintext = await this.decryptStoredDetails(port);
+    return {
+      connectionDetails: null,
+      connectionDetailsPreview: this.buildPreview(port.interfaceType, plaintext),
+    };
+  }
+
+  private async decryptStoredDetails(
+    port: PortDeclarationEntity,
+  ): Promise<ConnectionDetails | null> {
+    if (port.connectionDetails === null) return null;
+    try {
+      if (port.connectionDetailsEncrypted) {
+        if (!EncryptionService.isEnvelope(port.connectionDetails)) return null;
+        return await this.encryptionService.decrypt<ConnectionDetails>(
+          port.connectionDetails as unknown as EncryptedEnvelope,
+        );
+      }
+      return port.connectionDetails as unknown as ConnectionDetails;
+    } catch (err) {
+      this.logger.error(
+        `Failed to decrypt connection details for port ${port.id}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  private buildPreview(
+    interfaceType: OutputPortInterfaceType,
+    details: ConnectionDetails | null,
+  ): ConnectionDetailsPreview {
+    const base: ConnectionDetailsPreview = { kind: interfaceType, redacted: true };
+    if (!details) return base;
+    switch (details.kind) {
+      case 'sql_jdbc':
+        return { ...base, host: details.host };
+      case 'rest_api':
+        return { ...base, endpoint: details.baseUrl };
+      case 'graphql':
+        return { ...base, endpoint: details.endpointUrl };
+      case 'streaming_topic':
+        return { ...base, host: details.bootstrapServers, topic: details.topic };
+      case 'file_object_export':
+        return { ...base, bucket: details.bucket };
+      default:
+        return base;
+    }
   }
 }

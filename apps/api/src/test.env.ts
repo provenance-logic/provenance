@@ -11,3 +11,5 @@ process.env['KEYCLOAK_ADMIN_CLIENT_ID'] = 'provenance-agent-provisioner';
 process.env['KEYCLOAK_ADMIN_CLIENT_SECRET'] = 'test-admin-secret';
 process.env['EMAIL_PROVIDER'] = 'noop';
 process.env['APP_BASE_URL'] = 'http://localhost:3000';
+process.env['CONNECTION_DETAILS_DEV_KEY'] =
+  '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
