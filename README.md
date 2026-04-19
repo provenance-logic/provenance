@@ -97,11 +97,9 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 ## Project Status
 
-> **⚠️ Development Paused (2026-04-18):** Active feature development is paused pending review of **PRD v1.4** and prioritization of the remaining Open Source Readiness blockers captured in [`documents/prd/implementation-status.md`](./documents/prd/implementation-status.md). New features will not be started until the blockers are triaged.
+Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active. **Domain 10 Workstream A (self-serve registration, org creation, invitations) is complete**; **Workstream B (port connection details and connection packages) is in progress** as of 2026-04-19.
 
-Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active.
-
-**Live dev environment:** [https://dev.provenancelogic.com](https://dev.provenancelogic.com) — public-facing development deployment of the current `main` branch, served via Caddy with automatic HTTPS.
+**Live dev environment:** [https://dev.provenancelogic.com](https://dev.provenancelogic.com) — public-facing development deployment of the current `main` branch, served via Caddy with automatic HTTPS. **Self-serve registration is live there** — anyone can sign up, create an organization, and start authoring data products without operator involvement.
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -109,7 +107,7 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 | **Phase 2 — Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
 | **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
 | **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
-| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, developer experience | 🔄 Active — workstreams 5.1–5.4 complete; 5.5–5.7 remaining |
+| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, developer experience | 🔄 Active — 5.1–5.4 complete; Domain 10 Workstream A complete; Workstream B in progress; 5.5–5.7 remaining |
 | **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
 
 ### Verification Status (Phase 3)
@@ -154,6 +152,10 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 - Agent identity model with three trust tiers (Observed, Supervised, Autonomous) and governance-controlled transitions
 - JWT-based agent authentication via Keycloak `client_credentials` grant (ADR-002) — agents receive dedicated Keycloak clients at registration, JWTs validated on every MCP request
 - Complete audit trail of all agent activity with verified identity context
+
+**Self-Serve Infrastructure (Domain 10 — Phase 5)**
+- **Workstream A — complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. Anyone can sign up at [dev.provenancelogic.com](https://dev.provenancelogic.com) and be authoring products inside 30 minutes with no platform operator involvement.
+- **Workstream B — in progress (2026-04-19):** every output port now carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export), and every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Full detail disclosure is gated by active access grant. Automated connectivity validation (F10.7) and connection-package refresh on edit (F10.10) remain open. See [implementation-status.md](./documents/prd/implementation-status.md) for per-feature status.
 
 ---
 
@@ -282,7 +284,7 @@ AI agents in Provenance are first-class principals with their own identity model
 | Document | Description |
 |---|---|
 | [Product Requirements Document](./documents/prd/Provenance_PRD_v1.4.md) | Complete requirements across all seven platform domains |
-| [Implementation Status](./documents/prd/implementation-status.md) | Current implementation gaps vs. PRD v1.4 and rationale for the development halt |
+| [Implementation Status](./documents/prd/implementation-status.md) | Per-requirement implementation status vs. PRD v1.4 and remaining Open Source Readiness blockers |
 | [Architecture Document](./documents/architecture/Provenance_Architecture_v1.4.md) | MVP and production architecture, technology decisions, build sequence |
 | [Architecture Decision Records](./documents/architecture/adr/) | Individual decision records for significant technology choices |
 | [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |
