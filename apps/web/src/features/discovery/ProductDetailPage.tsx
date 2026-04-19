@@ -307,6 +307,60 @@ function SchemaTab({ productId }: { productId: string }) {
   );
 }
 
+/**
+ * Shows either full (granted) or redacted (not granted) connection details
+ * per F10.6, falling back to nothing when neither field is set (unauth).
+ */
+function ConnectionDetailsPanel({ port }: { port: Port }) {
+  if (port.connectionDetails) {
+    return (
+      <div className="border border-green-100 bg-green-50 rounded-lg p-3 mb-3">
+        <p className="text-xs font-semibold text-green-800 mb-2">Connection details (granted access)</p>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          {Object.entries(port.connectionDetails)
+            .filter(([k]) => k !== 'kind')
+            .map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-slate-500 font-mono">{k}</dt>
+                <dd className="text-slate-900 font-mono break-all">
+                  {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                </dd>
+              </div>
+            ))}
+        </dl>
+      </div>
+    );
+  }
+  if (port.connectionDetailsPreview) {
+    const p = port.connectionDetailsPreview;
+    return (
+      <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 mb-3">
+        <p className="text-xs font-semibold text-slate-700 mb-1">
+          Connection preview <span className="font-normal text-slate-500">(request access for full details)</span>
+        </p>
+        <dl className="text-xs space-y-0.5">
+          {p.host && (
+            <div className="flex gap-2"><dt className="text-slate-500 w-20">Host</dt><dd className="font-mono text-slate-800">{p.host}</dd></div>
+          )}
+          {p.endpoint && (
+            <div className="flex gap-2"><dt className="text-slate-500 w-20">Endpoint</dt><dd className="font-mono text-slate-800">{p.endpoint}</dd></div>
+          )}
+          {p.topic && (
+            <div className="flex gap-2"><dt className="text-slate-500 w-20">Topic</dt><dd className="font-mono text-slate-800">{p.topic}</dd></div>
+          )}
+          {p.bucket && (
+            <div className="flex gap-2"><dt className="text-slate-500 w-20">Bucket</dt><dd className="font-mono text-slate-800">{p.bucket}</dd></div>
+          )}
+          <p className="text-[11px] text-slate-500 mt-1 italic">
+            Credentials are revealed only at access grant time.
+          </p>
+        </dl>
+      </div>
+    );
+  }
+  return null;
+}
+
 function PortsTab({ ports }: { ports: Port[] }) {
   const outputPorts = ports.filter((p) => p.portType === 'output');
 
@@ -346,6 +400,8 @@ function PortsTab({ ports }: { ports: Port[] }) {
                 {port.slaDescription}
               </div>
             )}
+
+            <ConnectionDetailsPanel port={port} />
 
             {guidance && (
               <div className="border border-brand-100 bg-brand-50 rounded-lg p-3 mb-3">

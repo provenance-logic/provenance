@@ -16,6 +16,12 @@ import type {
   ComplianceStateValue,
   DeclarePortRequest,
   SubmitAccessRequestRequest,
+  ConnectionDetails,
+  SqlJdbcConnectionDetails,
+  RestApiConnectionDetails,
+  GraphQlConnectionDetails,
+  KafkaConnectionDetails,
+  FileExportConnectionDetails,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -686,6 +692,8 @@ interface PortCardProps {
 
 function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: PortCardProps) {
   const [deleting, setDeleting] = useState(false);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete port "${port.name}"?`)) return;
@@ -695,6 +703,29 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
       onDeleted();
     } catch {
       setDeleting(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestMessage(null);
+    try {
+      const res = await productsApi.ports.testConnection(orgId, domainId, productId, port.id);
+      setTestMessage(res.message);
+    } catch (err) {
+      // The stub returns 501 with a body containing the expected message —
+      // surface it verbatim rather than treating it as a failure.
+      const apiErr = err as { status?: number; message?: string };
+      if (apiErr.status === 501) {
+        setTestMessage(
+          apiErr.message ??
+            'Validation not yet automated — mark as tested manually.',
+        );
+      } else {
+        setTestMessage(`Connection test failed: ${(err as Error).message}`);
+      }
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -734,6 +765,26 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
         {port.slaDescription && (
           <p className="mt-1.5 text-xs text-slate-400">SLA: {port.slaDescription}</p>
         )}
+
+        {isOwner && port.portType === 'output' && port.interfaceType &&
+         port.interfaceType !== 'semantic_query_endpoint' && (
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleTestConnection()}
+              disabled={testing}
+              className="text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50 font-medium"
+            >
+              {testing ? 'Testing…' : 'Test connection'}
+            </button>
+            {port.connectionDetailsValidated && (
+              <span className="text-xs text-green-700">Validated</span>
+            )}
+            {testMessage && (
+              <span className="text-xs text-slate-500">{testMessage}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {isOwner && (
@@ -768,8 +819,16 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   const [interfaceType, setInterfaceType] = useState<OutputPortInterfaceType | ''>('');
   const [contractSchemaRaw, setContractSchemaRaw] = useState('');
   const [slaDescription, setSlaDescription] = useState('');
+  const [connectionFields, setConnectionFields] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reset connection fields whenever interfaceType changes so stale
+  // host/baseUrl values from a previous selection do not bleed across.
+  const handleInterfaceTypeChange = (value: OutputPortInterfaceType | '') => {
+    setInterfaceType(value);
+    setConnectionFields({});
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -785,6 +844,16 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       }
     }
 
+    let connectionDetails: ConnectionDetails | undefined;
+    if (portType === 'output' && interfaceType && interfaceType !== 'semantic_query_endpoint') {
+      try {
+        connectionDetails = buildConnectionDetails(interfaceType, connectionFields);
+      } catch (err) {
+        setError((err as Error).message);
+        return;
+      }
+    }
+
     const dto: DeclarePortRequest = {
       portType,
       name,
@@ -792,6 +861,7 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       ...(portType === 'output' && interfaceType ? { interfaceType } : {}),
       ...(contractSchema !== undefined ? { contractSchema } : {}),
       ...(slaDescription.trim() !== '' ? { slaDescription: slaDescription.trim() } : {}),
+      ...(connectionDetails !== undefined ? { connectionDetails } : {}),
     };
 
     setSaving(true);
@@ -849,7 +919,7 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
               <select
                 value={interfaceType}
                 onChange={(e) =>
-                  setInterfaceType(e.target.value as OutputPortInterfaceType | '')
+                  handleInterfaceTypeChange(e.target.value as OutputPortInterfaceType | '')
                 }
                 className="input"
               >
@@ -869,6 +939,14 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
                 placeholder='{"columns": [{"name": "customer_id", "type": "string"}]}'
               />
             </Field>
+
+            {interfaceType && interfaceType !== 'semantic_query_endpoint' && (
+              <ConnectionDetailsFields
+                interfaceType={interfaceType}
+                values={connectionFields}
+                onChange={setConnectionFields}
+              />
+            )}
           </>
         )}
 
@@ -907,6 +985,282 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       </form>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// ConnectionDetailsFields — per-interface-type input surface (F10.5). Each
+// field maps to a key in the ConnectionDetails payload. Credential fields are
+// always present but visually grouped; the server stores them encrypted.
+// ---------------------------------------------------------------------------
+
+interface ConnectionFieldSpec {
+  key: string;
+  label: string;
+  type?: 'text' | 'number' | 'password' | 'select';
+  options?: string[];
+  placeholder?: string;
+  credential?: boolean;
+  required?: boolean;
+}
+
+const CONNECTION_FIELD_SPECS: Record<
+  Exclude<OutputPortInterfaceType, 'semantic_query_endpoint'>,
+  ConnectionFieldSpec[]
+> = {
+  sql_jdbc: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'db.example.com' },
+    { key: 'port', label: 'Port', type: 'number', required: true, placeholder: '5432' },
+    { key: 'database', label: 'Database', required: true },
+    { key: 'schema', label: 'Schema', required: true, placeholder: 'public' },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      type: 'select',
+      required: true,
+      options: ['username_password', 'iam', 'certificate'],
+    },
+    {
+      key: 'sslMode',
+      label: 'SSL mode',
+      type: 'select',
+      required: true,
+      options: ['disable', 'require', 'verify-ca', 'verify-full'],
+    },
+    { key: 'username', label: 'Username', credential: true },
+    { key: 'password', label: 'Password', type: 'password', credential: true },
+  ],
+  rest_api: [
+    { key: 'baseUrl', label: 'Base URL', required: true, placeholder: 'https://api.example.com/v1' },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      type: 'select',
+      required: true,
+      options: ['api_key', 'oauth2', 'bearer_token', 'none'],
+    },
+    { key: 'apiVersion', label: 'API version', placeholder: 'v1' },
+    { key: 'apiKey', label: 'API key', type: 'password', credential: true },
+    { key: 'bearerToken', label: 'Bearer token', type: 'password', credential: true },
+  ],
+  graphql: [
+    { key: 'endpointUrl', label: 'Endpoint URL', required: true, placeholder: 'https://graphql.example.com' },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      type: 'select',
+      required: true,
+      options: ['api_key', 'oauth2', 'bearer_token', 'none'],
+    },
+    { key: 'introspectionEndpoint', label: 'Introspection endpoint' },
+    { key: 'apiKey', label: 'API key', type: 'password', credential: true },
+    { key: 'bearerToken', label: 'Bearer token', type: 'password', credential: true },
+  ],
+  streaming_topic: [
+    { key: 'bootstrapServers', label: 'Bootstrap servers', required: true, placeholder: 'kafka1:9092,kafka2:9092' },
+    { key: 'topic', label: 'Topic', required: true },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      type: 'select',
+      required: true,
+      options: ['sasl_plain', 'sasl_scram', 'mtls', 'none'],
+    },
+    { key: 'consumerGroupPrefix', label: 'Consumer group prefix' },
+    { key: 'schemaRegistryUrl', label: 'Schema registry URL' },
+    { key: 'saslUsername', label: 'SASL username', credential: true },
+    { key: 'saslPassword', label: 'SASL password', type: 'password', credential: true },
+  ],
+  file_object_export: [
+    {
+      key: 'storage',
+      label: 'Storage',
+      type: 'select',
+      required: true,
+      options: ['s3', 'gcs', 'adls'],
+    },
+    { key: 'bucket', label: 'Bucket / container', required: true },
+    { key: 'pathPrefix', label: 'Path prefix', required: true, placeholder: 'daily/' },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      type: 'select',
+      required: true,
+      options: ['iam', 'service_account', 'access_key'],
+    },
+    {
+      key: 'fileFormat',
+      label: 'File format',
+      type: 'select',
+      required: true,
+      options: ['parquet', 'avro', 'json', 'csv', 'orc'],
+    },
+    {
+      key: 'compression',
+      label: 'Compression',
+      type: 'select',
+      options: ['none', 'gzip', 'snappy', 'zstd'],
+    },
+    { key: 'accessKeyId', label: 'Access key ID', credential: true },
+    { key: 'secretAccessKey', label: 'Secret access key', type: 'password', credential: true },
+  ],
+};
+
+interface ConnectionDetailsFieldsProps {
+  interfaceType: Exclude<OutputPortInterfaceType, 'semantic_query_endpoint'>;
+  values: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}
+
+function ConnectionDetailsFields({ interfaceType, values, onChange }: ConnectionDetailsFieldsProps) {
+  const specs = CONNECTION_FIELD_SPECS[interfaceType];
+  const nonCredentialFields = specs.filter((s) => !s.credential);
+  const credentialFields = specs.filter((s) => s.credential);
+
+  const renderField = (spec: ConnectionFieldSpec) => {
+    const value = values[spec.key] ?? '';
+    const setValue = (v: string) => onChange({ ...values, [spec.key]: v });
+    return (
+      <Field key={spec.key} label={spec.label} required={spec.required ?? false}>
+        {spec.type === 'select' ? (
+          <select value={value} onChange={(e) => setValue(e.target.value)} className="input">
+            <option value="">— select —</option>
+            {spec.options!.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type={spec.type ?? 'text'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="input"
+            placeholder={spec.placeholder}
+          />
+        )}
+      </Field>
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3 space-y-3">
+      <div>
+        <p className="text-xs font-semibold text-slate-700 mb-2">Connection details</p>
+        <div className="grid grid-cols-2 gap-3">{nonCredentialFields.map(renderField)}</div>
+      </div>
+      {credentialFields.length > 0 && (
+        <div className="border-t border-slate-100 pt-3">
+          <p className="text-xs font-semibold text-slate-700 mb-2">
+            Credentials <span className="font-normal text-slate-500">(encrypted at rest)</span>
+          </p>
+          <div className="grid grid-cols-2 gap-3">{credentialFields.map(renderField)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Translate the flat string-keyed form values into the typed ConnectionDetails
+ * discriminated union. Only fields with non-empty values are included, so
+ * optional credentials can be left blank.
+ */
+function buildConnectionDetails(
+  interfaceType: Exclude<OutputPortInterfaceType, 'semantic_query_endpoint'>,
+  raw: Record<string, string>,
+): ConnectionDetails {
+  const trimmed = (k: string) => (raw[k] ?? '').trim();
+  const optional = (k: string): string | undefined => {
+    const v = trimmed(k);
+    return v === '' ? undefined : v;
+  };
+  const required = (k: string, label: string): string => {
+    const v = trimmed(k);
+    if (v === '') throw new Error(`${label} is required`);
+    return v;
+  };
+
+  switch (interfaceType) {
+    case 'sql_jdbc': {
+      const out: SqlJdbcConnectionDetails = {
+        kind: 'sql_jdbc',
+        host: required('host', 'Host'),
+        port: Number(required('port', 'Port')),
+        database: required('database', 'Database'),
+        schema: required('schema', 'Schema'),
+        authMethod: required('authMethod', 'Auth method') as SqlJdbcConnectionDetails['authMethod'],
+        sslMode: required('sslMode', 'SSL mode') as SqlJdbcConnectionDetails['sslMode'],
+      };
+      const username = optional('username');
+      if (username !== undefined) out.username = username;
+      const password = optional('password');
+      if (password !== undefined) out.password = password;
+      return out;
+    }
+    case 'rest_api': {
+      const out: RestApiConnectionDetails = {
+        kind: 'rest_api',
+        baseUrl: required('baseUrl', 'Base URL'),
+        authMethod: required('authMethod', 'Auth method') as RestApiConnectionDetails['authMethod'],
+      };
+      const apiVersion = optional('apiVersion');
+      if (apiVersion) out.apiVersion = apiVersion;
+      const apiKey = optional('apiKey');
+      if (apiKey) out.apiKey = apiKey;
+      const bearerToken = optional('bearerToken');
+      if (bearerToken) out.bearerToken = bearerToken;
+      return out;
+    }
+    case 'graphql': {
+      const out: GraphQlConnectionDetails = {
+        kind: 'graphql',
+        endpointUrl: required('endpointUrl', 'Endpoint URL'),
+        authMethod: required('authMethod', 'Auth method') as GraphQlConnectionDetails['authMethod'],
+      };
+      const introspectionEndpoint = optional('introspectionEndpoint');
+      if (introspectionEndpoint) out.introspectionEndpoint = introspectionEndpoint;
+      const apiKey = optional('apiKey');
+      if (apiKey) out.apiKey = apiKey;
+      const bearerToken = optional('bearerToken');
+      if (bearerToken) out.bearerToken = bearerToken;
+      return out;
+    }
+    case 'streaming_topic': {
+      const out: KafkaConnectionDetails = {
+        kind: 'streaming_topic',
+        bootstrapServers: required('bootstrapServers', 'Bootstrap servers'),
+        topic: required('topic', 'Topic'),
+        authMethod: required('authMethod', 'Auth method') as KafkaConnectionDetails['authMethod'],
+      };
+      const consumerGroupPrefix = optional('consumerGroupPrefix');
+      if (consumerGroupPrefix) out.consumerGroupPrefix = consumerGroupPrefix;
+      const schemaRegistryUrl = optional('schemaRegistryUrl');
+      if (schemaRegistryUrl) out.schemaRegistryUrl = schemaRegistryUrl;
+      const saslUsername = optional('saslUsername');
+      if (saslUsername) out.saslUsername = saslUsername;
+      const saslPassword = optional('saslPassword');
+      if (saslPassword) out.saslPassword = saslPassword;
+      return out;
+    }
+    case 'file_object_export': {
+      const out: FileExportConnectionDetails = {
+        kind: 'file_object_export',
+        storage: required('storage', 'Storage') as FileExportConnectionDetails['storage'],
+        bucket: required('bucket', 'Bucket'),
+        pathPrefix: raw['pathPrefix'] ?? '',
+        authMethod: required('authMethod', 'Auth method') as FileExportConnectionDetails['authMethod'],
+        fileFormat: required('fileFormat', 'File format') as FileExportConnectionDetails['fileFormat'],
+      };
+      const compression = optional('compression');
+      if (compression) {
+        out.compression = compression as NonNullable<FileExportConnectionDetails['compression']>;
+      }
+      const accessKeyId = optional('accessKeyId');
+      if (accessKeyId) out.accessKeyId = accessKeyId;
+      const secretAccessKey = optional('secretAccessKey');
+      if (secretAccessKey) out.secretAccessKey = secretAccessKey;
+      return out;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

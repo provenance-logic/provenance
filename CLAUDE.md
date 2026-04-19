@@ -4,7 +4,7 @@ This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
 For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.3.md`.
 
-> **⚠️ DEVELOPMENT HALTED (2026-04-18):** All new feature development is paused pending PRD v1.4 review. No new features will be started until the blockers surfaced in `documents/prd/implementation-status.md` are prioritized. See that document for the current gap analysis and the halt rationale.
+> **Development resumed (2026-04-19):** The halt in effect since 2026-04-18 was lifted after PRD v1.4 review completed. Feature work is active again — the in-progress workstream is Domain 10 Workstream B (port connection details, connection packages; F10.5–F10.10).
 
 ---
 

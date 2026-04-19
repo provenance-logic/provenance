@@ -519,6 +519,70 @@ components:
           format: uuid
           nullable: true
           description: Set when this grant was created via an approved access request.
+        connectionPackage:
+          allOf:
+            - $ref: '#/components/schemas/ConnectionPackage'
+          nullable: true
+          description: |
+            Ready-to-use connection artifact generated at grant time (F10.8).
+            One sub-object per output port on the product. Null on legacy
+            grants and on grants for products whose ports have no connection
+            details configured.
+
+    ConnectionPackagePort:
+      type: object
+      required: [portId, portName, interfaceType, artifacts]
+      properties:
+        portId:        { type: string, format: uuid }
+        portName:      { type: string }
+        interfaceType:
+          type: string
+          enum: [sql_jdbc, rest_api, graphql, streaming_topic, file_object_export, semantic_query_endpoint]
+        artifacts:
+          type: object
+          additionalProperties: true
+          description: |
+            Shape depends on interfaceType. Examples:
+              sql_jdbc           → jdbcUrl, driver, pythonSnippet, sampleQuery, dataDictionary
+              rest_api           → curlExample, postmanCollection, pythonSnippet, endpointReference
+              graphql            → endpointUrl, exampleQuery, pythonSnippet
+              streaming_topic    → consumerConfig, pythonSnippet, schemaRegistryUrl
+              file_object_export → cliCommand, pythonSnippet, fileFormat, compression
+              semantic_query_endpoint → mcpTools, pythonSnippet
+
+    ConnectionPackageAgentIntegration:
+      type: object
+      required: [mcpToolCalls, examplePrompt]
+      properties:
+        mcpToolCalls:
+          type: array
+          items: { type: string }
+        examplePrompt: { type: string }
+        trustScore:
+          type: number
+          nullable: true
+        governancePolicyVersion:
+          type: string
+          nullable: true
+
+    ConnectionPackage:
+      type: object
+      required: [packageVersion, generatedAt, ports]
+      properties:
+        packageVersion:
+          type: integer
+          description: Increments when F10.10 refresh regenerates the package.
+        generatedAt:
+          type: string
+          format: date-time
+        ports:
+          type: array
+          items: { $ref: '#/components/schemas/ConnectionPackagePort' }
+        agentIntegration:
+          allOf:
+            - $ref: '#/components/schemas/ConnectionPackageAgentIntegration'
+          nullable: true
+          description: Present when the product has an agent-accessible port (F10.9).
 
     DirectGrantRequest:
       type: object
