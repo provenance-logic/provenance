@@ -36,3 +36,9 @@ variable "auth_domain" {
   type        = string
   default     = "auth-demo.provenancelogic.com"
 }
+
+variable "github_org" {
+  description = "GitHub organization that owns the repo cloned during user-data bootstrap."
+  type        = string
+  default     = "provenance-logic"
+}
