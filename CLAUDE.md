@@ -4,7 +4,7 @@ This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
 For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.4.md`.
 
-> **Development resumed (2026-04-19):** The halt in effect since 2026-04-18 was lifted after PRD v1.4 review completed. Feature work is active again — the in-progress workstream is Domain 10 Workstream B (port connection details, connection packages; F10.5–F10.10).
+> **In progress (2026-04-19):** Domain 10 Workstream B — port connection details + connection packages. F10.5, F10.8, F10.9 implemented and deployed; F10.6 partially implemented (UI disclosure flow not yet verified end to end); F10.7 (automated connectivity validation) and F10.10 (package refresh) still open. See `documents/prd/implementation-status.md` for the current gap analysis.
 
 ---
 
@@ -206,12 +206,13 @@ Connectors that implement discovery mode perform two types of crawling:
 | 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. Workstreams 5.1–5.4 complete; 5.5 (anomaly detection), 5.6 (developer experience), 5.7 (SOC 2 foundations) remaining. | 🔄 Active |
 | 6 | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | Production Scale — triggered by enterprise customers or funding, not a calendar date | 🔲 When Funded |
 
-**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 progress as of April 18, 2026:
+**Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 progress as of April 19, 2026:
 
 - ✅ **5.1 — Stability and Reliability** complete
 - ✅ **5.2 — Security Essentials** complete as of April 18, 2026: HTTPS live at https://dev.provenancelogic.com and https://auth.provenancelogic.com (Caddy + Let's Encrypt); Keycloak domain wiring done (KC_HOSTNAME, KC_PROXY=edge, realm frontendUrl, client redirectUris/webOrigins, unmanagedAttributePolicy); NestJS API issuer validation fixed; `provenance_*` protocol mappers on the `provenance-web` client populate `provenance_principal_id`/`provenance_org_id`/`provenance_principal_type` claims; full browser login flow working end-to-end. Security group audit and MCP API key rotation previously completed.
 - ✅ **5.3 — JWT Agent Authentication** (ADR-002) complete as of April 16, 2026
 - ✅ **5.4 — Data Product Completeness P1** complete
+- 🔄 **Domain 10 Workstream B — Port connection details and connection packages** — in progress as of 2026-04-19. F10.5 (per-interface-type schemas + frontend dynamic fields), F10.8 (ConnectionPackageService), and F10.9 (agent integration guide) implemented and deployed. F10.6 (encryption + access-gated disclosure) partially implemented — encryption wired end to end, UI disclosure flow not yet verified for granted consumer vs non-grantee. F10.7 (automated connectivity validation) stubbed as 501. F10.10 (package refresh on connection-detail edit) not started. Schema authoring items F10.11–F10.13 untouched. See `documents/prd/implementation-status.md` for per-requirement status.
 - 🔲 **5.5 — Agent Anomaly Detection** — not started
 - 🔲 **5.6 — Developer Experience** — partial (LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, README landed; local setup time, OpenAPI docs publication, comprehensive seed data pending)
 - 🔲 **5.7 — SOC 2 Foundations** — not started
@@ -381,7 +382,7 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 ## Full Documentation
 
 * Product Requirements Document: `documents/prd/Provenance_PRD_v1.4.md`
-* Implementation Status (current gaps and halt rationale): `documents/prd/implementation-status.md`
+* Implementation Status (current gaps): `documents/prd/implementation-status.md`
 * Architecture Document: `documents/architecture/Provenance_Architecture_v1.4.md`
 * Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003)
 * API Reference: `documents/api/` (generated from OpenAPI specs)
