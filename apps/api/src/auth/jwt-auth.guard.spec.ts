@@ -298,7 +298,9 @@ describe('JwtAuthGuard — provenance_org_id enforcement', () => {
 // ---------------------------------------------------------------------------
 
 describe('JwtAuthGuard — real decorator wiring on OrganizationsController', () => {
-  function contextFor(handler: Function, initialUser: Record<string, unknown>): ExecutionContext {
+  type ControllerHandler = (...args: unknown[]) => unknown;
+
+  function contextFor(handler: ControllerHandler, initialUser: Record<string, unknown>): ExecutionContext {
     const request: Record<string, unknown> = {
       headers: { authorization: 'Bearer user-jwt' },
       user: initialUser,

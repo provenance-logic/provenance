@@ -231,6 +231,35 @@ When this happens, the protocol mappers are in place but they have no user attri
 
 Any environment-specific overrides (different admin password, different Keycloak container name, different public hostname) are passed as env vars to the script — see the script header comment for names.
 
+### Gotcha — `KEYCLOAK_ISSUER_URL` must be the FULL issuer URL
+
+`KEYCLOAK_ISSUER_URL` is consumed by `apps/api/src/auth/jwt.strategy.ts` as the exact expected value of the JWT `iss` claim — it is **not** a hostname to which a realm path is appended.
+
+Set it to the complete issuer URL, including `/realms/{realm}`:
+
+```bash
+KEYCLOAK_ISSUER_URL=https://auth.provenancelogic.com/realms/provenance
+```
+
+**Not:**
+
+```bash
+# Wrong — strategy used to append /realms/{realm} on top of this, producing
+# .../realms/provenance/realms/provenance, which no real token matches.
+KEYCLOAK_ISSUER_URL=https://auth.provenancelogic.com
+```
+
+**How to verify.** Fetch what Keycloak is actually issuing:
+
+```bash
+curl -s https://auth.provenancelogic.com/realms/provenance/.well-known/openid-configuration | jq -r .issuer
+# Expected: https://auth.provenancelogic.com/realms/provenance
+```
+
+This string must match `KEYCLOAK_ISSUER_URL` exactly — any mismatch (trailing slash, scheme, case, extra path segment) causes passport-jwt to 401 **every request before `canActivate` runs**, which produces 401s with no Nest-level log entry. If you see "401 in the browser but no request in the API logs", this is the first thing to check. (See `documents/bugs/resolved.md` R-002 for the historical incident.)
+
+**Environment sources.** On EC2 dev, the value comes from `infrastructure/docker/.env.ec2`. The `KEYCLOAK_ISSUER_URL` key in `infrastructure/docker/docker-compose.ec2-dev.yml` defaults to the full-issuer form so a missing env var does not regress to the broken value.
+
 ---
 
 ## NF-IR Threshold Responses
