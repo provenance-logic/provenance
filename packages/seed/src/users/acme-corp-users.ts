@@ -1,0 +1,55 @@
+import type { SeedUser } from '../types.js';
+
+export const acmeCorpUsers: SeedUser[] = [
+  {
+    email: 'admin@acme.example.com',
+    firstName: 'Ada',
+    lastName: 'Admin',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['org_admin'],
+  },
+  {
+    email: 'marketing-lead@acme.example.com',
+    firstName: 'Maya',
+    lastName: 'Rodriguez',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['domain_owner'],
+    domainSlugs: ['marketing'],
+  },
+  {
+    email: 'supply-lead@acme.example.com',
+    firstName: 'Samuel',
+    lastName: 'Okafor',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['domain_owner'],
+    domainSlugs: ['supply-chain'],
+  },
+  {
+    email: 'finance-lead@acme.example.com',
+    firstName: 'Fatima',
+    lastName: 'Lindgren',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['domain_owner'],
+    domainSlugs: ['finance'],
+  },
+  {
+    email: 'analyst@acme.example.com',
+    firstName: 'Aiden',
+    lastName: 'Chen',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['consumer'],
+  },
+  {
+    email: 'governance@acme.example.com',
+    firstName: 'Gita',
+    lastName: 'Schreiber',
+    password: 'DemoPass123!',
+    orgSlug: 'acme-corp',
+    roles: ['governance'],
+  },
+];
