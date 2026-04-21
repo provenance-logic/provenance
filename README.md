@@ -112,7 +112,7 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 | **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, developer experience | 🔄 Active — 5.1–5.4 complete; Domain 10 Workstream A complete; Workstream B in progress; 5.5–5.7 remaining |
 | **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
 
-### Verification Status (Phase 3)
+### Verification Status (Phase 4 sign-off, April 2026)
 
 - **API tests:** 15/15 passing (health, domains, products, SLOs, trust scores, lineage, governance, marketplace)
 - **Browser checks:** 8/8 passing (auth, navigation, domain dashboard, product detail, marketplace, governance, lineage, observability)

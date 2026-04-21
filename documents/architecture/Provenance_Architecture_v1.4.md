@@ -16,6 +16,8 @@
 > Section 8: MVP summary updated — Domain 10 Workstream A self-serve infrastructure noted as complete.
 
 > **Changelog — v1.2 → v1.3**
+> (Note: v1.2 is not retained in the repo. See archive/ if needed.)
+>
 > Phase 5 redefined as "Open Source Ready" — lean, infrastructure-light scope replacing the original expensive managed services migration. Phase 6 "Production Scale" introduced as the funded future state for Kubernetes, managed AWS services, and enterprise security hardening.
 >
 > Section 5: Phase 5 build sequence replaced entirely with lean scope

@@ -10,6 +10,8 @@
 
 Provenance currently has one persistent environment: a two-EC2 production instance running at dev.provenancelogic.com. There is no staging tier.
 
+**Note on "persistent":** "Persistent" here means *logically persistent* — the environment's state, configuration, and identity survive across restarts. It does not mean the endpoint is continuously reachable. The dev EC2 instance is shut down when not in active use to keep costs down, so availability cannot be assumed from the existence of the hostname alone.
+
 The platform needs to support a monthly demo cadence for design partners and investors. The options considered were:
 
 - **Persistent staging tier**: a second always-on environment mirroring production
