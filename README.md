@@ -6,7 +6,7 @@ Provenance is an open-source, cloud-native platform that makes data mesh real �
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PRD](https://img.shields.io/badge/docs-PRD%20v1.4-teal.svg)](./documents/prd)
-[![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.0-teal.svg)](./documents/architecture)
+[![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.4-teal.svg)](./documents/architecture)
 [![Status](https://img.shields.io/badge/status-Phase%205%20active-green.svg)]()
 
 ---
@@ -43,7 +43,9 @@ Provenance holds metadata, contracts, lineage, and governance records. Your data
 
 ## Architecture Overview
 
-Provenance runs as a modular monolith on a single EC2 instance for MVP, with a clear upgrade path to Kubernetes microservices for production. The control plane (metadata, contracts, governance) is architecturally separated from the data plane (domain infrastructure) from day one.
+> **Current infrastructure is a pre-revenue development environment, not the target production state.** Provenance is currently deployed as a NestJS modular monolith and React frontend running on two EC2 instances via Docker Compose. This setup is deliberately lean — it is the MVP build, not the shape the platform will take at scale. The target production architecture (Kubernetes on EKS, managed AWS services, SOC 2 hardening) is scoped as Phase 6 and is documented in [documents/architecture/Provenance_Architecture_v1.4.md](./documents/architecture/Provenance_Architecture_v1.4.md). Phase 6 is planned but not funded and will be triggered by enterprise customer engagement or funding, not by a calendar date.
+
+The control plane (metadata, contracts, governance) is architecturally separated from the data plane (domain infrastructure) from day one, and that boundary holds in both the current MVP and the target production architecture.
 
 ```
                     ┌─────────────────────────────────────┐
@@ -91,7 +93,7 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 | Search | OpenSearch | Product discovery and semantic vector search |
 | Identity | Keycloak | OIDC authentication and authorization |
 | API Gateway | Kong OSS | External traffic routing and TLS termination |
-| Visualization | Cytoscape.js | Interactive lineage graph explorer |
+| Visualization | React Flow + Dagre | Interactive lineage graph explorer with deterministic DAG layout (see ADR-003) |
 
 ---
 
@@ -99,7 +101,7 @@ Provenance runs as a modular monolith on a single EC2 instance for MVP, with a c
 
 Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active. **Domain 10 Workstream A (self-serve registration, org creation, invitations) is complete**; **Workstream B (port connection details and connection packages) is in progress** as of 2026-04-19.
 
-**Live dev environment:** [https://dev.provenancelogic.com](https://dev.provenancelogic.com) — public-facing development deployment of the current `main` branch, served via Caddy with automatic HTTPS. **Self-serve registration is live there** — anyone can sign up, create an organization, and start authoring data products without operator involvement.
+**Development environment:** An internal development deployment is served via Caddy with automatic HTTPS at a `*.provenancelogic.com` hostname for hands-on work by the core team. It is not a persistent public endpoint — the underlying EC2 instance is shut down most of the time, so the URL is not suitable for inclusion in user-facing documentation, blog posts, or link-outs, and no uptime is implied. To try Provenance, follow the [Getting Started](#getting-started) steps below to run the stack locally via Docker Compose. A reproducible demo environment (provisioned per demo from git with curated seed data) is documented in [documents/runbooks/demo-environment.md](./documents/runbooks/demo-environment.md).
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -142,7 +144,7 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 - SLO declarations and evaluation engine
 - Trust score engine with 5-component weighted formula (governance compliance, SLO pass rate, lineage completeness, usage activity, exception history)
 - Trust score panel on product detail page with score badge, sparkline trend, component breakdown, and recompute
-- Interactive Lineage Explorer UI with Cytoscape.js graph visualization and dagre layout
+- Interactive Lineage Explorer UI built on React Flow with Dagre layout (deterministic left-to-right DAG; see [ADR-003](./documents/architecture/adr/ADR-003-lineage-visualization-react-flow.md))
 - Observability Dashboard with SLO declarations, evaluation history, health summary, and inline SLO creation
 
 **Agent Integration (Phase 4 + Phase 5 Auth)**
@@ -154,7 +156,7 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 - Complete audit trail of all agent activity with verified identity context
 
 **Self-Serve Infrastructure (Domain 10 — Phase 5)**
-- **Workstream A — complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. Anyone can sign up at [dev.provenancelogic.com](https://dev.provenancelogic.com) and be authoring products inside 30 minutes with no platform operator involvement.
+- **Workstream A — complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. With the stack running locally (see [Getting Started](#getting-started)) a new user can sign up, create their org, and be authoring products in under 30 minutes with no platform operator involvement.
 - **Workstream B — in progress (2026-04-19):** every output port now carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export), and every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Full detail disclosure is gated by active access grant. Automated connectivity validation (F10.7) and connection-package refresh on edit (F10.10) remain open. See [implementation-status.md](./documents/prd/implementation-status.md) for per-feature status.
 
 ---
@@ -183,7 +185,7 @@ provenance/
 │               ├── governance/       # Policy Studio, Command Center, Compliance Monitor
 │               ├── publishing/       # Product authoring, domain dashboard
 │               ├── discovery/        # Marketplace, product detail
-│               ├── lineage/          # Lineage Explorer (Cytoscape.js)
+│               ├── lineage/          # Lineage Explorer (React Flow + Dagre)
 │               ├── observability/    # SLO dashboard and evaluation history
 │               └── trust-score/      # Trust score panel and breakdown
 ├── packages/
@@ -244,8 +246,6 @@ provenance/
    - API: `http://localhost:3001`
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
-
-   Or try the live dev deployment: [https://dev.provenancelogic.com](https://dev.provenancelogic.com).
 
 ### EC2 Deployment
 
