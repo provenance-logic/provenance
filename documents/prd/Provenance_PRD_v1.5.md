@@ -1,8 +1,19 @@
 # Provenance Product Requirements Document
 
-**Version 1.4**
+**Version 1.5**
 **Confidential - Not for Distribution**
 
+> **Changelog - v1.4 to v1.5**
+> New Domain 12: Connection References and Per-Use-Case Consent - first-class per-use-case authorization layer composing with the existing access grant model. Covers connection reference lifecycle, use-case declaration (hybrid taxonomy plus free-text), request flow by trust classification, consent capture, version behavior (MAJOR version suspends active references), runtime scope enforcement, revocation and expiration, legacy agent migration, and complete audit trail.
+>
+> Domain 11: F11.27 added - Connection Package Refreshed notification, required by ADR-008.
+>
+> Appendix A: Domain 12 row added to persona-to-capability mapping.
+>
+> Appendix B: Domain 12 post-MVP items added.
+>
+> Appendix C: Two new design decisions added - Connection Reference as Composition Primitive, Per-Use-Case Consent Required for All Agent Access.
+>
 > **Changelog - v1.3 to v1.4**
 > Major revision following human walkthrough of the platform. All development halted until documentation complete.
 >
@@ -1167,11 +1178,10 @@ Triggered when an Observed-class agent performs a consequential action requiring
 **F11.26 - Frozen Operation Requires Disposition**
 Triggered when an operation enters the frozen state. Recipients: the governance team. Content: operation type, agent name, trigger, timestamp. Deep link: frozen operations queue in governance command center.
 
-### Non-Functional Requirements
+**F11.27 - Connection Package Refreshed** *(new v1.5)*
+Triggered when a connection package is regenerated due to a connection detail change on the underlying product (F10.10). Recipients: the agent's oversight contact and the owning principal of the connection reference under which the package was issued. Content: product name, connection reference identifier, description of what changed in the connection details, and confirmation that the approved use-case scope is unchanged. Deep link: connection reference detail view in the domain admin dashboard. This notification is not triggered by connection package invalidation due to reference expiration or revocation; those events are covered by F12.22 expiration advance warning and F12.19 revocation notification respectively.
 
-| ID | Requirement |
-| --- | --- |
-| NF11.1 | In-platform notifications delivered within 30 seconds of triggering event |
+### Non-Functional Requirements
 | NF11.2 | Email notifications delivered within 5 minutes of triggering event |
 | NF11.3 | Webhook delivery with retry on failure (3 attempts, exponential backoff) |
 | NF11.4 | Notification center loads within 1 second |
@@ -1184,6 +1194,194 @@ Triggered when an operation enters the frozen state. Recipients: the governance 
 - **OS11.2** - [POST-MVP] Native Slack / Microsoft Teams app integration (webhook covers this use case at MVP)
 - **OS11.3** - [POST-MVP] Notification analytics and delivery reporting
 - **OS11.4** - AI-generated notification summaries
+
+---
+
+## Domain 12: Connection References and Per-Use-Case Consent *(new v1.5)*
+
+**Depends on:** Domain 6 (Agent Integration Layer), Domain 8 (Operations and Workflow State), Domain 10 (Self-Serve Infrastructure), Domain 11 (Notifications)
+
+### Domain Summary
+
+Provenance currently grants agent access at the product level: an access grant records that a specific agent may consume a specific product. This model is necessary but not sufficient. It does not capture why the agent needs access, for how long, or within what scope of use. A governance team or product owner reviewing the access grant list cannot determine whether a given grant is still appropriate for its original purpose, whether the agent's behavior has remained within the intended use, or whether consent for a new use case has been implicitly assumed from an existing grant.
+
+The connection reference pattern addresses this gap. A connection reference is a first-class, owned, revocable entity that pairs an agent's access to a product with an explicit, human-consented declaration of use case. The consenting principal sees what the agent claims it intends to do, approves or denies that specific intent, and that decision is preserved immutably as part of the audit trail. Revocation is explicit and immediate. Expiration is bounded. Runtime enforcement verifies that agent actions remain within the declared scope of the consent that authorized them.
+
+Connection references compose with, not replace, the existing access grant model. An access grant establishes that an agent may access a product. A connection reference establishes for what declared purpose and within what scope that access is authorized at a given point in time. Both must exist and be in an active state for an agent action to be authorized against any product.
+
+### Functional Requirements
+
+**F12.1 - Connection Reference as Owned Entity**
+The platform shall treat a connection reference as a first-class, versioned entity with an owning principal, a declared use case, a lifecycle state, and an explicit expiration. A connection reference is distinct from an access grant: an access grant establishes that an agent may access a product; a connection reference establishes for what declared purpose and within what scope that access is authorized at a given point in time. Both must exist and be in an active state for an agent action to be authorized against any product.
+
+**F12.2 - Connection Reference Lifecycle States**
+Every connection reference shall exist in exactly one of the following states at any given time:
+
+- **Pending** - the agent or human proxy has submitted a request with a declared use case; no human decision has been made
+- **Active** - the owning principal has consented; the agent may act within the declared scope
+- **Suspended** - temporarily deactivated by the owning principal, governance, or automatic trigger; the agent may not act; the reference is not revoked and may be reactivated by the owning principal
+- **Expired** - the declared duration has elapsed; the reference is no longer usable and cannot be reactivated; it is retained as an immutable audit record
+- **Revoked** - explicitly terminated by the owning principal, the governance layer, or by automatic trigger (F12.21); the reference is no longer usable and cannot be reactivated; it is retained as an immutable audit record
+
+No transition from Expired or Revoked to any other state is permitted under any circumstance.
+
+**F12.3 - Connection Reference Ownership**
+Every connection reference shall have exactly one owning principal. The owning principal is the human principal responsible for the data product being accessed (the Data Product Owner, or a Domain Owner acting in that capacity). The owning principal is the sole authority who may approve, suspend, reactivate, or revoke a connection reference, subject to governance override as defined in F12.14. Ownership cannot be transferred after creation.
+
+**F12.4 - Connection Reference Expiration**
+Every connection reference shall carry an explicit expiration date. No indefinite connection references are permitted under any circumstance, for any product classification, trust tier, or agent type. The maximum permitted duration is governance-configurable per data classification. Platform-shipped defaults are:
+
+| Classification | Default Maximum Duration |
+| --- | --- |
+| Public | 1 year |
+| Internal | 180 days |
+| Confidential | 90 days |
+| Restricted | 30 days |
+
+Governance may override these defaults upward or downward. The platform shall enforce expiration automatically without requiring action from the owning principal. An agent operating under an expired connection reference shall be denied at the point of enforcement without grace period.
+
+**F12.5 - Use-Case Declaration as Required Field**
+Every connection reference shall carry a use-case declaration provided by the requesting agent or human proxy at request time. The platform shall not permit a connection reference to be created without a use-case declaration. The use-case declaration is immutable after the connection reference is created; if the agent's purpose changes, a new connection reference must be requested.
+
+**F12.6 - Use-Case Declaration Structure**
+A use-case declaration shall use a hybrid structure combining a governance-defined taxonomy category with a required free-text elaboration:
+
+- **Use-case category** (required, selected from governance-defined taxonomy): the platform shall ship with a default taxonomy of eight categories: Reporting and Analytics, Model Training, Pipeline Input, Audit and Compliance, Product Development, Operational Monitoring, Research, and Integration. The governance layer may extend, rename, or restrict the available categories for their organization. The category is machine-readable and may be referenced in governance policy rules.
+- **Purpose elaboration** (required, free-text): a human-readable description of the specific intended use within the selected category. Minimum length governance-configurable; platform default is 50 characters. Preserved verbatim and immutably in the audit record.
+- **Intended scope** (required): the subset of the product's output ports or data categories the agent intends to access. An agent may declare a narrower scope than its access grant permits; it may not declare a broader scope. Enforced at runtime per F12.16.
+- **Requested duration** (required): the time period for which the agent requires access under this use case. May not exceed the governance-configured maximum for the product's classification.
+- **Data category constraints** (optional): if the product carries fields of multiple sensitivity levels, the agent may declare that it will access only specific data categories. A declaration to access a subset does not grant access to the full product; the platform shall enforce the declared constraint at runtime.
+
+**F12.7 - Use-Case Declaration Preservation**
+The use-case declaration as submitted by the requesting agent or proxy shall be preserved verbatim and immutably in the audit record for the lifetime of the connection reference and beyond. If the owning principal modifies scope during the approval flow, both the original declaration and the approved declaration shall be retained, with the modification attributed to the approving principal with timestamp and reason.
+
+**F12.8 - Agent Discovery of Connection Reference Status**
+When an agent queries the platform for data products it may access, the platform shall indicate for each product whether an active connection reference exists for the requesting agent. An agent shall be able to distinguish between: products accessible immediately under an existing active connection reference; products with an active access grant but no active connection reference (request required before access); and products with no access grant (grant request required first, then connection reference request).
+
+**F12.9 - Request Initiation by Trust Classification**
+The platform shall enforce different request initiation rules based on the agent's trust classification:
+
+- **Observed**: the agent may not initiate a connection reference request autonomously. A human proxy must submit the request on the agent's behalf. This extends the no-side-effect rule established in F6.3.
+- **Supervised**: the agent may initiate a connection reference request autonomously. The request is treated as a consequential action and is held pending oversight contact acknowledgment before being routed to the owning principal for approval.
+- **Autonomous**: the agent may initiate a connection reference request autonomously. The request is routed directly to the owning principal for approval without an additional oversight hold. Autonomous classification does not grant self-approval; human approval by the owning principal is always required regardless of trust classification.
+
+**F12.10 - Request Routing and Notification**
+Upon submission, the platform shall route the connection reference request to the owning principal of the target product for review and notify them immediately via the notification system (Domain 11). The notification shall surface: the requesting agent's identity and trust classification, the full use-case declaration including category and elaboration, the requested duration, and the requested data category scope. The owning principal shall be able to approve, deny, or modify-and-approve the request from the notification or from the domain admin dashboard.
+
+**F12.11 - Consent as an Immutable Record**
+When an owning principal approves a connection reference request, the platform shall capture the consent as an immutable record containing: the approving principal's identity, the timestamp of approval, the use-case declaration as approved, the approved duration, the approved data category scope, and the governance policy version in effect at time of approval. This consent record is append-only. No subsequent modification to the connection reference's operational state may alter the consent record.
+
+**F12.12 - Denial Record**
+When an owning principal denies a connection reference request, the platform shall capture the denial as an immutable record containing: the denying principal's identity, the timestamp, the reason for denial (required, cannot be null), and the full use-case declaration as submitted. The requesting agent or proxy shall be notified of the denial with the stated reason.
+
+**F12.13 - Activation on Approval**
+A connection reference transitions from Pending to Active immediately upon approval by the owning principal. Upon activation, the platform shall: emit a connection package (per Domain 10, F10.8) scoped to the approved data category scope and port access of the connection reference; record the activation in the audit log; and make the connection reference visible to the agent through the federated query layer. Each connection reference produces its own connection package. The connection package inherits its scope directly from the approved scope of the connection reference and is invalidated when the reference is no longer Active.
+
+**F12.14 - Governance Override on Activation**
+The governance layer may configure policy requiring governance review before activation for specific product classifications or use-case categories. In such cases, the connection reference enters a governance-hold sub-state after owning-principal approval, pending governance sign-off. The governance team shall be notified immediately. The requesting agent and owning principal shall be informed that governance review is required.
+
+**F12.15 - Version Behavior on Product Republication**
+Connection reference state shall respond to product version changes as follows:
+
+- **PATCH or MINOR version**: active connection references remain Active. The provenance envelope shall reflect the current product version at query time. No re-consent is required.
+- **MAJOR version**: all active connection references for that product shall automatically transition to Suspended immediately upon publication of the new MAJOR version. The owning principal and each affected agent's oversight contact shall be notified. Suspended references cannot be reactivated against a new MAJOR version; the agent must submit a new connection reference request against the new version. Prior connection references are retained as immutable audit records linked to the prior product version.
+
+**F12.16 - Use-Case Scope Enforcement**
+At the time of every agent action against a product, the platform shall verify that an active connection reference exists for that agent-product pair and that the action falls within the declared and approved scope of that connection reference. An action that exceeds the declared scope shall be denied, logged with a scope-violation marker, and surfaced to the owning principal and governance team. The denial shall return a specific error distinguishing scope violation from reference absence and reference expiration, so that agent developers can respond appropriately. Scope verification is in addition to, not a replacement for, existing trust classification enforcement (F6.10) and access grant enforcement.
+
+**F12.17 - Behavioral Differences by Trust Classification at Runtime**
+The platform shall enforce different behavioral rules for agents holding active connection references based on trust classification:
+
+- **Observed**: every action taken under the connection reference is logged in real time and surfaced in the human review queue. No action takes effect until the oversight contact approves it, consistent with F6.3.
+- **Supervised**: consequential actions are held pending oversight contact approval. Read-only actions within declared scope proceed immediately.
+- **Autonomous**: actions within the declared scope of an active connection reference proceed immediately. The full audit trail is maintained.
+
+**F12.18 - Connection Reference Verification in Provenance Envelopes**
+Every query result produced by an agent operating under a connection reference shall include, in the provenance envelope (F6.17), the connection reference identifier, the approved use-case category, the purpose elaboration as approved, the approved scope, and the governance policy version at time of query. This makes the authorization basis for any agent-produced artifact fully traceable from the artifact back to the human consent decision.
+
+**F12.19 - Principal-Initiated Revocation**
+The owning principal may revoke an active or suspended connection reference at any time without governance approval. Revocation takes effect immediately. In-flight operations authorized by the revoked connection reference and not yet complete shall enter the frozen state (Domain 8, F8.1) pending governance disposition. The revoking principal must provide a reason; the reason is recorded in the audit log.
+
+**F12.20 - Governance-Initiated Revocation**
+The governance layer may revoke any connection reference across all domains. Governance revocation requires a documented reason. In-flight operations follow the same frozen-state path as principal-initiated revocation. The owning principal and the requesting agent's oversight contact are notified immediately.
+
+**F12.21 - Automatic Revocation Triggers**
+The platform shall automatically revoke a connection reference when any of the following conditions occur: the product is deprecated or decommissioned; the agent's underlying access grant is revoked or expires; the agent transitions to Suspended or Retired lifecycle state; or the owning principal is no longer an active platform principal. The triggering condition is recorded as the revocation reason in the audit log. Revocation of an access grant cascades to revoke all connection references for that agent-product pair; revocation of a connection reference does not affect the underlying access grant.
+
+**F12.22 - Expiration Behavior**
+When a connection reference reaches its expiration date, it transitions to Expired automatically. Expiration does not trigger the frozen-state path. In-flight operations initiated before the expiration timestamp are permitted to complete. Operations initiated after the expiration timestamp are denied. The agent and owning principal shall be notified in advance of expiration per the notification conventions in Domain 11. When the connection package associated with an expired reference is requested, the platform shall return an invalidated status rather than the package contents.
+
+**F12.23 - Complete Audit Trail**
+Every state transition of a connection reference shall produce an immutable audit log entry. The audit trail shall be sufficient to reconstruct the complete lifecycle of a connection reference without consulting any other data source, answering: who requested it and when, what use case was declared, who approved it and when, what scope was approved, when it became active, what actions were taken under it, whether any scope violations occurred, who revoked it and why or that it expired, and what happened to any in-flight operations at revocation time.
+
+**F12.24 - Scope Violation Logging**
+Every instance where an agent action is denied due to scope violation shall produce an audit log entry with: the agent identity, the connection reference identifier, the action attempted, the declared scope that was exceeded, and the timestamp. Scope violations shall be surfaced to the owning principal and governance team via the notification system.
+
+**F12.25 - Legacy Agent Migration on Enforcement Activation**
+When Domain 12 enforcement is activated on a platform that has existing agents with active access grants but no connection references, the platform shall not deny those agents immediately. The platform shall execute a one-time migration that provisions a legacy-compatibility connection reference for each existing active agent-product access grant pair. Legacy-compatibility connection references shall: carry a use-case category of "Legacy - Migration Required"; carry a purpose elaboration of "Auto-provisioned for continuity at Domain 12 enforcement activation. The owning principal should review and replace with a proper use-case declaration"; be scoped to the full approved scope of the underlying access grant; have a maximum duration of 30 days from activation (non-renewable as a legacy reference); notify the owning principal of each product via the notification system at provisioning time; and be visually distinguished in the governance and domain admin UI from properly requested connection references. At the end of the 30-day period, legacy-compatibility references expire normally. Agents operating under expired legacy references must request a proper connection reference before access resumes.
+
+### Non-Functional Requirements
+
+| ID | Requirement |
+| --- | --- |
+| NF12.1 | Consent capture (Pending to Active transition on principal approval) shall complete within 5 seconds of the principal's approval action |
+| NF12.2 | Runtime scope enforcement overhead shall not increase the agent query path p95 latency beyond 50ms above the baseline targets (single-product query under 2s p95; 10-product federated query under 10s p95) |
+| NF12.3 | Revocation shall propagate to all enforcement points within 10 seconds of the revocation action |
+| NF12.4 | Automatic expiration shall take effect within 60 seconds of the expiration timestamp |
+| NF12.5 | The audit trail for a connection reference shall be complete - no state transition shall occur without a corresponding immutable audit log entry |
+| NF12.6 | Scope violation detection and denial shall occur within the same request cycle as the denied action - no action that violates declared scope shall be permitted to proceed and then denied retroactively |
+| NF12.7 | Connection reference request notification shall reach the owning principal within 30 seconds of submission |
+| NF12.8 | MAJOR version publication shall trigger automatic suspension of all affected connection references within 60 seconds of the version publication event |
+
+### Acceptance Criteria
+
+**AC12.1 - Connection reference is required for all agent access**
+Attempt an agent action against any product with an active access grant but no active connection reference. The action shall be denied regardless of product classification, trust tier, or use-case type.
+
+**AC12.2 - Use-case declaration is preserved verbatim**
+Retrieve the audit log for any connection reference. The use-case declaration as submitted by the requesting agent or proxy shall match exactly what was submitted. If the owning principal modified scope during approval, both the original and modified declarations shall be independently retrievable with attribution.
+
+**AC12.3 - Scope enforcement is real-time and preventive**
+Submit an agent action that falls outside the declared scope of an active connection reference. The action shall be denied before execution with a scope-violation error distinct from reference-absent and reference-expired errors. A scope violation entry shall appear in the audit log. The owning principal shall receive a notification of the violation.
+
+**AC12.4 - Revocation is immediate and propagates to in-flight operations**
+Revoke an active connection reference while an agent operation is in progress. The in-flight operation shall enter the frozen state within 10 seconds of revocation. The agent shall be denied for any new actions against that product immediately. The frozen operation shall not auto-complete or auto-cancel.
+
+**AC12.5 - MAJOR version publication suspends active connection references**
+Publish a new MAJOR version of a product with active connection references. All active connection references shall transition to Suspended within 60 seconds. Attempts to act under a suspended connection reference shall be denied. The owning principal and oversight contacts shall receive suspension notifications.
+
+**AC12.6 - Autonomous agents may self-request but not self-approve**
+Submit a connection reference request as an Autonomous-class agent. The request shall be accepted and routed to the owning principal. The connection reference shall not become Active without explicit owning-principal approval. The agent shall not be able to approve its own request.
+
+**AC12.7 - Observed agents require human proxy to request**
+Attempt to submit a connection reference request as an Observed-class agent without a human proxy. The request shall be rejected. Submit the same request through a human proxy. The request shall be accepted and routed to the owning principal.
+
+**AC12.8 - Provenance envelopes include connection reference context**
+Execute a data query as an agent holding an active connection reference. The provenance envelope on the query result shall include the connection reference identifier, the approved use-case category, and the approved scope. Retrieve the connection reference record from the audit log using the identifier. The records shall match.
+
+**AC12.9 - Default expiration maximums are enforced by classification**
+Attempt to request a connection reference against a Restricted product with a requested duration of 31 days. The request shall be rejected for exceeding the default maximum of 30 days. The same request with a 30-day duration shall be accepted.
+
+**AC12.10 - Legacy migration does not cause immediate denial of existing agents**
+Activate Domain 12 enforcement on a platform with existing agent-product access grants and no connection references. No existing agent shall be denied access immediately. Legacy-compatibility connection references shall appear in the governance UI for each affected agent-product pair. Owning principals shall receive notification of the auto-provisioned references. After 30 days, legacy references expire and agents must request proper connection references.
+
+### Architectural Decisions
+
+The three architectural open questions identified during requirements authoring are resolved by the following ADRs:
+
+| Open Question | Resolution Summary | ADR |
+| --- | --- | --- |
+| AQ1 - How does scope enforcement integrate with the existing OPA policy evaluation path? | Scope matching runs as a structural subset check in a new Agent Query Layer guard placed after JWT validation and before tool dispatch. OPA is consulted only for governance-authored rules at state transition time, not on the hot path. | ADR-006 |
+| AQ2 - How is connection reference state replicated to enforcement points within the revocation propagation window? | In-memory cache at each Agent Query Layer replica, invalidated via Redpanda events published using the transactional outbox pattern. Temporal drives scheduled state transitions. No new paid infrastructure required at MVP. | ADR-007 |
+| AQ3 - How does the connection reference relate to the connection package issued in Domain 10? | A connection package is issued per connection reference with scope inherited from the approved scope of the reference. Package lifecycle tracks reference lifecycle. Connection detail refresh regenerates packages without re-consent. | ADR-008 |
+
+### Out of Scope
+
+- **OS12.1** - Internal platform-to-source credential handling (Domain 3)
+- **OS12.2** - Changes to the MCP protocol specification
+- **OS12.3** - SOC 2 control mapping
+- **OS12.4** - Human-to-human access delegation (governed by Domain 6 and Domain 7)
+- **OS12.5** - Connection reference analytics and aggregate reporting (post-launch)
 
 ---
 
@@ -1235,6 +1433,7 @@ When the platform sustains more than 50 concurrent MCP sessions over a 24-hour p
 | Self-Service Experience | Primary | Primary | Primary | API | Primary |
 | Self-Serve Infrastructure | Primary | Primary | Oversight | Primary | Admin |
 | Notifications | Recipient | Recipient | Primary | Recipient | Admin |
+| Connection References and Per-Use-Case Consent | Owner (consent) | | Policy | Requestor | |
 
 ---
 
@@ -1269,6 +1468,9 @@ When the platform sustains more than 50 concurrent MCP sessions over a 24-hour p
 | Native Slack / Teams integration | 11 | Post-webhook convenience |
 | Notification analytics and delivery reporting | 11 | Operational visibility |
 | AI-generated notification summaries | 11 | Reduce notification fatigue at scale |
+| Connection reference analytics and aggregate reporting | 12 | Operational visibility post-launch |
+| Per-use-case consent for human consumers | 12 | Currently applies to agents only; human extension is post-launch |
+| Use-case taxonomy governance tooling | 12 | Richer taxonomy management UI beyond add/remove/rename |
 
 ---
 
@@ -1316,6 +1518,8 @@ Phase 6 is triggered by enterprise customer requirements, investor funding, or t
 | React Flow with Dagre for Lineage Visualization | React Flow replaces D3 force-directed graph | Left-to-right directed layout communicates data flow direction intuitively. React Flow's Dagre integration provides deterministic, readable layout for directed acyclic graphs. D3 force-directed layout is appropriate for exploratory network graphs but not for communicating structured lineage. See ADR-002. |
 | Port Connection Details as Platform-Enforced Publication Requirement | Connection details completeness cannot be waived by domain policy or governance override | A data product without usable connection details is not self-serve. Domains have maximum autonomy in all other dimensions; this is the non-negotiable floor for the self-serve infrastructure principle. |
 | Notifications as a First-Class Domain | Notifications defined as a complete domain with all triggers, recipients, and channels specified | Notifications are not a UI feature; they are the connective tissue between platform events and human action. An untriggered event that required human response is a platform failure. |
+| Connection Reference as Composition Primitive | Connection references compose with, not replace, the existing access grant model. Both must be active for an agent action to be authorized. | The consent decision (for what declared purpose) and the grant decision (may this agent ever access this product) answer different governance questions at different cadences with different review criteria. Conflating them makes it impossible to answer either question cleanly from the audit log. See ADR-005. |
+| Per-Use-Case Consent Required for All Agent Access | Connection references are required for all agent access to all products regardless of classification, trust tier, or use-case type | Universal requirement provides maximum auditability and eliminates the class of exploitable gaps created by exemptions. The operational overhead concern is addressed through implementation (efficient request flow) rather than policy exemptions. |
 
 ---
 
