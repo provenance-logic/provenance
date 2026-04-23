@@ -2,9 +2,9 @@
 
 This file is read automatically by Claude Code at the start of every session.
 It provides the essential context needed to work effectively on this codebase.
-For full detail, read `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.4.md`.
+For full detail, read `documents/prd/Provenance_PRD_v1.5.md` and `documents/architecture/Provenance_Architecture_v1.5.md`.
 
-> **In progress (2026-04-19):** Domain 10 Workstream B — port connection details + connection packages. F10.5, F10.8, F10.9 implemented and deployed; F10.6 partially implemented (UI disclosure flow not yet verified end to end); F10.7 (automated connectivity validation) and F10.10 (package refresh) still open. See `documents/prd/implementation-status.md` for the current gap analysis.
+> **In progress (2026-04-22):** Domain 10 Workstream B — port connection details + connection packages. F10.5, F10.8, F10.9 implemented and deployed; F10.6 partially implemented (UI disclosure flow not yet verified end to end); F10.7 (automated connectivity validation) and F10.10 (package refresh) still open. Domain 12 (Connection References and Per-Use-Case Consent) — requirements complete (PRD v1.5), architecture complete (ADR-005 through ADR-008), implementation not yet started. See `documents/prd/implementation-status.md` for the current gap analysis.
 
 ---
 
@@ -129,6 +129,7 @@ provenance-platform/
 | connectors | connectors, connector_health_events, source_registrations, schema_snapshots, **capability_manifests, discovery_crawl_events, discovery_coverage_scores** | Credentials stored as Secrets Manager ARN only — never raw values |
 | governance | policy_schemas, policy_versions, effective_policies, compliance_states, exceptions, grace_periods | Policy artifacts stored as JSONB |
 | access | access_grants, access_requests, approval_events | Consumer-product access with expiration tracking |
+| consent | connection_references, use_case_declarations, consent_records, connection_reference_outbox | Per-use-case consent layer on top of access grants. Outbox table drives Redpanda event publication for cache invalidation at Agent Query Layer. See ADR-005 through ADR-008. |
 | observability | slo_declarations, slo_evaluations, trust_score_history, observability_snapshots | Partitioned by org_id and time |
 | audit | audit_log | Append-only. Never updated or deleted. Partitioned by month. |
 
@@ -170,6 +171,8 @@ provenance-platform/
 
 **Lineage visualization (ADR-003):** Lineage graph rendering uses **React Flow** for the node/edge canvas with **Dagre** for automatic DAG layout. This supersedes the earlier D3-based approach. React Flow provides built-in pan/zoom, node selection, and custom node types; Dagre computes deterministic hierarchical positions for lineage DAGs. See `documents/architecture/adr/ADR-003-lineage-visualization.md`.
 
+**Connection references (Domain 12, ADR-005 through ADR-008):** A connection reference is a first-class, owned, revocable entity that pairs an agent's access to a product with an explicit, human-consented use-case declaration. Both an active access grant AND an active connection reference are required for any agent action against any product — no exceptions. Connection reference lifecycle states: Pending, Active, Suspended, Expired, Revoked. Expired and Revoked are terminal and immutable. Use-case declaration structure: governance-defined taxonomy category (8 defaults: Reporting and Analytics, Model Training, Pipeline Input, Audit and Compliance, Product Development, Operational Monitoring, Research, Integration) plus required free-text elaboration (min 50 chars). Default expiration maximums by classification: Public 1 year, Internal 180 days, Confidential 90 days, Restricted 30 days. MAJOR product version publication auto-suspends all active connection references for that product — re-consent required. Autonomous agents may self-request; human must always approve. Observed agents require human proxy to request. Runtime scope enforcement runs as an in-memory cache lookup at the Agent Query Layer — not an OPA call on the hot path. OPA is consulted only for governance-authored rules at state transition time. Revocation propagates via Redpanda `connection_reference.state` topic within 10 seconds. Temporal handles scheduled expiration and MAJOR-version suspension. Each connection reference produces exactly one connection package scoped to the approved ports and data categories.
+
 ---
 
 ## Connector Discovery Architecture
@@ -205,6 +208,7 @@ Connectors that implement discovery mode perform two types of crawling:
 | 4 | MCP server, federated query layer, agent identity, semantic search, trust classification, audit log query API | Data 3.0 milestone — agents as first-class participants (9 MCP tools, SSE port 3002) | ✅ Complete |
 | 5 | Stability, security essentials, JWT agent auth, data product completeness P1, anomaly detection, developer experience, SOC 2 foundations | Open Source Ready — reliable, secure, contributor-friendly on existing infrastructure. Est. +$10-30/month. Workstreams 5.1–5.4 complete; 5.5 (anomaly detection), 5.6 (developer experience), 5.7 (SOC 2 foundations) remaining. | 🔄 Active |
 | 6 | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | Production Scale — triggered by enterprise customers or funding, not a calendar date | 🔲 When Funded |
+| 12 | Connection References and Per-Use-Case Consent — per-use-case authorization layer composing with access grants | All agent access requires an active connection reference with a human-consented use-case declaration | 🔲 Planned (requirements + architecture complete) |
 
 **Active phase: 5 (Open Source Ready).** Phases 1–4 complete as of April 13, 2026. Phase 5 progress as of April 19, 2026:
 
@@ -226,7 +230,7 @@ Connectors that implement discovery mode perform two types of crawling:
 - Port display lacks a "How to use this" section — no visible connection details, endpoint URL, or example client code
 - Lifecycle enforcement gaps around deprecation/decommission visibility in marketplace
 
-Live development environment: https://dev.provenancelogic.com
+Internal dev deployment (not continuously reachable, EC2 shut down when not in active use): https://dev.provenancelogic.com
 
 ---
 
@@ -291,6 +295,14 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 **Keycloak users are identified by email for login, by ID for admin APIs.** The realm has `registrationEmailAsUsername=true`, which causes Keycloak to rewrite a user's `username` field to match `email` on the next update after the setting is applied. Legacy username handles (e.g. `testuser`) stop resolving. In direct-grant token exchange, pass the email as `username`. In admin-API lookups, prefer `kcadm get users -q email=<addr>` over `-q username=<handle>` — it survives the rewrite.
 
 **Every bug fix lands an entry in the bug tracker.** Open issues live in `documents/bugs/open.md`; resolved ones move to `documents/bugs/resolved.md` with the fix commit. Before opening a new bug, grep `resolved.md` — the same root cause may have been diagnosed before.
+
+**Connection reference enforcement is an AND with access grants — never OR.** Every agent action requires both an active access grant AND an active connection reference. Never short-circuit one check because the other passed. The denial reason must distinguish: no grant, no active reference, reference scope violation, reference expired — these are four distinct error codes, not a generic "unauthorized."
+
+**Connection reference scope violations are never silent.** Any action denied due to scope violation must write an audit log entry and fire a notification to the owning principal and governance team. Do not swallow scope violations.
+
+**Connection reference state transitions are transactional with their audit log entries and outbox events.** All three (state update, audit log insert, outbox insert) land in the same PostgreSQL transaction. Never commit a state change without the corresponding audit entry. Never publish a Redpanda event without going through the outbox — direct publish without the outbox breaks at-least-once delivery guarantees.
+
+**Legacy compatibility references are visually distinct and non-renewable.** The auto-provisioned 30-day legacy-compatibility references created at Domain 12 enforcement activation must be rendered differently in the UI from properly requested references. They may not be renewed — on expiry the agent must submit a proper connection reference request.
 
 ---
 
@@ -381,11 +393,12 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 
 ## Full Documentation
 
-* Product Requirements Document: `documents/prd/Provenance_PRD_v1.4.md`
+* Product Requirements Document: `documents/prd/Provenance_PRD_v1.5.md`
 * Implementation Status (current gaps): `documents/prd/implementation-status.md`
-* Architecture Document: `documents/architecture/Provenance_Architecture_v1.4.md`
-* Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003)
+* Architecture Document: `documents/architecture/Provenance_Architecture_v1.5.md`
+* Architecture Decision Records: `documents/architecture/adr/` (ADR-001, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-008)
 * API Reference: `documents/api/` (generated from OpenAPI specs)
 * Operations Runbook: `documents/runbooks/operations.md`
+* Demo Environment Runbook: `documents/runbooks/demo-environment.md`
 * Open bugs: `documents/bugs/open.md`
 * Resolved bugs (searchable log of past root causes): `documents/bugs/resolved.md`
