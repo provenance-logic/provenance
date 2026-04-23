@@ -8,7 +8,7 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ## B-004 — .gitignore pattern silently ignores future realm JSONs
 
-- **Fixed:** 2026-04-23 — commit `<commit>`
+- **Fixed:** 2026-04-23 — commit `c0cd732`
 - **Area:** Infrastructure / git hygiene
 - **Severity:** was Low
 
@@ -26,7 +26,7 @@ Verify by trying `touch infrastructure/docker/config/keycloak/realms/demo.json &
 
 **Status:** Resolved
 **Resolved:** 2026-04-23
-**Fix commit:** `<commit>`
+**Fix commit:** `c0cd732`
 
 ---
 
