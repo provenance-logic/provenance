@@ -1,4 +1,4 @@
-# ADR-002: Lineage Visualization - React Flow with Dagre Layout
+# ADR-003: Lineage Visualization - React Flow with Dagre Layout
 
 **Date:** April 18, 2026
 **Status:** Accepted

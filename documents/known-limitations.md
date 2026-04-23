@@ -90,4 +90,4 @@ All of the limitations above are implementation tasks, not design gaps. The arch
 
 ---
 
-*For the complete requirements and architecture, see `documents/prd/Provenance_PRD_v1.2.md` and `documents/architecture/Provenance_Architecture_v1.2.md`.*
+*For the complete requirements and architecture, see `documents/prd/Provenance_PRD_v1.4.md` and `documents/architecture/Provenance_Architecture_v1.4.md`.*

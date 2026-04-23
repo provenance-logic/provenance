@@ -80,4 +80,4 @@ The auth concern is intentionally isolated in the MCP server middleware layer. N
 
 ---
 
-*See `documents/architecture/Provenance_Architecture_v1.2.md` Section 3 (MVP Agent Authentication Pattern) for the architectural context.*
+*See `documents/architecture/Provenance_Architecture_v1.4.md` Section 3 (MVP Agent Authentication Pattern) for the architectural context.*
