@@ -24,10 +24,6 @@ Verify by trying `touch infrastructure/docker/config/keycloak/realms/demo.json &
 
 **Resolution.** Narrowed the pattern from `realms/*.json` to `realms/*.local.json`. New canonical realm files (staging, demo, test) now surface as untracked on `git status` — a loud failure mode instead of a silent one — while environment-specific overrides matching `*.local.json` stay ignored. The `!.gitkeep` negation line was removed because `.gitkeep` no longer matches the narrower ignore pattern; the file itself stays in place. Rejected the allowlist approach (`*.json` + `!provenance-realm.json` + `!.gitkeep`) because it would re-create the same silent-ignore trap the moment a second canonical realm is added — the next contributor would hit the identical bug. Verified by `touch realms/demo.json` (shows `??`) and `touch realms/dev.local.json` (shows `!!` under `git status --ignored`).
 
-**Status:** Resolved
-**Resolved:** 2026-04-23
-**Fix commit:** `c0cd732`
-
 ---
 
 ## R-010 — API container unhealthy after Workstream B deploy: EncryptionService missing key
