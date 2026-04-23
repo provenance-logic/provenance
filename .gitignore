@@ -41,8 +41,9 @@ pnpm-debug.log*
 *.tsbuildinfo
 
 # Docker
-infrastructure/docker/config/keycloak/realms/*.json
-!infrastructure/docker/config/keycloak/realms/.gitkeep
+# Ignore only environment-specific realm overrides (e.g. realms/dev.local.json).
+# Canonical realms (provenance-realm.json, future staging/demo realms) MUST be tracked.
+infrastructure/docker/config/keycloak/realms/*.local.json
 
 # Local backup archives (created by infrastructure/scripts/backup.sh)
 backups/

@@ -57,23 +57,6 @@ Domain owners see one shape of truth while consumers see another, leading to con
 
 ---
 
-## B-004 — .gitignore pattern silently ignores future realm JSONs
-
-- **Severity:** Low
-- **Status:** Open
-
-**Symptom.** `.gitignore` contains `infrastructure/docker/config/keycloak/realms/*.json`, yet `provenance-realm.json` is tracked — it was added to the index before the ignore rule. A developer who adds a second realm file (e.g. a staging or demo realm) to the same directory will see it silently ignored with no warning. `git add` will succeed without tracking the file unless they force-add.
-
-**Root cause.** The ignore pattern was intended to block environment-specific overrides (like `realms/local.json`) but is too broad — it also matches the canonical committed realm. The current state relies on the accident that the canonical file was added first.
-
-**Proposed fix.** Flip the pattern to an exclusion list. Either:
-- Replace `*.json` + `!.gitkeep` with an explicit allowlist: `*.json` + `!provenance-realm.json` + `!.gitkeep`.
-- Or rename the ignored pattern to a narrower convention, e.g. `realms/*.local.json`, and ignore only that.
-
-Verify by trying `touch infrastructure/docker/config/keycloak/realms/demo.json && git status` — it must show the file as untracked (visible), not as ignored.
-
----
-
 ## B-005 — Decommissioned products still visible in domain dashboard
 
 - **Severity:** Low
