@@ -1,7 +1,7 @@
 # Provenance Implementation Status
 
-**Last updated:** April 19, 2026
-**PRD version:** 1.4
+**Last updated:** April 23, 2026
+**PRD version:** 1.5
 **Active phase:** Phase 5 - Open Source Ready
 
 This document tracks the implementation status of every requirement in the PRD. It is a living burndown checklist updated as Phase 5 progresses. The PRD is the authoritative requirements document; this document tracks what is built against it.
@@ -351,6 +351,48 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ---
 
+## Domain 12: Connection References and Per-Use-Case Consent
+
+New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enforcement for all agent access. A connection reference composes with (does not replace) the existing access grant: both must be active for any agent action against a product. No implementation yet. Depends on Domain 6 (Agent Integration Layer), Domain 8 (Operations and Workflow State), Domain 10 (Self-Serve Infrastructure), Domain 11 (Notifications). Architectural decisions in ADR-005 (composition), ADR-006 (runtime scope enforcement), ADR-007 (state propagation), ADR-008 (reference ↔ package relationship).
+
+| ID | Requirement | Status | Notes |
+| --- | --- | --- | --- |
+| F12.1 | Connection Reference as Owned Entity | Not implemented | Blocker |
+| F12.2 | Connection Reference Lifecycle States | Not implemented | Blocker — core state machine (Pending/Active/Suspended/Expired/Revoked) |
+| F12.3 | Connection Reference Ownership | Not implemented | |
+| F12.4 | Connection Reference Expiration | Not implemented | Blocker — bounded duration is universal, no indefinite references permitted |
+| F12.5 | Use-Case Declaration as Required Field | Not implemented | Blocker — consent capture is mandatory |
+| F12.6 | Use-Case Declaration Structure | Not implemented | Hybrid taxonomy + free-text; default taxonomy ships with 8 categories |
+| F12.7 | Use-Case Declaration Preservation | Not implemented | Audit requirement |
+| F12.8 | Agent Discovery of Connection Reference Status | Not implemented | Required for agent UX via MCP |
+| F12.9 | Request Initiation by Trust Classification | Not implemented | Extends F6.3 for Observed/Supervised/Autonomous |
+| F12.10 | Request Routing and Notification | Not implemented | Depends on Domain 11 |
+| F12.11 | Consent as an Immutable Record | Not implemented | Blocker — foundational audit primitive |
+| F12.12 | Denial Record | Not implemented | |
+| F12.13 | Activation on Approval | Not implemented | Blocker — emits connection package (F10.8) at activation |
+| F12.14 | Governance Override on Activation | Not implemented | |
+| F12.15 | Version Behavior on Product Republication | Not implemented | MAJOR version auto-suspends active references |
+| F12.16 | Use-Case Scope Enforcement | Not implemented | Blocker — real-time preventive enforcement at Agent Query Layer (ADR-006) |
+| F12.17 | Behavioral Differences by Trust Classification at Runtime | Not implemented | Runtime enforcement of F6.3 behavior per tier |
+| F12.18 | Connection Reference Verification in Provenance Envelopes | Not implemented | Extends F6.17 envelope |
+| F12.19 | Principal-Initiated Revocation | Not implemented | Blocker — triggers frozen state for in-flight ops |
+| F12.20 | Governance-Initiated Revocation | Not implemented | |
+| F12.21 | Automatic Revocation Triggers | Not implemented | Blocker — cascade from grant revoke / product decommission / principal deactivation |
+| F12.22 | Expiration Behavior | Not implemented | |
+| F12.23 | Complete Audit Trail | Not implemented | Blocker — every state transition must be reconstructible from audit log alone |
+| F12.24 | Scope Violation Logging | Not implemented | |
+| F12.25 | Legacy Agent Migration on Enforcement Activation | Not implemented | Blocker — one-time legacy-compatibility provisioning to avoid immediate denial on rollout |
+| NF12.1 | Consent capture latency (5s) | Not implemented | |
+| NF12.2 | Runtime scope enforcement p95 overhead (+50ms cap) | Not implemented | |
+| NF12.3 | Revocation propagation (10s) | Not implemented | |
+| NF12.4 | Automatic expiration propagation (60s) | Not implemented | |
+| NF12.5 | Audit trail completeness | Not implemented | |
+| NF12.6 | Preventive scope violation detection (same-cycle) | Not implemented | |
+| NF12.7 | Request notification delivery (30s) | Not implemented | Depends on Domain 11 |
+| NF12.8 | MAJOR version suspension propagation (60s) | Not implemented | |
+
+---
+
 ## Open Source Readiness Summary
 
 ### Blockers (must be resolved before open source ready)
@@ -364,6 +406,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10 Workstream B
 8. **Domain 10 Workstream B — Connection packages and schema authoring** - Partially shipped 2026-04-19. Connection details (F10.5) and connection package generation (F10.8, F10.9) are implemented and deployed; connection-details confidentiality (F10.6) is wired end to end but UI disclosure flow is not yet verified; automated connectivity validation (F10.7) and connection-package refresh (F10.10) remain. Schema authoring items (F10.11–F10.13) untouched. Workstream A shipped earlier in Phase 5.
 9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
+10. **Domain 12 Connection References and Per-Use-Case Consent** - New in PRD v1.5. Universal per-use-case consent and runtime scope enforcement for all agent access; connection references compose with access grants and both must be active for any agent action. No implementation yet (F12.1–F12.25). Depends on Domain 11 (Notifications) and Domain 10 Workstream B. Architectural decisions captured in ADR-005 through ADR-008.
 
 ### Post-Launch (important but not blocking)
 
