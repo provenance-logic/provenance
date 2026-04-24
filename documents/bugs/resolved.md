@@ -28,7 +28,7 @@ Verify by trying `touch infrastructure/docker/config/keycloak/realms/demo.json &
 
 ## R-010 — API container unhealthy after Workstream B deploy: EncryptionService missing key
 
-- **Fixed:** 2026-04-19 — commit `<pending>`
+- **Fixed:** 2026-04-19 — commit `fb387c3`
 - **Area:** Infrastructure / docker-compose
 
 **Symptom.** `provenance-ec2-api` stuck in `unhealthy` after merging PR #10 (Domain 10 Workstream B). `docker logs` shows NestFactory aborting during provider instantiation:
