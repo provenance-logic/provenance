@@ -11,9 +11,14 @@ import type {
   ConnectionReference,
   ConnectionReferenceState,
   ConnectionReferenceCause,
+  ConnectionReferenceScope,
+  DataCategoryConstraints,
   SubmitConnectionReferenceRequest,
+  ApproveConnectionReferenceOptions,
+  DenyConnectionReferenceRequest,
 } from '@provenance/types';
 import { DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH } from '@provenance/types';
+import type { EntityManager } from 'typeorm';
 import { ConnectionReferenceEntity } from './entities/connection-reference.entity.js';
 import { ConnectionReferenceOutboxEntity } from './entities/connection-reference-outbox.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
@@ -122,7 +127,6 @@ export class ConsentService {
 
     const saved = await this.dataSource.transaction(async (em) => {
       const referenceRepo = em.getRepository(ConnectionReferenceEntity);
-      const outboxRepo = em.getRepository(ConnectionReferenceOutboxEntity);
 
       const reference = referenceRepo.create({
         orgId,
@@ -144,49 +148,25 @@ export class ConsentService {
       });
       const persisted = await referenceRepo.save(reference);
 
-      await outboxRepo.save(
-        outboxRepo.create({
-          orgId,
-          eventType: 'connection_reference.state',
-          payload: {
-            connectionReferenceId: persisted.id,
-            orgId,
-            agentId: persisted.agentId,
-            productId: persisted.productId,
-            newState: state,
-            previousState: null,
-            scope: null,
-            useCaseCategory: persisted.useCaseCategory,
-            transitionedAt: now.toISOString(),
-            causedBy: cause,
-          },
-        }),
-      );
+      await this.writeOutbox(em, persisted, null, state, cause, null);
 
-      await em.query(
-        `INSERT INTO audit.audit_log
-           (org_id, principal_id, principal_type, action, resource_type, resource_id,
-            new_value, agent_id, agent_trust_classification_at_time)
-         VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8::uuid, $9)`,
-        [
-          orgId,
-          actingPrincipalId,
-          actingPrincipalId === dto.agentId ? 'ai_agent' : 'human',
-          'connection_reference_requested',
-          'connection_reference',
-          persisted.id,
-          JSON.stringify({
-            state,
-            useCaseCategory: persisted.useCaseCategory,
-            purposeElaboration: persisted.purposeElaboration,
-            intendedScope: persisted.intendedScope,
-            requestedDurationDays: persisted.requestedDurationDays,
-            expiresAt: persisted.expiresAt.toISOString(),
-          }),
-          dto.agentId,
-          classification,
-        ],
-      );
+      await this.writeAudit(em, {
+        orgId,
+        actingPrincipalId,
+        principalType: actingPrincipalId === dto.agentId ? 'ai_agent' : 'human',
+        action: 'connection_reference_requested',
+        referenceId: persisted.id,
+        agentId: persisted.agentId,
+        newValue: {
+          state,
+          useCaseCategory: persisted.useCaseCategory,
+          purposeElaboration: persisted.purposeElaboration,
+          intendedScope: persisted.intendedScope,
+          requestedDurationDays: persisted.requestedDurationDays,
+          expiresAt: persisted.expiresAt.toISOString(),
+        },
+        agentTrustClassificationAtTime: classification,
+      });
 
       return persisted;
     });
@@ -195,6 +175,314 @@ export class ConsentService {
       `Connection reference ${saved.id} requested for agent ${saved.agentId} on product ${saved.productId} (classification ${classification})`,
     );
     return this.toDto(saved);
+  }
+
+  /**
+   * Approve a pending connection reference (F12.13).
+   *
+   * Only the owning principal recorded on the reference may approve.
+   * Transitions the reference from `pending` to `active`, setting the
+   * approved_* fields. If the approver left the options empty, the
+   * approved fields inherit the originally requested values; if any
+   * option is supplied and differs from the request, `modifiedByApprover`
+   * is set true and both the original and approved shapes remain on the
+   * row (F12.7).
+   *
+   * Out of scope for this slice:
+   *   - Governance override on activation (F12.14) — governance-role
+   *     principals cannot yet approve on behalf of the owner.
+   *   - Connection package emission (F10.8 / ADR-008). Activation does
+   *     not yet produce the per-reference connection package; that lands
+   *     with the schema change adding the package column to
+   *     connection_references.
+   *   - Governance-hold sub-state when the owner-approval policy
+   *     requires governance sign-off (F12.14).
+   */
+  async approveConnectionReference(
+    orgId: string,
+    referenceId: string,
+    actingPrincipalId: string,
+    options: ApproveConnectionReferenceOptions = {},
+  ): Promise<ConnectionReference> {
+    const saved = await this.dataSource.transaction(async (em) => {
+      const reference = await this.loadPendingForOwner(
+        em,
+        orgId,
+        referenceId,
+        actingPrincipalId,
+      );
+
+      this.validateApprovalOptions(reference, options);
+
+      const now = new Date();
+      const cause: ConnectionReferenceCause = 'principal_action';
+      const newState: ConnectionReferenceState = 'active';
+
+      const approvedScope: ConnectionReferenceScope =
+        options.approvedScope ?? reference.intendedScope;
+      const approvedDataCategoryConstraints: DataCategoryConstraints | null =
+        options.approvedDataCategoryConstraints !== undefined
+          ? options.approvedDataCategoryConstraints
+          : reference.dataCategoryConstraints;
+      const approvedDurationDays =
+        options.approvedDurationDays ?? reference.requestedDurationDays;
+
+      const modified = this.diffApprovalFromIntended(reference, {
+        approvedScope,
+        approvedDataCategoryConstraints,
+        approvedDurationDays,
+      });
+
+      const expiresAt = new Date(now.getTime() + approvedDurationDays * 24 * 60 * 60 * 1000);
+
+      const previousState = reference.state;
+
+      reference.state = newState;
+      reference.causedBy = cause;
+      reference.approvedAt = now;
+      reference.activatedAt = now;
+      reference.expiresAt = expiresAt;
+      reference.approvedByPrincipalId = actingPrincipalId;
+      reference.governancePolicyVersion = options.governancePolicyVersion ?? null;
+      reference.approvedScope = approvedScope;
+      reference.approvedDataCategoryConstraints = approvedDataCategoryConstraints;
+      reference.approvedDurationDays = approvedDurationDays;
+      reference.modifiedByApprover = modified;
+
+      const persisted = await em
+        .getRepository(ConnectionReferenceEntity)
+        .save(reference);
+
+      await this.writeOutbox(em, persisted, previousState, newState, cause, approvedScope);
+
+      await this.writeAudit(em, {
+        orgId,
+        actingPrincipalId,
+        principalType: 'human',
+        action: 'connection_reference_approved',
+        referenceId: persisted.id,
+        agentId: persisted.agentId,
+        newValue: {
+          state: newState,
+          approvedScope,
+          approvedDataCategoryConstraints,
+          approvedDurationDays,
+          modifiedByApprover: modified,
+          expiresAt: expiresAt.toISOString(),
+        },
+      });
+
+      return persisted;
+    });
+
+    this.logger.log(
+      `Connection reference ${saved.id} approved by principal ${actingPrincipalId}`,
+    );
+    return this.toDto(saved);
+  }
+
+  /**
+   * Deny a pending connection reference (F12.12).
+   *
+   * Only the owning principal recorded on the reference may deny.
+   * Transitions the reference from `pending` to `revoked`, records the
+   * denial reason and the denying principal, and emits the corresponding
+   * outbox + audit entries. The reason is immutable and required.
+   *
+   * Revoked is terminal — no path re-opens the reference. A denied
+   * request means the agent must submit a fresh request if the use case
+   * is to be reconsidered.
+   */
+  async denyConnectionReference(
+    orgId: string,
+    referenceId: string,
+    actingPrincipalId: string,
+    dto: DenyConnectionReferenceRequest,
+  ): Promise<ConnectionReference> {
+    if (!dto.reason || dto.reason.trim().length === 0) {
+      throw new BadRequestException('reason is required when denying a connection reference');
+    }
+
+    const saved = await this.dataSource.transaction(async (em) => {
+      const reference = await this.loadPendingForOwner(
+        em,
+        orgId,
+        referenceId,
+        actingPrincipalId,
+      );
+
+      const now = new Date();
+      const cause: ConnectionReferenceCause = 'principal_action';
+      const newState: ConnectionReferenceState = 'revoked';
+      const previousState = reference.state;
+
+      reference.state = newState;
+      reference.causedBy = cause;
+      reference.terminatedAt = now;
+      reference.denialReason = dto.reason;
+      reference.deniedByPrincipalId = actingPrincipalId;
+
+      const persisted = await em
+        .getRepository(ConnectionReferenceEntity)
+        .save(reference);
+
+      await this.writeOutbox(em, persisted, previousState, newState, cause, null);
+
+      await this.writeAudit(em, {
+        orgId,
+        actingPrincipalId,
+        principalType: 'human',
+        action: 'connection_reference_denied',
+        referenceId: persisted.id,
+        agentId: persisted.agentId,
+        newValue: {
+          state: newState,
+          denialReason: dto.reason,
+          terminatedAt: now.toISOString(),
+        },
+      });
+
+      return persisted;
+    });
+
+    this.logger.log(
+      `Connection reference ${saved.id} denied by principal ${actingPrincipalId}`,
+    );
+    return this.toDto(saved);
+  }
+
+  private async loadPendingForOwner(
+    em: EntityManager,
+    orgId: string,
+    referenceId: string,
+    actingPrincipalId: string,
+  ): Promise<ConnectionReferenceEntity> {
+    const reference = await em.getRepository(ConnectionReferenceEntity).findOne({
+      where: { id: referenceId, orgId },
+    });
+    if (!reference) {
+      throw new NotFoundException(`Connection reference ${referenceId} not found`);
+    }
+    if (reference.owningPrincipalId !== actingPrincipalId) {
+      throw new ForbiddenException(
+        'Only the owning principal may act on this connection reference',
+      );
+    }
+    if (reference.state !== 'pending') {
+      throw new BadRequestException(
+        `Connection reference is in state '${reference.state}', not 'pending'; only pending references may be approved or denied`,
+      );
+    }
+    return reference;
+  }
+
+  private validateApprovalOptions(
+    reference: ConnectionReferenceEntity,
+    options: ApproveConnectionReferenceOptions,
+  ): void {
+    if (
+      options.approvedDurationDays !== undefined &&
+      (!Number.isInteger(options.approvedDurationDays) || options.approvedDurationDays <= 0)
+    ) {
+      throw new BadRequestException('approvedDurationDays must be a positive integer');
+    }
+    // F12.7: the approver may narrow scope but may not broaden it beyond the
+    // original request. A full generalised subset check is deferred to the
+    // runtime scope enforcement slice (ADR-006); for now we reject an
+    // approval that extends the duration beyond what was requested, which is
+    // the one broadening case representable with scalar data.
+    if (
+      options.approvedDurationDays !== undefined &&
+      options.approvedDurationDays > reference.requestedDurationDays
+    ) {
+      throw new BadRequestException(
+        'approvedDurationDays may not exceed the originally requested duration',
+      );
+    }
+  }
+
+  private diffApprovalFromIntended(
+    reference: ConnectionReferenceEntity,
+    approved: {
+      approvedScope: ConnectionReferenceScope;
+      approvedDataCategoryConstraints: DataCategoryConstraints | null;
+      approvedDurationDays: number;
+    },
+  ): boolean {
+    if (JSON.stringify(approved.approvedScope) !== JSON.stringify(reference.intendedScope)) {
+      return true;
+    }
+    if (
+      JSON.stringify(approved.approvedDataCategoryConstraints ?? null) !==
+      JSON.stringify(reference.dataCategoryConstraints ?? null)
+    ) {
+      return true;
+    }
+    if (approved.approvedDurationDays !== reference.requestedDurationDays) {
+      return true;
+    }
+    return false;
+  }
+
+  private async writeOutbox(
+    em: EntityManager,
+    reference: ConnectionReferenceEntity,
+    previousState: ConnectionReferenceState | null,
+    newState: ConnectionReferenceState,
+    cause: ConnectionReferenceCause,
+    scope: ConnectionReferenceScope | null,
+  ): Promise<void> {
+    const outboxRepo = em.getRepository(ConnectionReferenceOutboxEntity);
+    await outboxRepo.save(
+      outboxRepo.create({
+        orgId: reference.orgId,
+        eventType: 'connection_reference.state',
+        payload: {
+          connectionReferenceId: reference.id,
+          orgId: reference.orgId,
+          agentId: reference.agentId,
+          productId: reference.productId,
+          newState,
+          previousState,
+          scope,
+          useCaseCategory: reference.useCaseCategory,
+          transitionedAt: new Date().toISOString(),
+          causedBy: cause,
+        },
+      }),
+    );
+  }
+
+  private async writeAudit(
+    em: EntityManager,
+    entry: {
+      orgId: string;
+      actingPrincipalId: string;
+      principalType: 'ai_agent' | 'human';
+      action: string;
+      referenceId: string;
+      agentId: string;
+      newValue: Record<string, unknown>;
+      agentTrustClassificationAtTime?: string | null;
+    },
+  ): Promise<void> {
+    await em.query(
+      `INSERT INTO audit.audit_log
+         (org_id, principal_id, principal_type, action, resource_type, resource_id,
+          new_value, agent_id, agent_trust_classification_at_time)
+       VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8::uuid, $9)`,
+      [
+        entry.orgId,
+        entry.actingPrincipalId,
+        entry.principalType,
+        entry.action,
+        'connection_reference',
+        entry.referenceId,
+        JSON.stringify(entry.newValue),
+        entry.agentId,
+        entry.agentTrustClassificationAtTime ?? null,
+      ],
+    );
   }
 
   private validateSubmission(dto: SubmitConnectionReferenceRequest): void {

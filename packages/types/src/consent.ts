@@ -128,3 +128,25 @@ export interface SubmitConnectionReferenceRequest {
  * Governance-configurable per F12.6 — this is the platform default.
  */
 export const DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH = 50;
+
+/**
+ * Optional narrowing of the originally-requested declaration when the
+ * owning principal approves (F12.7 — modifications are attributed and
+ * preserved alongside the original request). Any field left undefined
+ * inherits the matching value from the original request.
+ */
+export interface ApproveConnectionReferenceOptions {
+  approvedScope?: ConnectionReferenceScope;
+  approvedDataCategoryConstraints?: DataCategoryConstraints;
+  approvedDurationDays?: number;
+  governancePolicyVersion?: string;
+}
+
+/**
+ * Payload submitted when the owning principal denies a pending
+ * connection reference request (F12.12). The reason is immutable and
+ * required.
+ */
+export interface DenyConnectionReferenceRequest {
+  reason: string;
+}
