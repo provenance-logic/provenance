@@ -368,8 +368,8 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.9 | Request Initiation by Trust Classification | Partial | `ConsentService.requestConnectionReference` implemented with trust-classification gating: Observed agents cannot self-submit (human proxy required); Supervised and Autonomous may self-submit. Writes reference, outbox event, and audit log atomically. REST controller, Supervised oversight-hold sub-state, and notification fan-out (F12.10) pending. |
 | F12.10 | Request Routing and Notification | Not implemented | Depends on Domain 11 |
 | F12.11 | Consent as an Immutable Record | Not implemented | Blocker — foundational audit primitive |
-| F12.12 | Denial Record | Not implemented | |
-| F12.13 | Activation on Approval | Not implemented | Blocker — emits connection package (F10.8) at activation |
+| F12.12 | Denial Record | Partial | `ConsentService.denyConnectionReference` implemented: transitions pending → revoked, captures `denial_reason` and `denied_by_principal_id`, writes audit + outbox atomically. Only the owning principal may deny; a non-null, non-empty reason is required. |
+| F12.13 | Activation on Approval | Partial | `ConsentService.approveConnectionReference` transitions pending → active, sets approved_* fields (inheriting from the request when the approver makes no change, marking `modifiedByApprover` when narrowed), recomputes `expires_at` from the approved duration, writes audit + outbox atomically. Only the owning principal may approve. **Connection package emission (ADR-008) deferred to a follow-up slice** — activation does not yet produce the per-reference connection package. |
 | F12.14 | Governance Override on Activation | Not implemented | |
 | F12.15 | Version Behavior on Product Republication | Not implemented | MAJOR version auto-suspends active references |
 | F12.16 | Use-Case Scope Enforcement | Not implemented | Blocker — real-time preventive enforcement at Agent Query Layer (ADR-006) |

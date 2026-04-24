@@ -5,7 +5,10 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import type { SubmitConnectionReferenceRequest } from '@provenance/types';
+import type {
+  SubmitConnectionReferenceRequest,
+  ApproveConnectionReferenceOptions,
+} from '@provenance/types';
 import { ConsentService } from '../consent.service.js';
 import { ConnectionReferenceEntity } from '../entities/connection-reference.entity.js';
 import { ConnectionReferenceOutboxEntity } from '../entities/connection-reference-outbox.entity.js';
@@ -93,7 +96,7 @@ describe('ConsentService', () => {
   let productRepo: { findOne: jest.Mock };
   let agentRepo: { findOne: jest.Mock };
   let grantRepo: { findOne: jest.Mock };
-  let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock };
+  let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
   let outboxRepoInTxn: { create: jest.Mock; save: jest.Mock };
   let emQueryMock: jest.Mock;
   let dataSource: { transaction: jest.Mock };
@@ -108,11 +111,12 @@ describe('ConsentService', () => {
       save: jest.fn().mockImplementation((v) =>
         Promise.resolve({
           ...v,
-          id: 'ref-1',
-          createdAt: new Date('2026-04-24T00:00:00Z'),
+          id: v.id ?? 'ref-1',
+          createdAt: v.createdAt ?? new Date('2026-04-24T00:00:00Z'),
           updatedAt: new Date('2026-04-24T00:00:00Z'),
         }),
       ),
+      findOne: jest.fn(),
     };
     outboxRepoInTxn = {
       create: jest.fn().mockImplementation((v) => v),
@@ -311,6 +315,215 @@ describe('ConsentService', () => {
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
       expect(expiresAtMs).toBeGreaterThanOrEqual(before + sevenDaysMs);
       expect(expiresAtMs).toBeLessThanOrEqual(after + sevenDaysMs);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // F12.13 — approval
+  // -------------------------------------------------------------------------
+
+  function makePendingReference(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'ref-1',
+      orgId: ORG_ID,
+      agentId: AGENT_ID,
+      productId: PRODUCT_ID,
+      productVersionId: null,
+      accessGrantId: GRANT_ID,
+      owningPrincipalId: OWNER_ID,
+      state: 'pending',
+      causedBy: 'principal_action',
+      requestedAt: new Date('2026-04-24T00:00:00Z'),
+      approvedAt: null,
+      activatedAt: null,
+      suspendedAt: null,
+      expiresAt: new Date('2026-05-24T00:00:00Z'),
+      terminatedAt: null,
+      approvedByPrincipalId: null,
+      governancePolicyVersion: null,
+      useCaseCategory: 'Reporting and Analytics',
+      purposeElaboration: 'a'.repeat(60),
+      intendedScope: { ports: ['output-1'] },
+      dataCategoryConstraints: null,
+      requestedDurationDays: 30,
+      approvedScope: null,
+      approvedDataCategoryConstraints: null,
+      approvedDurationDays: null,
+      modifiedByApprover: false,
+      denialReason: null,
+      deniedByPrincipalId: null,
+      createdAt: new Date('2026-04-24T00:00:00Z'),
+      updatedAt: new Date('2026-04-24T00:00:00Z'),
+      ...overrides,
+    };
+  }
+
+  describe('approveConnectionReference', () => {
+    it('transitions pending → active and inherits approved fields from the request when no options are passed', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID);
+
+      expect(result.state).toBe('active');
+      expect(result.approvedByPrincipalId).toBe(OWNER_ID);
+      expect(result.approvedAt).not.toBeNull();
+      expect(result.activatedAt).not.toBeNull();
+      expect(result.approvedScope).toEqual({ ports: ['output-1'] });
+      expect(result.approvedDurationDays).toBe(30);
+      expect(result.modifiedByApprover).toBe(false);
+
+      expect(outboxRepoInTxn.save).toHaveBeenCalledTimes(1);
+      const outboxArg = outboxRepoInTxn.create.mock.calls[0][0];
+      expect(outboxArg.payload).toMatchObject({
+        newState: 'active',
+        previousState: 'pending',
+        causedBy: 'principal_action',
+      });
+      expect(outboxArg.payload.scope).toEqual({ ports: ['output-1'] });
+
+      const auditArgs = emQueryMock.mock.calls[0][1];
+      expect(auditArgs[3]).toBe('connection_reference_approved');
+      expect(auditArgs[1]).toBe(OWNER_ID);
+      expect(auditArgs[2]).toBe('human');
+    });
+
+    it('marks modifiedByApprover true when the approver narrows scope', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      const options: ApproveConnectionReferenceOptions = {
+        approvedScope: { ports: ['output-1'], fields: ['customer_id'] },
+        approvedDurationDays: 14,
+      };
+      const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID, options);
+
+      expect(result.modifiedByApprover).toBe(true);
+      expect(result.approvedScope).toEqual({ ports: ['output-1'], fields: ['customer_id'] });
+      expect(result.approvedDurationDays).toBe(14);
+    });
+
+    it('rejects approval by a non-owner', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      await expect(
+        service.approveConnectionReference(ORG_ID, 'ref-1', HUMAN_PROXY_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects approval of a non-pending reference', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+
+      await expect(
+        service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws NotFoundException when the reference does not exist', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.approveConnectionReference(ORG_ID, 'does-not-exist', OWNER_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects approvedDurationDays that exceeds the requested duration (no broadening)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ requestedDurationDays: 30 }));
+
+      await expect(
+        service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { approvedDurationDays: 60 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects non-positive approvedDurationDays', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      await expect(
+        service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { approvedDurationDays: 0 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('recomputes expires_at from the approved duration', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ requestedDurationDays: 30 }));
+
+      const before = Date.now();
+      const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+        approvedDurationDays: 7,
+      });
+      const after = Date.now();
+
+      const expiresMs = new Date(result.expiresAt).getTime();
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      expect(expiresMs).toBeGreaterThanOrEqual(before + sevenDaysMs);
+      expect(expiresMs).toBeLessThanOrEqual(after + sevenDaysMs);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // F12.12 — denial
+  // -------------------------------------------------------------------------
+
+  describe('denyConnectionReference', () => {
+    it('transitions pending → revoked with denial reason and denying principal', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      const result = await service.denyConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+        reason: 'Scope too broad for this use case; please narrow to aggregate data only.',
+      });
+
+      expect(result.state).toBe('revoked');
+      expect(result.denialReason).toContain('Scope too broad');
+      expect(result.deniedByPrincipalId).toBe(OWNER_ID);
+      expect(result.terminatedAt).not.toBeNull();
+      expect(result.approvedAt).toBeNull();
+
+      const outboxArg = outboxRepoInTxn.create.mock.calls[0][0];
+      expect(outboxArg.payload).toMatchObject({
+        newState: 'revoked',
+        previousState: 'pending',
+        scope: null,
+        causedBy: 'principal_action',
+      });
+
+      const auditArgs = emQueryMock.mock.calls[0][1];
+      expect(auditArgs[3]).toBe('connection_reference_denied');
+    });
+
+    it('rejects an empty reason (F12.12 — reason cannot be null)', async () => {
+      await expect(
+        service.denyConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { reason: '' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.denyConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { reason: '   ' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects denial by a non-owner', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      await expect(
+        service.denyConnectionReference(ORG_ID, 'ref-1', HUMAN_PROXY_ID, {
+          reason: 'not authorized but attempted',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects denial of a non-pending reference', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+
+      await expect(
+        service.denyConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+          reason: 'already active — must revoke instead',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws NotFoundException when the reference does not exist', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.denyConnectionReference(ORG_ID, 'does-not-exist', OWNER_ID, {
+          reason: 'none because missing',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });
