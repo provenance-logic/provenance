@@ -1,7 +1,7 @@
 # ADR-005: Connection Reference as a Composition Primitive
 
 **Date:** April 21, 2026
-**Status:** Proposed
+**Status:** Accepted (2026-04-24 — V18 schema, `ConsentService` state machine, and grant-revoke cascade implemented per this decision without architectural changes)
 **Author:** Provenance Platform Team
 
 ---
