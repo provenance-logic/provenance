@@ -357,12 +357,12 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
-| F12.1 | Connection Reference as Owned Entity | Not implemented | Blocker |
-| F12.2 | Connection Reference Lifecycle States | Not implemented | Blocker — core state machine (Pending/Active/Suspended/Expired/Revoked) |
-| F12.3 | Connection Reference Ownership | Not implemented | |
-| F12.4 | Connection Reference Expiration | Not implemented | Blocker — bounded duration is universal, no indefinite references permitted |
-| F12.5 | Use-Case Declaration as Required Field | Not implemented | Blocker — consent capture is mandatory |
-| F12.6 | Use-Case Declaration Structure | Not implemented | Hybrid taxonomy + free-text; default taxonomy ships with 8 categories |
+| F12.1 | Connection Reference as Owned Entity | Partial | Schema + TypeORM entity landed in V18 (`consent.connection_references`). Service layer, API surface, state machine not yet implemented. |
+| F12.2 | Connection Reference Lifecycle States | Partial | States encoded as CHECK constraint on the table; state-transition service logic not yet implemented. |
+| F12.3 | Connection Reference Ownership | Partial | `owning_principal_id` column NOT NULL; app-layer immutability enforcement pending with service. |
+| F12.4 | Connection Reference Expiration | Partial | `expires_at` column NOT NULL; Temporal expiration workflow and classification-based maximum enforcement not yet implemented. |
+| F12.5 | Use-Case Declaration as Required Field | Partial | Schema fields NOT NULL; request/approval flow not yet implemented. |
+| F12.6 | Use-Case Declaration Structure | Partial | Schema carries category, elaboration, scope, duration, optional constraints. Governance-configurable taxonomy and default 8-category seed not yet implemented. |
 | F12.7 | Use-Case Declaration Preservation | Not implemented | Audit requirement |
 | F12.8 | Agent Discovery of Connection Reference Status | Not implemented | Required for agent UX via MCP |
 | F12.9 | Request Initiation by Trust Classification | Not implemented | Extends F6.3 for Observed/Supervised/Autonomous |

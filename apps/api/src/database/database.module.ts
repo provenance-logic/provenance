@@ -24,6 +24,8 @@ import { GracePeriodEntity } from '../governance/entities/grace-period.entity.js
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { ApprovalEventEntity } from '../access/entities/approval-event.entity.js';
+import { ConnectionReferenceEntity } from '../consent/entities/connection-reference.entity.js';
+import { ConnectionReferenceOutboxEntity } from '../consent/entities/connection-reference-outbox.entity.js';
 import { EmissionLogEntity } from '../lineage/entities/emission-log.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
@@ -67,6 +69,8 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
             AccessGrantEntity,
             AccessRequestEntity,
             ApprovalEventEntity,
+            ConnectionReferenceEntity,
+            ConnectionReferenceOutboxEntity,
             EmissionLogEntity,
             SloDeclarationEntity,
             SloEvaluationEntity,
