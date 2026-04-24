@@ -108,3 +108,23 @@ export interface ConnectionReferenceOutboxEntry {
   createdAt: IsoTimestamp;
   publishedAt: IsoTimestamp | null;
 }
+
+/**
+ * Payload submitted by the requesting agent or human proxy when
+ * opening a new connection reference request (F12.5, F12.6, F12.9).
+ */
+export interface SubmitConnectionReferenceRequest {
+  agentId: Uuid;
+  productId: Uuid;
+  useCaseCategory: string;
+  purposeElaboration: string;
+  intendedScope: ConnectionReferenceScope;
+  dataCategoryConstraints?: DataCategoryConstraints;
+  requestedDurationDays: number;
+}
+
+/**
+ * Minimum allowed length of the purpose elaboration free-text field.
+ * Governance-configurable per F12.6 — this is the platform default.
+ */
+export const DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH = 50;
