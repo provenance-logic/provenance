@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import type {
   ConnectionReference,
   ConnectionReferenceState,
@@ -435,6 +435,94 @@ export class ConsentService {
       `Connection reference ${saved.id} revoked by principal ${actingPrincipalId}`,
     );
     return this.toDto(saved);
+  }
+
+  /**
+   * Automatic cascade revocation on access grant revoke (F12.21).
+   *
+   * ADR-005 specifies a one-way cascade: revoking the underlying access
+   * grant revokes every connection reference for that agent-product
+   * pair. The reverse does not hold — revoking a reference leaves the
+   * grant intact.
+   *
+   * This method is invoked by AccessService immediately after the grant
+   * row is marked revoked. It finds every non-terminal connection
+   * reference tied to the grant and transitions it to `revoked` with
+   * caused_by = 'grant_revocation_cascade'. Pending, active, and
+   * suspended references are all affected. Expired and revoked refs are
+   * skipped (terminal states are immutable).
+   *
+   * The triggering principal is the one who revoked the grant. The
+   * cascade is recorded on each affected reference's audit log entry
+   * with a stock reason ("Cascade from access grant {id} revocation"),
+   * which keeps the audit trail explanatory even though F12.21 does
+   * not require a per-trigger reason string.
+   *
+   * Returns the number of references actually transitioned. Callers
+   * can log this for observability; a count of zero is normal (grant
+   * had no references yet) and not an error.
+   *
+   * Idempotent: a second call after all non-terminal refs are already
+   * revoked finds nothing to do and returns 0.
+   */
+  async cascadeRevokeForGrant(
+    orgId: string,
+    grantId: string,
+    triggeringPrincipalId: string,
+  ): Promise<number> {
+    const transitioned = await this.dataSource.transaction(async (em) => {
+      const refRepo = em.getRepository(ConnectionReferenceEntity);
+      const refs = await refRepo.find({
+        where: {
+          orgId,
+          accessGrantId: grantId,
+          state: In(['pending', 'active', 'suspended']),
+        },
+      });
+
+      if (refs.length === 0) {
+        return 0;
+      }
+
+      const now = new Date();
+      const cause: ConnectionReferenceCause = 'grant_revocation_cascade';
+      const newState: ConnectionReferenceState = 'revoked';
+      const reason = `Cascade from access grant ${grantId} revocation`;
+
+      for (const ref of refs) {
+        const previousState = ref.state;
+        ref.state = newState;
+        ref.causedBy = cause;
+        ref.terminatedAt = now;
+        const persisted = await refRepo.save(ref);
+
+        await this.writeOutbox(em, persisted, previousState, newState, cause, null);
+        await this.writeAudit(em, {
+          orgId,
+          actingPrincipalId: triggeringPrincipalId,
+          principalType: 'human',
+          action: 'connection_reference_revoked',
+          referenceId: persisted.id,
+          agentId: persisted.agentId,
+          newValue: {
+            state: newState,
+            previousState,
+            reason,
+            terminatedAt: now.toISOString(),
+            causedBy: cause,
+          },
+        });
+      }
+
+      return refs.length;
+    });
+
+    if (transitioned > 0) {
+      this.logger.log(
+        `Cascade revoked ${transitioned} connection reference(s) for access grant ${grantId}`,
+      );
+    }
+    return transitioned;
   }
 
   private async loadForOwner(

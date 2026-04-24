@@ -13,6 +13,7 @@ import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { TEMPORAL_CLIENT } from './temporal/temporal-client.provider.js';
 import { createApprovalActivities } from './temporal/approval.activities.js';
 import { ConnectionPackageService } from './connection-package.service.js';
+import { ConsentService } from '../consent/consent.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -135,6 +136,10 @@ describe('AccessService', () => {
         {
           provide: ConnectionPackageService,
           useValue: { generateForProduct: jest.fn().mockResolvedValue(null) },
+        },
+        {
+          provide: ConsentService,
+          useValue: { cascadeRevokeForGrant: jest.fn().mockResolvedValue(0) },
         },
       ],
     }).compile();

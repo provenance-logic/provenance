@@ -10,6 +10,7 @@ import { TemporalWorkerService } from './temporal/temporal-worker.service.js';
 import { AccessService } from './access.service.js';
 import { AccessController } from './access.controller.js';
 import { ConnectionPackageService } from './connection-package.service.js';
+import { ConsentModule } from '../consent/consent.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ConnectionPackageService } from './connection-package.service.js';
       DataProductEntity,
       PortDeclarationEntity,
     ]),
+    ConsentModule,
   ],
   providers: [
     temporalClientProvider,
