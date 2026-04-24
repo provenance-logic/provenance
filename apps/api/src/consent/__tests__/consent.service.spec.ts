@@ -96,6 +96,7 @@ describe('ConsentService', () => {
   let productRepo: { findOne: jest.Mock };
   let agentRepo: { findOne: jest.Mock };
   let grantRepo: { findOne: jest.Mock };
+  let referenceRepo: { findOne: jest.Mock; createQueryBuilder: jest.Mock };
   let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
   let outboxRepoInTxn: { create: jest.Mock; save: jest.Mock };
   let emQueryMock: jest.Mock;
@@ -105,6 +106,17 @@ describe('ConsentService', () => {
     productRepo = { findOne: jest.fn() };
     agentRepo = { findOne: jest.fn() };
     grantRepo = { findOne: jest.fn() };
+    referenceRepo = {
+      findOne: jest.fn(),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      }),
+    };
 
     referenceRepoInTxn = {
       create: jest.fn().mockImplementation((v) => v),
@@ -140,6 +152,7 @@ describe('ConsentService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         ConsentService,
+        { provide: getRepositoryToken(ConnectionReferenceEntity), useValue: referenceRepo },
         { provide: getRepositoryToken(DataProductEntity), useValue: productRepo },
         { provide: getRepositoryToken(AgentIdentityEntity), useValue: agentRepo },
         { provide: getRepositoryToken(AccessGrantEntity), useValue: grantRepo },
@@ -709,6 +722,75 @@ describe('ConsentService', () => {
       expect(whereClause.accessGrantId).toBe(GRANT_ID);
       // Terminal states must not be in the filter — they're immutable.
       expect(whereClause.state).toBeDefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Read-side: get + list
+  // -------------------------------------------------------------------------
+
+  describe('getConnectionReference', () => {
+    it('returns the reference DTO when found', async () => {
+      referenceRepo.findOne.mockResolvedValue(makePendingReference());
+      const result = await service.getConnectionReference(ORG_ID, 'ref-1');
+      expect(result.id).toBe('ref-1');
+      expect(result.state).toBe('pending');
+    });
+
+    it('throws NotFoundException when the reference is absent or belongs to another org', async () => {
+      referenceRepo.findOne.mockResolvedValue(null);
+      await expect(service.getConnectionReference(ORG_ID, 'ref-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('listConnectionReferences', () => {
+    it('returns a paginated list with meta', async () => {
+      const refs = [
+        makePendingReference({ id: 'ref-a' }),
+        makePendingReference({ id: 'ref-b', state: 'active' }),
+      ];
+      const getManyAndCount = jest.fn().mockResolvedValue([refs, 2]);
+      referenceRepo.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        getManyAndCount,
+      });
+
+      const result = await service.listConnectionReferences(ORG_ID, { limit: 20, offset: 0 });
+
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0].id).toBe('ref-a');
+      expect(result.meta).toEqual({ total: 2, limit: 20, offset: 0 });
+    });
+
+    it('applies each filter as an andWhere clause on the query builder', async () => {
+      const getManyAndCount = jest.fn().mockResolvedValue([[], 0]);
+      const andWhere = jest.fn().mockReturnThis();
+      referenceRepo.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere,
+        orderBy: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        getManyAndCount,
+      });
+
+      await service.listConnectionReferences(ORG_ID, {
+        agentId: AGENT_ID,
+        productId: PRODUCT_ID,
+        owningPrincipalId: OWNER_ID,
+        state: 'active',
+        limit: 20,
+        offset: 0,
+      });
+
+      // One andWhere call per filter.
+      expect(andWhere).toHaveBeenCalledTimes(4);
     });
   });
 });

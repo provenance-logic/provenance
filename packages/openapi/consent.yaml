@@ -1,0 +1,542 @@
+openapi: 3.1.0
+info:
+  title: Provenance Consent API
+  version: 0.1.0
+  description: |
+    Connection references (Domain 12 — per-use-case consent).
+
+    A connection reference is a first-class, owned, revocable authorization
+    record pairing an agent's access to a product with an explicit
+    human-consented use-case declaration. It composes with, but does not
+    replace, the access grant (ADR-005): both must be in an active state for
+    an agent action to be authorized.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: ConnectionReferences
+    description: Per-use-case consent for agent consumption of data products
+
+paths:
+  /organizations/{orgId}/consent/connection-references:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+
+    get:
+      operationId: listConnectionReferences
+      summary: List connection references
+      tags: [ConnectionReferences]
+      description: |
+        Returns a paginated list of connection references in the caller's
+        organization. Supports filtering by agent, product, owning principal,
+        and state.
+      parameters:
+        - name: agentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: owningPrincipalId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: state
+          in: query
+          schema:
+            $ref: '#/components/schemas/ConnectionReferenceState'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of connection references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReferenceList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    post:
+      operationId: requestConnectionReference
+      summary: Submit a new connection reference request
+      tags: [ConnectionReferences]
+      description: |
+        Opens a new connection reference request against a product the
+        calling agent already holds an active access grant for (F12.9).
+
+        Trust-classification gating:
+          * Observed agents — the request must be submitted by a human
+            proxy on the agent's behalf; self-submit is rejected.
+          * Supervised and Autonomous agents — may submit on their own
+            behalf.
+
+        Validation:
+          * agentId, productId must exist in the caller's organization.
+          * An active access grant must exist for (agentId, productId).
+          * purposeElaboration must be at least 50 characters.
+          * requestedDurationDays must be a positive integer.
+
+        The reference is created in `pending` state and must be approved
+        by the product's owning principal before use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitConnectionReferenceRequest'
+      responses:
+        '201':
+          description: Pending connection reference created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/consent/connection-references/{referenceId}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/referenceId'
+
+    get:
+      operationId: getConnectionReference
+      summary: Get a connection reference by ID
+      tags: [ConnectionReferences]
+      responses:
+        '200':
+          description: Connection reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/consent/connection-references/{referenceId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/referenceId'
+
+    post:
+      operationId: approveConnectionReference
+      summary: Approve a pending connection reference (F12.13)
+      tags: [ConnectionReferences]
+      description: |
+        Transitions a pending reference to active. Only the reference's
+        owning principal may approve. The body may optionally narrow the
+        originally-requested scope, data category constraints, or duration
+        (F12.7: narrow, never broaden). Duration may not exceed the
+        originally requested duration.
+
+        On activation the platform recomputes expires_at from the approved
+        duration and marks `modifiedByApprover` true if any field was
+        narrowed vs. the original request.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveConnectionReferenceOptions'
+      responses:
+        '200':
+          description: Approved (now active) connection reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/consent/connection-references/{referenceId}/deny:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/referenceId'
+
+    post:
+      operationId: denyConnectionReference
+      summary: Deny a pending connection reference (F12.12)
+      tags: [ConnectionReferences]
+      description: |
+        Transitions a pending reference to revoked with an immutable
+        denial record (denier, reason, timestamp). Only the owning
+        principal may deny; the reason is required and non-empty.
+
+        Use the revoke endpoint for active or suspended references.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DenyConnectionReferenceRequest'
+      responses:
+        '200':
+          description: Denied (now revoked) connection reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/consent/connection-references/{referenceId}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/referenceId'
+
+    post:
+      operationId: revokeConnectionReference
+      summary: Revoke an active or suspended connection reference (F12.19)
+      tags: [ConnectionReferences]
+      description: |
+        The owning principal may revoke an active or suspended connection
+        reference at any time. Revocation is immediate and terminal. The
+        reason is required and recorded in the audit log.
+
+        Pending references cannot be revoked through this endpoint — use
+        deny instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeConnectionReferenceRequest'
+      responses:
+        '200':
+          description: Revoked connection reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    referenceId:
+      name: referenceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Bad request — validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    ConnectionReferenceState:
+      type: string
+      description: |
+        Lifecycle states per F12.2. Expired and Revoked are terminal —
+        no transition out of either is permitted.
+      enum:
+        - pending
+        - active
+        - suspended
+        - expired
+        - revoked
+
+    ConnectionReferenceCause:
+      type: string
+      description: |
+        Cause marker carried on the reference row and on the Redpanda
+        event payload for the most recent state transition (ADR-007).
+      enum:
+        - principal_action
+        - governance_action
+        - automatic_expiration
+        - major_version_suspension
+        - grant_revocation_cascade
+        - product_lifecycle_cascade
+        - principal_lifecycle_cascade
+
+    ConnectionReferenceScope:
+      type: object
+      description: |
+        Scope of an agent's intended or approved consumption of a product.
+        Opaque JSON shape at this layer; structure is defined by F12.6 and
+        runtime enforcement lands in ADR-006 / F12.16.
+      additionalProperties: true
+
+    DataCategoryConstraints:
+      type: object
+      description: |
+        Optional restriction to specific data categories within a product
+        that carries fields of multiple sensitivity levels (F12.6).
+      additionalProperties: true
+
+    ConnectionReference:
+      type: object
+      required:
+        - id
+        - orgId
+        - agentId
+        - productId
+        - accessGrantId
+        - owningPrincipalId
+        - state
+        - requestedAt
+        - expiresAt
+        - useCaseCategory
+        - purposeElaboration
+        - intendedScope
+        - requestedDurationDays
+        - modifiedByApprover
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        agentId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        productVersionId:
+          type: [string, 'null']
+          format: uuid
+        accessGrantId:
+          type: string
+          format: uuid
+        owningPrincipalId:
+          type: string
+          format: uuid
+        state:
+          $ref: '#/components/schemas/ConnectionReferenceState'
+        causedBy:
+          oneOf:
+            - $ref: '#/components/schemas/ConnectionReferenceCause'
+            - type: 'null'
+        requestedAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: [string, 'null']
+          format: date-time
+        activatedAt:
+          type: [string, 'null']
+          format: date-time
+        suspendedAt:
+          type: [string, 'null']
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        terminatedAt:
+          type: [string, 'null']
+          format: date-time
+        approvedByPrincipalId:
+          type: [string, 'null']
+          format: uuid
+        governancePolicyVersion:
+          type: [string, 'null']
+        useCaseCategory:
+          type: string
+        purposeElaboration:
+          type: string
+          minLength: 50
+        intendedScope:
+          $ref: '#/components/schemas/ConnectionReferenceScope'
+        dataCategoryConstraints:
+          oneOf:
+            - $ref: '#/components/schemas/DataCategoryConstraints'
+            - type: 'null'
+        requestedDurationDays:
+          type: integer
+          minimum: 1
+        approvedScope:
+          oneOf:
+            - $ref: '#/components/schemas/ConnectionReferenceScope'
+            - type: 'null'
+        approvedDataCategoryConstraints:
+          oneOf:
+            - $ref: '#/components/schemas/DataCategoryConstraints'
+            - type: 'null'
+        approvedDurationDays:
+          type: [integer, 'null']
+          minimum: 1
+        modifiedByApprover:
+          type: boolean
+        denialReason:
+          type: [string, 'null']
+        deniedByPrincipalId:
+          type: [string, 'null']
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ConnectionReferenceList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectionReference'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    SubmitConnectionReferenceRequest:
+      type: object
+      required:
+        - agentId
+        - productId
+        - useCaseCategory
+        - purposeElaboration
+        - intendedScope
+        - requestedDurationDays
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        useCaseCategory:
+          type: string
+          minLength: 1
+        purposeElaboration:
+          type: string
+          minLength: 50
+        intendedScope:
+          $ref: '#/components/schemas/ConnectionReferenceScope'
+        dataCategoryConstraints:
+          $ref: '#/components/schemas/DataCategoryConstraints'
+        requestedDurationDays:
+          type: integer
+          minimum: 1
+
+    ApproveConnectionReferenceOptions:
+      type: object
+      description: |
+        All fields are optional. Any field left unset inherits the matching
+        value from the original request. The approver may narrow scope,
+        duration, or data category constraints but may not broaden them
+        (F12.7).
+      properties:
+        approvedScope:
+          $ref: '#/components/schemas/ConnectionReferenceScope'
+        approvedDataCategoryConstraints:
+          $ref: '#/components/schemas/DataCategoryConstraints'
+        approvedDurationDays:
+          type: integer
+          minimum: 1
+        governancePolicyVersion:
+          type: string
+
+    DenyConnectionReferenceRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Human-readable reason for denial (immutable).
+
+    RevokeConnectionReferenceRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Human-readable reason for revocation (recorded in the audit log).

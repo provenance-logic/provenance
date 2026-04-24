@@ -4,8 +4,8 @@
   "private": true,
   "description": "OpenAPI 3.1 specifications — source of truth for all Provenance APIs",
   "scripts": {
-    "validate": "redocly lint organizations.yaml products.yaml governance.yaml connectors.yaml access.yaml invitations.yaml",
-    "bundle": "redocly bundle organizations.yaml -o dist/organizations.json && redocly bundle products.yaml -o dist/products.json && redocly bundle governance.yaml -o dist/governance.json && redocly bundle connectors.yaml -o dist/connectors.json && redocly bundle access.yaml -o dist/access.json",
+    "validate": "redocly lint organizations.yaml products.yaml governance.yaml connectors.yaml access.yaml invitations.yaml consent.yaml",
+    "bundle": "redocly bundle organizations.yaml -o dist/organizations.json && redocly bundle products.yaml -o dist/products.json && redocly bundle governance.yaml -o dist/governance.json && redocly bundle connectors.yaml -o dist/connectors.json && redocly bundle access.yaml -o dist/access.json && redocly bundle consent.yaml -o dist/consent.json",
     "generate:types": "openapi-typescript organizations.yaml -o ../types/src/generated/organizations.ts && openapi-typescript products.yaml -o ../types/src/generated/products.ts && openapi-typescript governance.yaml -o ../types/src/generated/governance.ts && openapi-typescript connectors.yaml -o ../types/src/generated/connectors.ts && openapi-typescript access.yaml -o ../types/src/generated/access.ts"
   },
   "devDependencies": {
