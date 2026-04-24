@@ -150,3 +150,13 @@ export interface ApproveConnectionReferenceOptions {
 export interface DenyConnectionReferenceRequest {
   reason: string;
 }
+
+/**
+ * Payload submitted when the owning principal revokes an active or
+ * suspended connection reference (F12.19). The reason is required and
+ * recorded in the audit log. Revocation is immediate and terminal —
+ * the reference cannot be reactivated.
+ */
+export interface RevokeConnectionReferenceRequest {
+  reason: string;
+}

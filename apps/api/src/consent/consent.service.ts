@@ -16,6 +16,7 @@ import type {
   SubmitConnectionReferenceRequest,
   ApproveConnectionReferenceOptions,
   DenyConnectionReferenceRequest,
+  RevokeConnectionReferenceRequest,
 } from '@provenance/types';
 import { DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH } from '@provenance/types';
 import type { EntityManager } from 'typeorm';
@@ -205,11 +206,12 @@ export class ConsentService {
     options: ApproveConnectionReferenceOptions = {},
   ): Promise<ConnectionReference> {
     const saved = await this.dataSource.transaction(async (em) => {
-      const reference = await this.loadPendingForOwner(
+      const reference = await this.loadForOwner(
         em,
         orgId,
         referenceId,
         actingPrincipalId,
+        ['pending'],
       );
 
       this.validateApprovalOptions(reference, options);
@@ -304,11 +306,12 @@ export class ConsentService {
     }
 
     const saved = await this.dataSource.transaction(async (em) => {
-      const reference = await this.loadPendingForOwner(
+      const reference = await this.loadForOwner(
         em,
         orgId,
         referenceId,
         actingPrincipalId,
+        ['pending'],
       );
 
       const now = new Date();
@@ -351,11 +354,95 @@ export class ConsentService {
     return this.toDto(saved);
   }
 
-  private async loadPendingForOwner(
+  /**
+   * Principal-initiated revocation (F12.19).
+   *
+   * The owning principal may revoke an `active` or `suspended` reference
+   * at any time. Revocation is immediate and terminal — the reference
+   * cannot be reactivated. The reason is required and recorded in the
+   * audit log (not on the row; F12.19 specifies the audit log as the
+   * authoritative location for the reason, consistent with F12.23's
+   * complete-audit-trail requirement).
+   *
+   * Pending references cannot be revoked through this path — they must
+   * go through `denyConnectionReference` (F12.12), which has its own
+   * row-level reason capture.
+   *
+   * Out of scope for this slice:
+   *   - Freezing of in-flight operations authorized by the revoked
+   *     reference (F12.19 / F8.1). The Agent Query Layer currently has
+   *     no in-flight operations registry; when it does, a follow-up
+   *     slice will query for operations carrying this reference ID and
+   *     route them through the existing frozen-state path.
+   *   - Governance-initiated revocation (F12.20).
+   *   - Automatic cascade revocation on grant revoke, product
+   *     deprecation, etc. (F12.21).
+   *   - Notification fan-out (depends on Domain 11).
+   */
+  async revokeConnectionReference(
+    orgId: string,
+    referenceId: string,
+    actingPrincipalId: string,
+    dto: RevokeConnectionReferenceRequest,
+  ): Promise<ConnectionReference> {
+    if (!dto.reason || dto.reason.trim().length === 0) {
+      throw new BadRequestException('reason is required when revoking a connection reference');
+    }
+
+    const saved = await this.dataSource.transaction(async (em) => {
+      const reference = await this.loadForOwner(
+        em,
+        orgId,
+        referenceId,
+        actingPrincipalId,
+        ['active', 'suspended'],
+      );
+
+      const now = new Date();
+      const cause: ConnectionReferenceCause = 'principal_action';
+      const newState: ConnectionReferenceState = 'revoked';
+      const previousState = reference.state;
+
+      reference.state = newState;
+      reference.causedBy = cause;
+      reference.terminatedAt = now;
+
+      const persisted = await em
+        .getRepository(ConnectionReferenceEntity)
+        .save(reference);
+
+      await this.writeOutbox(em, persisted, previousState, newState, cause, null);
+
+      await this.writeAudit(em, {
+        orgId,
+        actingPrincipalId,
+        principalType: 'human',
+        action: 'connection_reference_revoked',
+        referenceId: persisted.id,
+        agentId: persisted.agentId,
+        newValue: {
+          state: newState,
+          previousState,
+          reason: dto.reason,
+          terminatedAt: now.toISOString(),
+        },
+      });
+
+      return persisted;
+    });
+
+    this.logger.log(
+      `Connection reference ${saved.id} revoked by principal ${actingPrincipalId}`,
+    );
+    return this.toDto(saved);
+  }
+
+  private async loadForOwner(
     em: EntityManager,
     orgId: string,
     referenceId: string,
     actingPrincipalId: string,
+    allowedStates: ConnectionReferenceState[],
   ): Promise<ConnectionReferenceEntity> {
     const reference = await em.getRepository(ConnectionReferenceEntity).findOne({
       where: { id: referenceId, orgId },
@@ -368,9 +455,9 @@ export class ConsentService {
         'Only the owning principal may act on this connection reference',
       );
     }
-    if (reference.state !== 'pending') {
+    if (!allowedStates.includes(reference.state)) {
       throw new BadRequestException(
-        `Connection reference is in state '${reference.state}', not 'pending'; only pending references may be approved or denied`,
+        `Connection reference is in state '${reference.state}'; allowed for this operation: ${allowedStates.join(', ')}`,
       );
     }
     return reference;
