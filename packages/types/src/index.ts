@@ -8,6 +8,7 @@ export * from './identity.js';
 export * from './governance.js';
 export * from './connectors.js';
 export * from './access.js';
+export * from './consent.js';
 export * from './events.js';
 export * from './marketplace.js';
 export * from './lineage.js';
