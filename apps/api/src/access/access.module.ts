@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessGrantEntity } from './entities/access-grant.entity.js';
 import { AccessRequestEntity } from './entities/access-request.entity.js';
@@ -21,8 +21,9 @@ import { ConsentModule } from '../consent/consent.module.js';
       DataProductEntity,
       PortDeclarationEntity,
     ]),
-    ConsentModule,
+    forwardRef(() => ConsentModule),
   ],
+  exports: [ConnectionPackageService],
   providers: [
     temporalClientProvider,
     TemporalWorkerService,

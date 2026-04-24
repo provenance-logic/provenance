@@ -457,6 +457,16 @@ components:
         deniedByPrincipalId:
           type: [string, 'null']
           format: uuid
+        connectionPackage:
+          description: |
+            Connection package generated at activation (ADR-008, F12.13).
+            Null until the reference transitions to `active`. Retained as
+            an immutable audit artifact after the reference terminates —
+            consumers check `state` to decide whether the package is usable.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
         createdAt:
           type: string
           format: date-time

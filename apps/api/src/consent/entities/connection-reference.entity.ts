@@ -10,6 +10,7 @@ import type {
   ConnectionReferenceCause,
   ConnectionReferenceScope,
   DataCategoryConstraints,
+  ConnectionPackage,
 } from '@provenance/types';
 
 @Entity({ schema: 'consent', name: 'connection_references' })
@@ -97,6 +98,9 @@ export class ConnectionReferenceEntity {
 
   @Column({ type: 'uuid', name: 'denied_by_principal_id', nullable: true })
   deniedByPrincipalId!: string | null;
+
+  @Column({ name: 'connection_package', type: 'jsonb', nullable: true })
+  connectionPackage!: ConnectionPackage | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

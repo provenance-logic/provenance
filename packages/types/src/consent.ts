@@ -1,4 +1,5 @@
 import type { Uuid, IsoTimestamp, PaginatedList } from './common.js';
+import type { ConnectionPackage } from './access.js';
 
 // ---------------------------------------------------------------------------
 // Connection references — Domain 12 (F12.1 through F12.6 and forward)
@@ -90,6 +91,14 @@ export interface ConnectionReference {
 
   denialReason: string | null;
   deniedByPrincipalId: Uuid | null;
+
+  /**
+   * Connection package generated at activation (ADR-008, F12.13).
+   * Null until the reference transitions to `active`. Retained as an
+   * immutable audit artifact after the reference terminates — consumers
+   * check `state` to decide whether the package is usable.
+   */
+  connectionPackage: ConnectionPackage | null;
 
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
