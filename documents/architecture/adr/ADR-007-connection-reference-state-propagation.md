@@ -1,7 +1,7 @@
 # ADR-007: Connection Reference State Propagation
 
 **Date:** April 21, 2026
-**Status:** Proposed
+**Status:** Accepted (2026-04-24 — `consent.connection_reference_outbox` and the transactional-outbox write path on every state transition implemented per this decision. Publisher worker, Redpanda topic wiring, and AQL cache-invalidation consumer are implementation work that follows this ADR rather than changes to it.)
 **Author:** Provenance Platform Team
 
 ---

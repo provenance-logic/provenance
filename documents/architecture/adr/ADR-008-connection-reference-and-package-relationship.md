@@ -1,7 +1,7 @@
 # ADR-008: Connection Reference and Connection Package Relationship
 
 **Date:** April 21, 2026
-**Status:** Proposed
+**Status:** Accepted (2026-04-24 — V19 adds the per-reference `connection_package` column; activation generates and stores the package via `ConnectionPackageService`. Scope-narrowing of the package contents to the approved ports/fields is follow-up implementation work, not an architectural change.)
 **Author:** Provenance Platform Team
 
 ---
