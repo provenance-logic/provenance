@@ -1,12 +1,15 @@
 import {
   Injectable,
   Logger,
+  Inject,
+  forwardRef,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
+import { ConnectionPackageService } from '../access/connection-package.service.js';
 import type {
   ConnectionReference,
   ConnectionReferenceList,
@@ -47,6 +50,8 @@ export class ConsentService {
     private readonly grantRepo: Repository<AccessGrantEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => ConnectionPackageService))
+    private readonly connectionPackageService: ConnectionPackageService,
   ) {}
 
   async getConnectionReference(
@@ -310,6 +315,20 @@ export class ConsentService {
       reference.approvedDataCategoryConstraints = approvedDataCategoryConstraints;
       reference.approvedDurationDays = approvedDurationDays;
       reference.modifiedByApprover = modified;
+
+      // ADR-008: each connection reference produces its own connection
+      // package at activation. The package is stored on the row and
+      // retained as an immutable audit artifact across later state
+      // transitions — consumers interpret `state` to decide usability.
+      //
+      // Per-reference scope filtering (ADR-008 "Scope Inheritance") is
+      // deferred to a follow-up slice; we currently persist the full
+      // product package. Narrowing requires threading approved_scope
+      // into generateForProduct, which changes the Domain 10 contract.
+      reference.connectionPackage = await this.connectionPackageService.generateForProduct(
+        reference.orgId,
+        reference.productId,
+      );
 
       const persisted = await em
         .getRepository(ConnectionReferenceEntity)
@@ -767,6 +786,7 @@ export class ConsentService {
       modifiedByApprover: entity.modifiedByApprover,
       denialReason: entity.denialReason,
       deniedByPrincipalId: entity.deniedByPrincipalId,
+      connectionPackage: entity.connectionPackage,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };

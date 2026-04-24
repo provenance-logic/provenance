@@ -15,6 +15,7 @@ import { ConnectionReferenceOutboxEntity } from '../entities/connection-referenc
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { AgentIdentityEntity } from '../../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
+import { ConnectionPackageService } from '../../access/connection-package.service.js';
 
 const ORG_ID = 'org-1';
 const AGENT_ID = 'agent-1';
@@ -97,6 +98,7 @@ describe('ConsentService', () => {
   let agentRepo: { findOne: jest.Mock };
   let grantRepo: { findOne: jest.Mock };
   let referenceRepo: { findOne: jest.Mock; createQueryBuilder: jest.Mock };
+  let connectionPackageService: { generateForProduct: jest.Mock };
   let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
   let outboxRepoInTxn: { create: jest.Mock; save: jest.Mock };
   let emQueryMock: jest.Mock;
@@ -115,6 +117,13 @@ describe('ConsentService', () => {
         take: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      }),
+    };
+    connectionPackageService = {
+      generateForProduct: jest.fn().mockResolvedValue({
+        packageVersion: 1,
+        generatedAt: '2026-04-24T00:00:00.000Z',
+        ports: [{ portId: 'port-1', portName: 'events', interfaceType: 'rest_api', artifacts: {} }],
       }),
     };
 
@@ -157,6 +166,7 @@ describe('ConsentService', () => {
         { provide: getRepositoryToken(AgentIdentityEntity), useValue: agentRepo },
         { provide: getRepositoryToken(AccessGrantEntity), useValue: grantRepo },
         { provide: getDataSourceToken(), useValue: dataSource },
+        { provide: ConnectionPackageService, useValue: connectionPackageService },
       ],
     }).compile();
 
@@ -365,6 +375,7 @@ describe('ConsentService', () => {
       modifiedByApprover: false,
       denialReason: null,
       deniedByPrincipalId: null,
+      connectionPackage: null,
       createdAt: new Date('2026-04-24T00:00:00Z'),
       updatedAt: new Date('2026-04-24T00:00:00Z'),
       ...overrides,
@@ -398,6 +409,29 @@ describe('ConsentService', () => {
       expect(auditArgs[3]).toBe('connection_reference_approved');
       expect(auditArgs[1]).toBe(OWNER_ID);
       expect(auditArgs[2]).toBe('human');
+    });
+
+    it('generates and persists a connection package on activation (ADR-008, F12.13)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+
+      const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID);
+
+      expect(connectionPackageService.generateForProduct).toHaveBeenCalledTimes(1);
+      expect(connectionPackageService.generateForProduct).toHaveBeenCalledWith(
+        ORG_ID,
+        PRODUCT_ID,
+      );
+      expect(result.connectionPackage).not.toBeNull();
+      expect(result.connectionPackage?.ports).toHaveLength(1);
+    });
+
+    it('stores a null package if generation returns null (no output ports yet)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
+      connectionPackageService.generateForProduct.mockResolvedValueOnce(null);
+
+      const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID);
+      expect(result.state).toBe('active');
+      expect(result.connectionPackage).toBeNull();
     });
 
     it('marks modifiedByApprover true when the approver narrows scope', async () => {
