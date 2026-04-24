@@ -377,7 +377,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.18 | Connection Reference Verification in Provenance Envelopes | Not implemented | Extends F6.17 envelope |
 | F12.19 | Principal-Initiated Revocation | Partial | `ConsentService.revokeConnectionReference` transitions active/suspended → revoked; only the owning principal may revoke; reason is required and recorded in the audit log (not on the row). Transactional outbox + audit. Frozen-state propagation for in-flight operations (F8.1 integration at the Agent Query Layer) deferred — the operations registry doesn't exist there yet. Notifications (Domain 11) deferred. |
 | F12.20 | Governance-Initiated Revocation | Not implemented | |
-| F12.21 | Automatic Revocation Triggers | Not implemented | Blocker — cascade from grant revoke / product decommission / principal deactivation |
+| F12.21 | Automatic Revocation Triggers | Partial | `ConsentService.cascadeRevokeForGrant` implemented; wired into `AccessService.revokeGrant` so that revoking a grant automatically revokes all non-terminal connection references for that agent-product pair with `caused_by = 'grant_revocation_cascade'`. Idempotent. Product deprecation/decommission, agent lifecycle, and owning-principal deactivation triggers not yet wired. |
 | F12.22 | Expiration Behavior | Not implemented | |
 | F12.23 | Complete Audit Trail | Not implemented | Blocker — every state transition must be reconstructible from audit log alone |
 | F12.24 | Scope Violation Logging | Not implemented | |

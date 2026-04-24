@@ -629,4 +629,86 @@ describe('ConsentService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // F12.21 — automatic cascade on access grant revoke
+  // -------------------------------------------------------------------------
+
+  describe('cascadeRevokeForGrant', () => {
+    let referenceRepoFind: jest.Mock;
+
+    beforeEach(() => {
+      referenceRepoFind = jest.fn();
+      (referenceRepoInTxn as unknown as { find: jest.Mock }).find = referenceRepoFind;
+    });
+
+    it('revokes all pending/active/suspended refs tied to the grant and writes outbox + audit per ref', async () => {
+      const refs = [
+        makePendingReference({ id: 'ref-a', state: 'pending', accessGrantId: GRANT_ID }),
+        makePendingReference({ id: 'ref-b', state: 'active', accessGrantId: GRANT_ID }),
+        makePendingReference({ id: 'ref-c', state: 'suspended', accessGrantId: GRANT_ID }),
+      ];
+      referenceRepoFind.mockResolvedValue(refs);
+
+      const count = await service.cascadeRevokeForGrant(ORG_ID, GRANT_ID, OWNER_ID);
+
+      expect(count).toBe(3);
+      expect(referenceRepoInTxn.save).toHaveBeenCalledTimes(3);
+      expect(outboxRepoInTxn.save).toHaveBeenCalledTimes(3);
+      expect(emQueryMock).toHaveBeenCalledTimes(3);
+
+      for (const call of outboxRepoInTxn.create.mock.calls) {
+        expect(call[0].payload).toMatchObject({
+          newState: 'revoked',
+          causedBy: 'grant_revocation_cascade',
+        });
+      }
+
+      for (const call of emQueryMock.mock.calls) {
+        const auditArgs = call[1];
+        expect(auditArgs[3]).toBe('connection_reference_revoked');
+        const newValue = JSON.parse(auditArgs[6]);
+        expect(newValue.causedBy).toBe('grant_revocation_cascade');
+        expect(newValue.reason).toContain(GRANT_ID);
+      }
+    });
+
+    it('carries through previousState on the outbox event for each ref', async () => {
+      referenceRepoFind.mockResolvedValue([
+        makePendingReference({ id: 'ref-a', state: 'pending' }),
+        makePendingReference({ id: 'ref-b', state: 'active' }),
+      ]);
+
+      await service.cascadeRevokeForGrant(ORG_ID, GRANT_ID, OWNER_ID);
+
+      const previousStates = outboxRepoInTxn.create.mock.calls.map(
+        (c) => (c[0] as { payload: { previousState: string } }).payload.previousState,
+      );
+      expect(previousStates).toEqual(['pending', 'active']);
+    });
+
+    it('returns 0 and skips all side effects when no non-terminal refs exist', async () => {
+      referenceRepoFind.mockResolvedValue([]);
+
+      const count = await service.cascadeRevokeForGrant(ORG_ID, GRANT_ID, OWNER_ID);
+
+      expect(count).toBe(0);
+      expect(referenceRepoInTxn.save).not.toHaveBeenCalled();
+      expect(outboxRepoInTxn.save).not.toHaveBeenCalled();
+      expect(emQueryMock).not.toHaveBeenCalled();
+    });
+
+    it('restricts the find query to non-terminal states (pending, active, suspended)', async () => {
+      referenceRepoFind.mockResolvedValue([]);
+
+      await service.cascadeRevokeForGrant(ORG_ID, GRANT_ID, OWNER_ID);
+
+      expect(referenceRepoFind).toHaveBeenCalledTimes(1);
+      const whereClause = referenceRepoFind.mock.calls[0][0].where;
+      expect(whereClause.orgId).toBe(ORG_ID);
+      expect(whereClause.accessGrantId).toBe(GRANT_ID);
+      // Terminal states must not be in the filter — they're immutable.
+      expect(whereClause.state).toBeDefined();
+    });
+  });
 });

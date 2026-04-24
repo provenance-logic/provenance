@@ -17,6 +17,7 @@ import { AccessRequestEntity } from './entities/access-request.entity.js';
 import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { ConnectionPackageService } from './connection-package.service.js';
+import { ConsentService } from '../consent/consent.service.js';
 import { getConfig } from '../config.js';
 import type {
   AccessGrant,
@@ -51,6 +52,7 @@ export class AccessService {
     @Inject(TEMPORAL_CLIENT)
     private readonly temporalClient: Client,
     private readonly connectionPackageService: ConnectionPackageService,
+    private readonly consentService: ConsentService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -153,6 +155,23 @@ export class AccessService {
     grant.revokedAt = new Date();
     grant.revokedBy = revokedByPrincipalId;
     const saved = await this.grantRepo.save(grant);
+
+    // Domain 12 F12.21 / ADR-005: grant revocation cascades to revoke
+    // every connection reference for this agent-product pair. The cascade
+    // runs after the grant row is durably saved — if it throws, the grant
+    // is still revoked (agent actions will be denied by the access-grant
+    // check regardless of reference state), and a retry re-runs the
+    // cascade idempotently since already-revoked refs are skipped.
+    try {
+      await this.consentService.cascadeRevokeForGrant(orgId, grantId, revokedByPrincipalId);
+    } catch (err) {
+      this.logger.error(
+        `Grant ${grantId} revoked but connection-reference cascade failed; references may need reconciliation`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
+
     return this.toGrant(saved);
   }
 

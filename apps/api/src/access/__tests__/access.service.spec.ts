@@ -12,6 +12,7 @@ import { ApprovalEventEntity } from '../entities/approval-event.entity.js';
 import { TEMPORAL_CLIENT } from '../temporal/temporal-client.provider.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { ConnectionPackageService } from '../connection-package.service.js';
+import { ConsentService } from '../../consent/consent.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -109,8 +110,10 @@ describe('AccessService', () => {
   let eventRepo: ReturnType<typeof mockRepo>;
   let productRepo: ReturnType<typeof mockRepo>;
   let temporalClient: ReturnType<typeof mockTemporalClient>;
+  let consentService: { cascadeRevokeForGrant: jest.Mock };
 
   beforeEach(async () => {
+    consentService = { cascadeRevokeForGrant: jest.fn().mockResolvedValue(0) };
     const module = await Test.createTestingModule({
       providers: [
         AccessService,
@@ -123,6 +126,7 @@ describe('AccessService', () => {
           provide: ConnectionPackageService,
           useValue: { generateForProduct: jest.fn().mockResolvedValue(null) },
         },
+        { provide: ConsentService, useValue: consentService },
       ],
     }).compile();
 
@@ -237,6 +241,41 @@ describe('AccessService', () => {
       await service.revokeGrant('org-1', 'grant-1', 'principal-1');
 
       expect(grantRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('cascades to revoke all connection references tied to the grant (F12.21)', async () => {
+      const grant = makeGrant();
+      grantRepo.findOne.mockResolvedValue(grant);
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+
+      await service.revokeGrant('org-1', 'grant-1', 'principal-1');
+
+      expect(consentService.cascadeRevokeForGrant).toHaveBeenCalledTimes(1);
+      expect(consentService.cascadeRevokeForGrant).toHaveBeenCalledWith(
+        'org-1',
+        'grant-1',
+        'principal-1',
+      );
+    });
+
+    it('does not cascade when the grant is already revoked (idempotency preserved)', async () => {
+      const grant = makeGrant({ revokedAt: now, revokedBy: 'principal-1' });
+      grantRepo.findOne.mockResolvedValue(grant);
+
+      await service.revokeGrant('org-1', 'grant-1', 'principal-1');
+
+      expect(consentService.cascadeRevokeForGrant).not.toHaveBeenCalled();
+    });
+
+    it('propagates cascade errors so the caller sees the failure', async () => {
+      const grant = makeGrant();
+      grantRepo.findOne.mockResolvedValue(grant);
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+      consentService.cascadeRevokeForGrant.mockRejectedValueOnce(new Error('cascade db error'));
+
+      await expect(
+        service.revokeGrant('org-1', 'grant-1', 'principal-1'),
+      ).rejects.toThrow('cascade db error');
     });
   });
 
