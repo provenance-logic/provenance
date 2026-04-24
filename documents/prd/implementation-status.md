@@ -375,7 +375,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.16 | Use-Case Scope Enforcement | Not implemented | Blocker — real-time preventive enforcement at Agent Query Layer (ADR-006) |
 | F12.17 | Behavioral Differences by Trust Classification at Runtime | Not implemented | Runtime enforcement of F6.3 behavior per tier |
 | F12.18 | Connection Reference Verification in Provenance Envelopes | Not implemented | Extends F6.17 envelope |
-| F12.19 | Principal-Initiated Revocation | Not implemented | Blocker — triggers frozen state for in-flight ops |
+| F12.19 | Principal-Initiated Revocation | Partial | `ConsentService.revokeConnectionReference` transitions active/suspended → revoked; only the owning principal may revoke; reason is required and recorded in the audit log (not on the row). Transactional outbox + audit. Frozen-state propagation for in-flight operations (F8.1 integration at the Agent Query Layer) deferred — the operations registry doesn't exist there yet. Notifications (Domain 11) deferred. |
 | F12.20 | Governance-Initiated Revocation | Not implemented | |
 | F12.21 | Automatic Revocation Triggers | Not implemented | Blocker — cascade from grant revoke / product decommission / principal deactivation |
 | F12.22 | Expiration Behavior | Not implemented | |

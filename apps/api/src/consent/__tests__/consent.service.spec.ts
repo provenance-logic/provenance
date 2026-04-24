@@ -526,4 +526,107 @@ describe('ConsentService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // F12.19 — principal-initiated revocation
+  // -------------------------------------------------------------------------
+
+  describe('revokeConnectionReference', () => {
+    it('transitions active → revoked and records reason in audit log (not on row)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+
+      const reason = 'Use case shifted to a different data source; no longer needed.';
+      const result = await service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { reason });
+
+      expect(result.state).toBe('revoked');
+      expect(result.terminatedAt).not.toBeNull();
+      expect(result.causedBy).toBe('principal_action');
+      // F12.19: reason lives in the audit log, not on the row — denial fields stay null.
+      expect(result.denialReason).toBeNull();
+      expect(result.deniedByPrincipalId).toBeNull();
+
+      const outboxArg = outboxRepoInTxn.create.mock.calls[0][0];
+      expect(outboxArg.payload).toMatchObject({
+        newState: 'revoked',
+        previousState: 'active',
+        causedBy: 'principal_action',
+      });
+
+      const auditArgs = emQueryMock.mock.calls[0][1];
+      expect(auditArgs[3]).toBe('connection_reference_revoked');
+      const newValue = JSON.parse(auditArgs[6]);
+      expect(newValue.reason).toBe(reason);
+      expect(newValue.previousState).toBe('active');
+    });
+
+    it('allows revoking a suspended reference', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'suspended' }));
+
+      const result = await service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+        reason: 'Suspended condition not resolvable; terminating.',
+      });
+      expect(result.state).toBe('revoked');
+      const outboxArg = outboxRepoInTxn.create.mock.calls[0][0];
+      expect(outboxArg.payload.previousState).toBe('suspended');
+    });
+
+    it('rejects revoking a pending reference (deny must be used instead)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'pending' }));
+
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+          reason: 'mistaken attempt',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects revoking an already-revoked reference (terminal state immutable)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'revoked' }));
+
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+          reason: 'already revoked',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects revoking an expired reference (terminal state immutable)', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'expired' }));
+
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, {
+          reason: 'already expired',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects revocation by a non-owner', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', HUMAN_PROXY_ID, {
+          reason: 'unauthorized attempt',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects an empty reason', async () => {
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { reason: '' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'ref-1', OWNER_ID, { reason: '   ' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws NotFoundException when the reference does not exist', async () => {
+      referenceRepoInTxn.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.revokeConnectionReference(ORG_ID, 'does-not-exist', OWNER_ID, {
+          reason: 'not found',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
 });
