@@ -365,7 +365,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.6 | Use-Case Declaration Structure | Partial | Schema carries category, elaboration, scope, duration, optional constraints. Governance-configurable taxonomy and default 8-category seed not yet implemented. |
 | F12.7 | Use-Case Declaration Preservation | Not implemented | Audit requirement |
 | F12.8 | Agent Discovery of Connection Reference Status | Not implemented | Required for agent UX via MCP |
-| F12.9 | Request Initiation by Trust Classification | Not implemented | Extends F6.3 for Observed/Supervised/Autonomous |
+| F12.9 | Request Initiation by Trust Classification | Partial | `ConsentService.requestConnectionReference` implemented with trust-classification gating: Observed agents cannot self-submit (human proxy required); Supervised and Autonomous may self-submit. Writes reference, outbox event, and audit log atomically. REST controller, Supervised oversight-hold sub-state, and notification fan-out (F12.10) pending. |
 | F12.10 | Request Routing and Notification | Not implemented | Depends on Domain 11 |
 | F12.11 | Consent as an Immutable Record | Not implemented | Blocker — foundational audit primitive |
 | F12.12 | Denial Record | Not implemented | |
