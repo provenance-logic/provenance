@@ -1,4 +1,4 @@
-import type { Uuid, IsoTimestamp } from './common.js';
+import type { Uuid, IsoTimestamp, PaginatedList } from './common.js';
 
 // ---------------------------------------------------------------------------
 // Connection references — Domain 12 (F12.1 through F12.6 and forward)
@@ -94,6 +94,8 @@ export interface ConnectionReference {
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
+
+export type ConnectionReferenceList = PaginatedList<ConnectionReference>;
 
 /**
  * Outbox row emitted by every state transition (ADR-007).

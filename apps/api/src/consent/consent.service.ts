@@ -9,6 +9,7 @@ import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import type {
   ConnectionReference,
+  ConnectionReferenceList,
   ConnectionReferenceState,
   ConnectionReferenceCause,
   ConnectionReferenceScope,
@@ -36,6 +37,8 @@ export class ConsentService {
   private readonly logger = new Logger(ConsentService.name);
 
   constructor(
+    @InjectRepository(ConnectionReferenceEntity)
+    private readonly referenceRepo: Repository<ConnectionReferenceEntity>,
     @InjectRepository(DataProductEntity)
     private readonly productRepo: Repository<DataProductEntity>,
     @InjectRepository(AgentIdentityEntity)
@@ -45,6 +48,63 @@ export class ConsentService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
+
+  async getConnectionReference(
+    orgId: string,
+    referenceId: string,
+  ): Promise<ConnectionReference> {
+    const reference = await this.referenceRepo.findOne({
+      where: { id: referenceId, orgId },
+    });
+    if (!reference) {
+      throw new NotFoundException(`Connection reference ${referenceId} not found`);
+    }
+    return this.toDto(reference);
+  }
+
+  async listConnectionReferences(
+    orgId: string,
+    filters: {
+      agentId?: string;
+      productId?: string;
+      owningPrincipalId?: string;
+      state?: ConnectionReferenceState;
+      limit: number;
+      offset: number;
+    },
+  ): Promise<ConnectionReferenceList> {
+    const qb = this.referenceRepo
+      .createQueryBuilder('ref')
+      .where('ref.orgId = :orgId', { orgId })
+      .orderBy('ref.createdAt', 'DESC')
+      .take(filters.limit)
+      .skip(filters.offset);
+
+    if (filters.agentId) {
+      qb.andWhere('ref.agentId = :agentId', { agentId: filters.agentId });
+    }
+    if (filters.productId) {
+      qb.andWhere('ref.productId = :productId', { productId: filters.productId });
+    }
+    if (filters.owningPrincipalId) {
+      qb.andWhere('ref.owningPrincipalId = :owningPrincipalId', {
+        owningPrincipalId: filters.owningPrincipalId,
+      });
+    }
+    if (filters.state) {
+      qb.andWhere('ref.state = :state', { state: filters.state });
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+    return {
+      items: items.map((e) => this.toDto(e)),
+      meta: {
+        total,
+        limit: filters.limit,
+        offset: filters.offset,
+      },
+    };
+  }
 
   /**
    * Submit a connection reference request (F12.9).
