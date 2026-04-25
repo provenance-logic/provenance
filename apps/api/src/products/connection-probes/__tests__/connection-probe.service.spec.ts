@@ -113,7 +113,7 @@ describe('ConnectionProbeService', () => {
     it('reports success on any HTTP response and notes the root type when present', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         status: 200,
-        json: async () => ({ data: { __typename: 'Query' } }),
+        json: () => Promise.resolve({ data: { __typename: 'Query' } }),
       }) as never;
       const result = await service.runProbe('graphql', graphQlDetails);
       expect(result.status).toBe('success');
@@ -123,7 +123,7 @@ describe('ConnectionProbeService', () => {
     it('still reports success when the body is non-JSON', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         status: 200,
-        json: async () => { throw new Error('not json'); },
+        json: () => Promise.reject(new Error('not json')),
       }) as never;
       const result = await service.runProbe('graphql', graphQlDetails);
       expect(result.status).toBe('success');
