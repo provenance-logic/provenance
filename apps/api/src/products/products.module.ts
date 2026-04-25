@@ -19,6 +19,8 @@ import { KafkaModule } from '../kafka/kafka.module.js';
 import { SearchModule } from '../search/search.module.js';
 import { TrustScoreService } from '../search/trust-score.service.js';
 import { ProductEnrichmentModule } from './product-enrichment.module.js';
+import { AccessModule } from '../access/access.module.js';
+import { ConnectionProbeService } from './connection-probes/index.js';
 
 export { ProductsService };
 
@@ -42,9 +44,10 @@ export { ProductsService };
     KafkaModule,
     SearchModule,
     ProductEnrichmentModule,
+    AccessModule,
   ],
   controllers: [ProductsController],
-  providers: [ProductsService, TrustScoreService],
+  providers: [ProductsService, TrustScoreService, ConnectionProbeService],
   exports: [ProductsService],
 })
 export class ProductsModule {}

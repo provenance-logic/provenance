@@ -28,6 +28,7 @@ const mockRepo = () => ({
     getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
   }),
   findOne: jest.fn(),
+  find: jest.fn(),
   findAndCount: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
@@ -276,6 +277,62 @@ describe('AccessService', () => {
       await expect(
         service.revokeGrant('org-1', 'grant-1', 'principal-1'),
       ).rejects.toThrow('cascade db error');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // refreshPackagesForProduct() — F10.10
+  // -------------------------------------------------------------------------
+
+  describe('refreshPackagesForProduct()', () => {
+    const freshPackage = {
+      packageVersion: 1,
+      generatedAt: '2024-02-01T00:00:00.000Z',
+      ports: [{ portId: 'p-1', portName: 'Test', interfaceType: 'sql_jdbc', artifacts: {} }],
+    };
+
+    it('returns refreshed: 0 when no active grants exist', async () => {
+      grantRepo.find.mockResolvedValue([]);
+      const result = await service.refreshPackagesForProduct('org-1', 'product-1');
+      expect(result).toEqual({ refreshed: 0 });
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      expect(cps.generateForProduct).not.toHaveBeenCalled();
+    });
+
+    it('returns refreshed: 0 when generateForProduct returns null', async () => {
+      grantRepo.find.mockResolvedValue([makeGrant()]);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(null);
+      const result = await service.refreshPackagesForProduct('org-1', 'product-1');
+      expect(result).toEqual({ refreshed: 0 });
+      expect(grantRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('skips grants whose expires_at is in the past', async () => {
+      grantRepo.find.mockResolvedValue([makeGrant({ id: 'expired', expiresAt: new Date('2020-01-01') })]);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(freshPackage);
+      const result = await service.refreshPackagesForProduct('org-1', 'product-1');
+      expect(result).toEqual({ refreshed: 0 });
+      expect(cps.generateForProduct).not.toHaveBeenCalled();
+    });
+
+    it('rewrites the package and bumps packageVersion for each active grant', async () => {
+      const g1 = makeGrant({ id: 'g1', connectionPackage: { packageVersion: 3 } as Record<string, unknown> });
+      const g2 = makeGrant({ id: 'g2', connectionPackage: null });
+      grantRepo.find.mockResolvedValue([g1, g2]);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(freshPackage);
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+
+      const result = await service.refreshPackagesForProduct('org-1', 'product-1');
+
+      expect(result).toEqual({ refreshed: 2 });
+      expect(cps.generateForProduct).toHaveBeenCalledTimes(1);
+      expect(grantRepo.save).toHaveBeenCalledTimes(2);
+      expect((g1.connectionPackage as { packageVersion: number }).packageVersion).toBe(4);
+      expect((g2.connectionPackage as { packageVersion: number }).packageVersion).toBe(1);
+      expect((g1.connectionPackage as { ports: unknown[] }).ports).toEqual(freshPackage.ports);
     });
   });
 

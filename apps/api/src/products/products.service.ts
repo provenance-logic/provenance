@@ -1,10 +1,10 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
   UnprocessableEntityException,
   BadRequestException,
-  NotImplementedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -19,6 +19,8 @@ import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
 import { ProductEnrichmentService } from './product-enrichment.service.js';
 import { EncryptionService } from '../common/encryption.service.js';
+import { AccessService } from '../access/access.service.js';
+import { ConnectionProbeService } from './connection-probes/index.js';
 import { validateConnectionDetails } from './connection-details.schemas.js';
 import type {
   DataProduct,
@@ -37,10 +39,13 @@ import type {
   RequestContext,
   ConnectionDetails,
   OutputPortInterfaceType,
+  TestConnectionResponse,
 } from '@provenance/types';
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(
     @InjectRepository(DataProductEntity)
     private readonly productRepo: Repository<DataProductEntity>,
@@ -57,6 +62,8 @@ export class ProductsService {
     private readonly searchIndexingService: SearchIndexingService,
     private readonly enrichmentService: ProductEnrichmentService,
     private readonly encryptionService: EncryptionService,
+    private readonly accessService: AccessService,
+    private readonly connectionProbeService: ConnectionProbeService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -468,7 +475,8 @@ export class ProductsService {
     if (dto.interfaceType !== undefined) port.interfaceType = dto.interfaceType;
     if (dto.contractSchema !== undefined) port.contractSchema = dto.contractSchema;
     if (dto.slaDescription !== undefined) port.slaDescription = dto.slaDescription;
-    if (dto.connectionDetails !== undefined) {
+    const connectionDetailsTouched = dto.connectionDetails !== undefined;
+    if (connectionDetailsTouched) {
       const effectiveInterfaceType = dto.interfaceType ?? port.interfaceType;
       const { connectionDetails, connectionDetailsEncrypted } =
         await this.prepareConnectionDetails(effectiveInterfaceType, dto.connectionDetails);
@@ -478,16 +486,55 @@ export class ProductsService {
       port.connectionDetailsValidated = false;
     }
     const saved = await this.portRepo.save(port);
+
+    // F10.10 — connection-detail edits trigger package refresh for every active
+    // grant on the product. Best-effort: a refresh failure does not roll back
+    // the port edit, since consumers can still re-fetch via get_product.
+    if (connectionDetailsTouched) {
+      try {
+        await this.accessService.refreshPackagesForProduct(orgId, productId);
+      } catch (err) {
+        this.logger.warn(
+          `Connection package refresh failed after port ${portId} edit: ${(err as Error).message}`,
+        );
+      }
+    }
+
     return this.toPort(saved);
   }
 
-  async testConnection(orgId: string, productId: string, portId: string): Promise<never> {
+  async testConnection(
+    orgId: string,
+    productId: string,
+    portId: string,
+  ): Promise<TestConnectionResponse> {
     const port = await this.portRepo.findOne({ where: { id: portId, orgId, productId } });
     if (!port) throw new NotFoundException(`Port ${portId} not found`);
-    // F10.7 — automated connectivity check is not yet implemented. The endpoint
-    // is intentionally reachable so the UI can surface the expected message.
-    throw new NotImplementedException(
-      'Automated connection validation is not yet implemented. Mark the port as tested manually via the UI.',
+
+    const details = await this.decryptPortDetails(port);
+    const result = await this.connectionProbeService.runProbe(port.interfaceType, details);
+
+    // Persist the validated flag only on success — `unsupported` and `failure`
+    // both leave the prior state untouched (so a previously-validated port
+    // stays validated if its probe is later removed; and a failing probe
+    // doesn't silently clear a manually-marked port).
+    if (result.status === 'success' && !port.connectionDetailsValidated) {
+      port.connectionDetailsValidated = true;
+      await this.portRepo.save(port);
+    }
+    return result;
+  }
+
+  private async decryptPortDetails(
+    port: PortDeclarationEntity,
+  ): Promise<ConnectionDetails | null> {
+    if (port.connectionDetails === null) return null;
+    if (!port.connectionDetailsEncrypted) {
+      return port.connectionDetails as unknown as ConnectionDetails;
+    }
+    if (!EncryptionService.isEnvelope(port.connectionDetails)) return null;
+    return this.encryptionService.decrypt<ConnectionDetails>(
+      port.connectionDetails as unknown as Parameters<EncryptionService['decrypt']>[0],
     );
   }
 

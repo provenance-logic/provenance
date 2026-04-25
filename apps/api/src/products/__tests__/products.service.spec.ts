@@ -16,6 +16,8 @@ import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
 import { ProductEnrichmentService } from '../product-enrichment.service.js';
 import { EncryptionService } from '../../common/encryption.service.js';
+import { AccessService } from '../../access/access.service.js';
+import { ConnectionProbeService } from '../connection-probes/index.js';
 import type { DataClassification } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +151,7 @@ describe('ProductsService', () => {
   let principalRepo: ReturnType<typeof mockPrincipalRepo>;
   let governanceService: ReturnType<typeof mockGovernanceService>;
   let kafkaProducerService: ReturnType<typeof mockKafkaProducerService>;
+  let accessService: { refreshPackagesForProduct: jest.Mock };
 
   beforeEach(async () => {
     module = await Test.createTestingModule({
@@ -190,6 +193,23 @@ describe('ProductsService', () => {
             ),
           },
         },
+        {
+          provide: AccessService,
+          useValue: {
+            refreshPackagesForProduct: jest.fn().mockResolvedValue({ refreshed: 0 }),
+          },
+        },
+        {
+          provide: ConnectionProbeService,
+          useValue: {
+            runProbe: jest.fn().mockResolvedValue({
+              status: 'unsupported',
+              interfaceType: null,
+              message: 'mock',
+              probedAt: '2024-01-01T00:00:00.000Z',
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -201,6 +221,7 @@ describe('ProductsService', () => {
     principalRepo = module.get(getRepositoryToken(PrincipalEntity));
     governanceService = module.get(GovernanceService);
     kafkaProducerService = module.get(KafkaProducerService);
+    accessService = module.get(AccessService);
   });
 
   // ---------------------------------------------------------------------------
@@ -511,6 +532,80 @@ describe('ProductsService', () => {
       await expect(
         service.updatePort('org-1', 'product-1', 'missing', { name: 'X' }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('does not call accessService.refreshPackagesForProduct when connectionDetails is not in the dto (F10.10)', async () => {
+      portRepo.findOne.mockResolvedValue(makeOutputPortEntity());
+      portRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      await service.updatePort('org-1', 'product-1', 'port-output-1', { name: 'X' });
+      expect(accessService.refreshPackagesForProduct).not.toHaveBeenCalled();
+    });
+
+    it('calls accessService.refreshPackagesForProduct when connectionDetails is in the dto (F10.10)', async () => {
+      portRepo.findOne.mockResolvedValue(makeOutputPortEntity());
+      portRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      await service.updatePort('org-1', 'product-1', 'port-output-1', {
+        connectionDetails: {
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com/v2',
+          authMethod: 'api_key',
+          apiKey: 'rotated-key',
+        },
+      });
+      expect(accessService.refreshPackagesForProduct).toHaveBeenCalledWith('org-1', 'product-1');
+    });
+
+    it('returns the saved port even when refreshPackagesForProduct throws (refresh is best-effort)', async () => {
+      portRepo.findOne.mockResolvedValue(makeOutputPortEntity());
+      portRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      accessService.refreshPackagesForProduct.mockRejectedValueOnce(new Error('grant repo down'));
+      const result = await service.updatePort('org-1', 'product-1', 'port-output-1', {
+        connectionDetails: {
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com/v2',
+          authMethod: 'api_key',
+          apiKey: 'rotated-key',
+        },
+      });
+      expect(result.id).toBe('port-output-1');
+    });
+  });
+
+  describe('testConnection()', () => {
+    it('throws NotFoundException when port does not exist', async () => {
+      portRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.testConnection('org-1', 'product-1', 'missing'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('persists connectionDetailsValidated=true when probe returns success', async () => {
+      const port = makeOutputPortEntity({ connectionDetailsValidated: false });
+      portRepo.findOne.mockResolvedValue(port);
+      portRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      const probe = module.get(ConnectionProbeService) as { runProbe: jest.Mock };
+      probe.runProbe.mockResolvedValueOnce({
+        status: 'success', interfaceType: 'rest_api', message: 'ok', probedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const result = await service.testConnection('org-1', 'product-1', 'port-output-1');
+
+      expect(result.status).toBe('success');
+      expect(portRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ connectionDetailsValidated: true }),
+      );
+    });
+
+    it('does not modify connectionDetailsValidated when probe returns failure or unsupported', async () => {
+      const port = makeOutputPortEntity({ connectionDetailsValidated: false });
+      portRepo.findOne.mockResolvedValue(port);
+      portRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      const probe = module.get(ConnectionProbeService) as { runProbe: jest.Mock };
+      probe.runProbe.mockResolvedValueOnce({
+        status: 'failure', interfaceType: 'rest_api', message: 'down', probedAt: '2024-01-01T00:00:00.000Z',
+      });
+      await service.testConnection('org-1', 'product-1', 'port-output-1');
+      expect(portRepo.save).not.toHaveBeenCalled();
     });
   });
 

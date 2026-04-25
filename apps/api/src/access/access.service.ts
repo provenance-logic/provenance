@@ -175,6 +175,46 @@ export class AccessService {
     return this.toGrant(saved);
   }
 
+  /**
+   * F10.10 — regenerate connection packages for every active grant on a
+   * product. Called when the product's port connection details change.
+   * Revoked or expired grants are skipped; a missing prior package is treated
+   * as version 0 so the first refresh writes version 1. Returns the count of
+   * grants whose package was rewritten.
+   */
+  async refreshPackagesForProduct(
+    orgId: string,
+    productId: string,
+  ): Promise<{ refreshed: number }> {
+    const now = new Date();
+    const candidates = await this.grantRepo.find({
+      where: { orgId, productId, revokedAt: IsNull() },
+    });
+    const active = candidates.filter(
+      (g) => g.expiresAt === null || g.expiresAt > now,
+    );
+    if (active.length === 0) return { refreshed: 0 };
+
+    const fresh = await this.connectionPackageService.generateForProduct(orgId, productId);
+    if (!fresh) return { refreshed: 0 };
+
+    let refreshed = 0;
+    for (const grant of active) {
+      const prior = grant.connectionPackage as unknown as ConnectionPackage | null;
+      const nextVersion = (prior?.packageVersion ?? 0) + 1;
+      grant.connectionPackage = {
+        ...fresh,
+        packageVersion: nextVersion,
+      } as unknown as Record<string, unknown>;
+      await this.grantRepo.save(grant);
+      refreshed++;
+    }
+    this.logger.log(
+      `Refreshed ${refreshed} connection package(s) for product ${productId}`,
+    );
+    return { refreshed };
+  }
+
   // ---------------------------------------------------------------------------
   // Access Requests
   // ---------------------------------------------------------------------------

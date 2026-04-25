@@ -23,7 +23,7 @@ import { ConsentModule } from '../consent/consent.module.js';
     ]),
     forwardRef(() => ConsentModule),
   ],
-  exports: [ConnectionPackageService],
+  exports: [AccessService, ConnectionPackageService],
   providers: [
     temporalClientProvider,
     TemporalWorkerService,

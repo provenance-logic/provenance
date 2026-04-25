@@ -191,7 +191,6 @@ export class ProductsController {
   }
 
   @Post(':productId/ports/:portId/test-connection')
-  @HttpCode(HttpStatus.NOT_IMPLEMENTED)
   testConnection(
     @Param('orgId') orgId: string,
     @Param('productId') productId: string,
