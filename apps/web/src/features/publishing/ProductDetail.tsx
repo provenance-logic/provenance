@@ -22,6 +22,7 @@ import type {
   GraphQlConnectionDetails,
   KafkaConnectionDetails,
   FileExportConnectionDetails,
+  TestConnectionResponse,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -681,6 +682,27 @@ function PortSection({
 // PortCard
 // ---------------------------------------------------------------------------
 
+function ProbeStatusBadge({ result }: { result: TestConnectionResponse }) {
+  const styles =
+    result.status === 'success' ? 'text-green-700 bg-green-50 border-green-200'
+    : result.status === 'failure' ? 'text-red-700 bg-red-50 border-red-200'
+    : 'text-slate-700 bg-slate-50 border-slate-200';
+  const label =
+    result.status === 'success' ? 'Reachable'
+    : result.status === 'failure' ? 'Unreachable'
+    : 'Not auto-validated';
+  const latency =
+    result.status === 'success' && typeof result.latencyMs === 'number'
+      ? ` · ${result.latencyMs}ms`
+      : '';
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border ${styles}`}>
+      <span className="font-medium">{label}{latency}</span>
+      <span className="opacity-70">— {result.message}</span>
+    </span>
+  );
+}
+
 interface PortCardProps {
   port: Port;
   orgId: string;
@@ -692,7 +714,8 @@ interface PortCardProps {
 
 function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: PortCardProps) {
   const [deleting, setDeleting] = useState(false);
-  const [testMessage, setTestMessage] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
 
   const handleDelete = async () => {
@@ -708,22 +731,13 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
 
   const handleTestConnection = async () => {
     setTesting(true);
-    setTestMessage(null);
+    setTestResult(null);
+    setTestError(null);
     try {
       const res = await productsApi.ports.testConnection(orgId, domainId, productId, port.id);
-      setTestMessage(res.message);
+      setTestResult(res);
     } catch (err) {
-      // The stub returns 501 with a body containing the expected message —
-      // surface it verbatim rather than treating it as a failure.
-      const apiErr = err as { status?: number; message?: string };
-      if (apiErr.status === 501) {
-        setTestMessage(
-          apiErr.message ??
-            'Validation not yet automated — mark as tested manually.',
-        );
-      } else {
-        setTestMessage(`Connection test failed: ${(err as Error).message}`);
-      }
+      setTestError(`Connection test failed: ${(err as Error).message}`);
     } finally {
       setTesting(false);
     }
@@ -768,7 +782,7 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
 
         {isOwner && port.portType === 'output' && port.interfaceType &&
          port.interfaceType !== 'semantic_query_endpoint' && (
-          <div className="mt-2 flex items-center gap-3">
+          <div className="mt-2 flex items-center gap-3 flex-wrap">
             <button
               type="button"
               onClick={() => void handleTestConnection()}
@@ -777,11 +791,12 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
             >
               {testing ? 'Testing…' : 'Test connection'}
             </button>
-            {port.connectionDetailsValidated && (
+            {port.connectionDetailsValidated && testResult?.status !== 'failure' && (
               <span className="text-xs text-green-700">Validated</span>
             )}
-            {testMessage && (
-              <span className="text-xs text-slate-500">{testMessage}</span>
+            {testResult && <ProbeStatusBadge result={testResult} />}
+            {testError && (
+              <span className="text-xs text-red-600">{testError}</span>
             )}
           </div>
         )}

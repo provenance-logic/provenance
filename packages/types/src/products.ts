@@ -156,10 +156,22 @@ export interface UpdatePortRequest {
   connectionDetails?: ConnectionDetails;
 }
 
-/** Response for POST /ports/:portId/test-connection (Phase B4 stub, 501). */
+/**
+ * Response for POST /ports/:portId/test-connection (F10.7).
+ *
+ * - `success`: probe completed and the endpoint responded as expected.
+ * - `failure`: probe completed but the target was unreachable, returned an
+ *   unexpected status, or rejected the credentials.
+ * - `unsupported`: this interface type does not yet have an automated probe
+ *   (e.g. SQL/JDBC and file_object_export — owners should mark validated
+ *   manually). Distinct from `failure` so the UI can render it differently.
+ */
 export interface TestConnectionResponse {
-  status: 'not_implemented';
+  status: 'success' | 'failure' | 'unsupported';
+  interfaceType: OutputPortInterfaceType | null;
   message: string;
+  latencyMs?: number;
+  probedAt: IsoTimestamp;
 }
 
 export type PortList = PaginatedList<Port>;
