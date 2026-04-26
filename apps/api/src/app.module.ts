@@ -11,6 +11,7 @@ import { ConnectorsModule } from './connectors/connectors.module.js';
 import { SearchModule } from './search/search.module.js';
 import { AccessModule } from './access/access.module.js';
 import { ConsentModule } from './consent/consent.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { LineageModule } from './lineage/lineage.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
 import { TrustScoreModule } from './trust-score/trust-score.module.js';
@@ -31,6 +32,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     SearchModule,
     AccessModule,
     ConsentModule,
+    NotificationsModule,
     LineageModule,
     ObservabilityModule,
     TrustScoreModule,

@@ -15,3 +15,4 @@ export * from './lineage.js';
 export * from './trust-score.js';
 export * from './slo.js';
 export * from './invitations.js';
+export * from './notifications.js';
