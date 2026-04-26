@@ -320,34 +320,37 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 11: Notifications
 
+Architecture decisions in ADR-009 (notification routing, channels, dedup, retry). Implementation phased per CLAUDE.md Domain 11 banner: PR #2 (this entry) lands the in-platform tier; email channel, webhook channel, preferences, notification center UI, and per-trigger wiring are subsequent PRs.
+
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
-| F11.1 | Notification Service | Not implemented | Blocker |
-| F11.2 | Delivery Channels | Not implemented | Blocker |
-| F11.3 | Notification Preferences | Not implemented | |
-| F11.4 | Notification Center UI | Not implemented | Blocker |
-| F11.5 | Notification Deduplication | Not implemented | |
-| F11.6 | Access Request Submitted | Not implemented | Blocker |
-| F11.7 | Access Request Approved | Not implemented | Blocker |
-| F11.8 | Access Request Denied | Not implemented | |
-| F11.9 | Access Request SLA Warning | Not implemented | Blocker |
-| F11.10 | Access Request SLA Breach | Not implemented | Blocker |
-| F11.11 | Access Grant Expiring | Not implemented | |
-| F11.12 | Product Deprecated | Not implemented | Blocker |
-| F11.13 | Product Decommissioned | Not implemented | |
-| F11.14 | Product Published | Not implemented | |
-| F11.15 | Schema Drift Detected | Not implemented | |
-| F11.16 | SLO Violation | Not implemented | Blocker |
-| F11.17 | Trust Score Significant Change | Not implemented | |
-| F11.18 | Connector Health Degraded | Not implemented | |
-| F11.19 | Policy Change Impact | Not implemented | |
-| F11.20 | Compliance Drift Detected | Not implemented | |
-| F11.21 | Grace Period Expiring | Not implemented | |
-| F11.22 | Classification Changed | Not implemented | |
-| F11.23 | Agent Classification Changed | Not implemented | |
-| F11.24 | Agent Suspended | Not implemented | |
-| F11.25 | Human Review Required | Not implemented | Blocker |
-| F11.26 | Frozen Operation Requires Disposition | Not implemented | |
+| F11.1 | Notification Service | Partially implemented | `NotificationsService.enqueue()` writes one row per recipient to `notifications.notifications` (V21). Recipients snapshotted at trigger time per ADR-009 §3. Trigger-module wiring deferred to PRs #7–12 in the Domain 11 phasing. |
+| F11.2 | Delivery Channels | Partially implemented | In-platform channel implemented (the row IS the delivery). Email (SMTP) and webhook channels deferred to PRs #3 and #4. |
+| F11.3 | Notification Preferences | Not implemented | Deferred to PR #5. |
+| F11.4 | Notification Center UI | Partially implemented | Backend REST surface live: `GET /organizations/{orgId}/notifications`, `POST :id/read`, `POST :id/dismiss`. Frontend bell + drawer deferred to PR #6. |
+| F11.5 | Notification Deduplication | Implemented | `(orgId, recipient, category, dedupKey)` lookup over the configurable window (default 15 min, `DEFAULT_DEDUP_WINDOW_SECONDS`). Dedup hit increments `dedup_count` on the existing row instead of inserting; suppresses both the inbox row and any downstream channel send (ADR-009 §5). |
+| F11.6 | Access Request Submitted | Not implemented | Blocker. Trigger wiring lands in PR #7 (access bundle). |
+| F11.7 | Access Request Approved | Not implemented | Blocker. PR #7. |
+| F11.8 | Access Request Denied | Not implemented | PR #7. |
+| F11.9 | Access Request SLA Warning | Not implemented | Blocker. PR #7. |
+| F11.10 | Access Request SLA Breach | Not implemented | Blocker. PR #7. |
+| F11.11 | Access Grant Expiring | Not implemented | PR #7. |
+| F11.12 | Product Deprecated | Not implemented | Blocker. Trigger wiring lands in PR #8 (product lifecycle bundle). |
+| F11.13 | Product Decommissioned | Not implemented | PR #8. |
+| F11.14 | Product Published | Not implemented | PR #8. |
+| F11.15 | Schema Drift Detected | Not implemented | PR #8. |
+| F11.16 | SLO Violation | Not implemented | Blocker. Trigger wiring lands in PR #9 (observability bundle). |
+| F11.17 | Trust Score Significant Change | Not implemented | PR #9. |
+| F11.18 | Connector Health Degraded | Not implemented | PR #9. |
+| F11.19 | Policy Change Impact | Not implemented | Trigger wiring lands in PR #10 (governance bundle). |
+| F11.20 | Compliance Drift Detected | Not implemented | PR #10. |
+| F11.21 | Grace Period Expiring | Not implemented | PR #10. |
+| F11.22 | Classification Changed | Not implemented | PR #10. |
+| F11.23 | Agent Classification Changed | Not implemented | Trigger wiring lands in PR #11 (agents bundle). |
+| F11.24 | Agent Suspended | Not implemented | PR #11. |
+| F11.25 | Human Review Required | Not implemented | Blocker. PR #11. |
+| F11.26 | Frozen Operation Requires Disposition | Not implemented | PR #11. |
+| F11.27 | Connection Package Refreshed | Not implemented | Trigger wiring lands in PR #12 (also fans out F12.10 connection-reference-request notifications). |
 
 ---
 

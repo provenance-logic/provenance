@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: Provenance Notifications API
+  version: 0.1.0
+  description: |
+    In-platform notification inbox for the Provenance Platform (Domain 11).
+
+    The notification record is the source of truth and is also what the
+    in-platform notification center reads from. Email and webhook delivery
+    channels (F11.2) are added in subsequent PRs and are not visible on
+    this surface — they will be configured via a separate preferences
+    surface and delivered out-of-band by a worker.
+
+    Architecture: ADR-009.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Notifications
+    description: In-platform notification inbox
+
+paths:
+  /organizations/{orgId}/notifications:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+
+    get:
+      operationId: listNotifications
+      summary: List notifications addressed to the calling principal
+      tags: [Notifications]
+      description: |
+        Returns a paginated list of notifications addressed to the calling
+        principal in their current organization. The recipient is derived
+        from the JWT — callers cannot list other principals' notifications
+        through this endpoint.
+
+        Default ordering is most recent first. Dismissed notifications are
+        excluded by default.
+      parameters:
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/NotificationCategory'
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: excludeDismissed
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Paginated list of notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /organizations/{orgId}/notifications/{notificationId}/read:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/notificationId'
+
+    post:
+      operationId: markNotificationRead
+      summary: Mark a notification as read
+      tags: [Notifications]
+      description: |
+        Sets `readAt` to the current server time. Only the addressed
+        recipient may mark their own notification as read; attempts by
+        any other principal return 404 (not 403 — the existence of
+        another principal's notification is not disclosed).
+
+        Marking an already-read notification as read is idempotent and
+        does not change the existing `readAt` timestamp.
+      responses:
+        '200':
+          description: Notification (now read)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/notifications/{notificationId}/dismiss:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - $ref: '#/components/parameters/notificationId'
+
+    post:
+      operationId: dismissNotification
+      summary: Dismiss a notification from the inbox
+      tags: [Notifications]
+      description: |
+        Sets `dismissedAt` to the current server time. Dismissed
+        notifications are excluded from the default list query but
+        are retained for the configured history window (NF11.5: 90
+        days) and remain queryable via `excludeDismissed=false`.
+
+        Dismissing an already-dismissed notification is idempotent.
+      responses:
+        '200':
+          description: Notification (now dismissed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    notificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Bad request — validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    NotificationCategory:
+      type: string
+      description: |
+        Closed enum of notification categories. One per F-ID in PRD
+        Domain 11, plus `connection_reference_request` for the Domain 12
+        F12.10 fan-out. Not extensible at the organization layer.
+      enum:
+        - access_request_submitted
+        - access_request_approved
+        - access_request_denied
+        - access_request_sla_warning
+        - access_request_sla_breach
+        - access_grant_expiring
+        - product_deprecated
+        - product_decommissioned
+        - product_published
+        - schema_drift_detected
+        - slo_violation
+        - trust_score_significant_change
+        - connector_health_degraded
+        - policy_change_impact
+        - compliance_drift_detected
+        - grace_period_expiring
+        - classification_changed
+        - agent_classification_changed
+        - agent_suspended
+        - human_review_required
+        - frozen_operation_disposition
+        - connection_package_refreshed
+        - connection_reference_request
+
+    Notification:
+      type: object
+      required:
+        - id
+        - orgId
+        - recipientPrincipalId
+        - category
+        - payload
+        - deepLink
+        - dedupKey
+        - dedupCount
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orgId:
+          type: string
+          format: uuid
+        recipientPrincipalId:
+          type: string
+          format: uuid
+        category:
+          $ref: '#/components/schemas/NotificationCategory'
+        payload:
+          type: object
+          description: Category-specific structured payload (shape is the trigger module's contract).
+          additionalProperties: true
+        deepLink:
+          type: string
+          description: Route in the platform UI the notification deep-links to.
+        dedupKey:
+          type: string
+          description: Stable per-trigger key used for deduplication within the configured window.
+        dedupCount:
+          type: integer
+          minimum: 1
+          description: |
+            Number of times this notification has been suppressed by the
+            dedup window. Starts at 1 (the first delivery counts).
+        readAt:
+          type: [string, 'null']
+          format: date-time
+        dismissedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    NotificationList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
