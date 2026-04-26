@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager } from 'typeorm';
 import {
-  type NotificationDeliveryChannel,
+  type NotificationWebhookPayload,
   DELIVERY_RETRY_DELAYS_SECONDS,
   MAX_DELIVERY_ATTEMPTS,
 } from '@provenance/types';
@@ -29,6 +29,7 @@ import { renderEmail } from './notification-renderer.js';
 // need to set an RLS org context per-row.
 
 const CLAIM_BATCH_SIZE = 50;
+const WEBHOOK_TIMEOUT_MS = 10_000;
 
 @Injectable()
 export class NotificationDeliveryWorker {
@@ -124,12 +125,54 @@ export class NotificationDeliveryWorker {
       }
       return;
     }
-    // Webhook channel lands in PR #4. Defensive guard: if a webhook row
-    // somehow reaches the worker before the channel is implemented, mark it
-    // as a hard failure rather than silently dropping it.
+    if (row.channel === 'webhook') {
+      await this.sendWebhook(row, config.APP_BASE_URL);
+      return;
+    }
+    // Defensive guard: any future channel that lands in the schema before its
+    // worker handler is implemented surfaces as a hard failure on the row.
     throw new Error(
-      `NotificationDeliveryWorker: channel '${row.channel as NotificationDeliveryChannel}' not yet implemented`,
+      `NotificationDeliveryWorker: channel '${String(row.channel)}' not yet implemented`,
     );
+  }
+
+  private async sendWebhook(
+    row: NotificationDeliveryOutboxEntity,
+    appBaseUrl: string,
+  ): Promise<void> {
+    const body: NotificationWebhookPayload = {
+      category: row.category,
+      orgId: row.orgId,
+      notificationId: row.notificationId,
+      createdAt: row.createdAt.toISOString(),
+      payload: row.payload,
+      deepLink: absoluteDeepLink(appBaseUrl, row.deepLink),
+    };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(row.target, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'Provenance-Notifications/1.0',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      // Network error, DNS failure, abort due to timeout — all surface here.
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Webhook fetch failed: ${message}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(
+        `Webhook delivery rejected: HTTP ${response.status} ${response.statusText}`,
+      );
+    }
   }
 
   private async markDelivered(row: NotificationDeliveryOutboxEntity): Promise<void> {
@@ -213,4 +256,10 @@ function truncateError(error: string): string {
   // table with stack traces. 1024 chars is enough to identify the problem
   // without bloating the row.
   return error.length > 1024 ? error.slice(0, 1024) : error;
+}
+
+function absoluteDeepLink(base: string, path: string): string {
+  const trimmedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+  const prefixedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${trimmedBase}${prefixedPath}`;
 }

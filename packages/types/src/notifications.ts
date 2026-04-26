@@ -252,6 +252,51 @@ export interface UpdateNotificationPreferenceRequest {
 
 export type NotificationPreferenceList = PaginatedList<NotificationPreference>;
 
+// ---------------------------------------------------------------------------
+// Per-principal notification settings (PR #4 — webhook URL configuration)
+//
+// Distinct from per-(principal, category) preferences: settings hold one row
+// per principal and capture cross-category state like the outbound webhook
+// URL. Per-principal (not per-category) — the original ADR-009 §7 sketch put
+// webhook_url on the preferences row, but a single principal almost always
+// has one webhook destination (their Slack/PagerDuty/etc. URL) regardless of
+// category. Documented in the ADR implementation notes.
+// ---------------------------------------------------------------------------
+
+export interface PrincipalNotificationSettings {
+  orgId: Uuid;
+  principalId: Uuid;
+  /**
+   * Outbound webhook URL the delivery worker POSTs to when a notification's
+   * resolved channel set includes 'webhook'. Null when the principal has not
+   * configured a webhook — the worker silently skips webhook delivery for
+   * principals with no URL on file (the in-platform row still appears).
+   */
+  webhookUrl: string | null;
+  updatedAt: IsoTimestamp;
+}
+
+export interface UpdatePrincipalNotificationSettingsRequest {
+  /**
+   * Pass `null` (or an empty string) to clear an existing webhook URL.
+   */
+  webhookUrl: string | null;
+}
+
+/**
+ * JSON envelope POSTed to the principal's webhook URL by
+ * NotificationDeliveryWorker. Stable contract — additive changes only.
+ */
+export interface NotificationWebhookPayload {
+  category: NotificationCategory;
+  orgId: Uuid;
+  notificationId: Uuid;
+  createdAt: IsoTimestamp;
+  payload: Record<string, unknown>;
+  /** Absolute URL to the deep-link target in the platform UI. */
+  deepLink: string;
+}
+
 /**
  * Categories that are governance-mandatory per F11.3. Principals may not opt
  * out of these. Channel overrides are still permitted, but the notification

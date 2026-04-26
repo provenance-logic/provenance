@@ -4,6 +4,7 @@ import { EmailModule } from '../email/email.module.js';
 import { NotificationEntity } from './entities/notification.entity.js';
 import { NotificationDeliveryOutboxEntity } from './entities/notification-delivery-outbox.entity.js';
 import { NotificationPreferenceEntity } from './entities/notification-preference.entity.js';
+import { PrincipalNotificationSettingsEntity } from './entities/principal-notification-settings.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { NotificationsService } from './notifications.service.js';
 import { NotificationPreferencesService } from './notification-preferences.service.js';
@@ -26,6 +27,7 @@ import { NotificationDeliveryWorker } from './notification-delivery.worker.js';
       NotificationEntity,
       NotificationDeliveryOutboxEntity,
       NotificationPreferenceEntity,
+      PrincipalNotificationSettingsEntity,
       PrincipalEntity,
     ]),
     EmailModule,

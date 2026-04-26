@@ -304,9 +304,11 @@ Rationale: a preference-change-affects-queued-rows model would require a `skippe
 
 ADR-009 §4 defined a three-tier resolution: hard-coded category default → org override → principal preference. PR #5 ships per-principal preferences only; the org-override tier is deferred. The shipped resolver has two tiers: `CATEGORY_DEFAULT_CHANNELS` then per-principal preference. Adding org-level overrides later is additive — a new table (`notifications.org_category_defaults`) and one extra step in the resolver.
 
-### Webhook URL configuration moves to PR #4 bundle
+### Webhook URL is per-principal, not per-category (PR #4)
 
-ADR-009 §7 placed `webhook_url` on `notifications.principal_preferences`. PR #5 ships preferences without that column because the webhook channel itself is not yet implemented (PR #4). When PR #4 lands, it will add webhook URL configuration alongside the webhook delivery handler so the two land together. Until then, opting a category to `webhook` via the preferences API has no effect — the channel resolver will include `webhook` in the result, but `enqueue` cannot snapshot a target URL and the row is not written. This is acceptable transitional state given the deliberate phasing.
+ADR-009 §7 placed `webhook_url` on `notifications.principal_preferences`, implying a different webhook URL could be configured for each (principal, category) pair. PR #4 instead introduces a separate `notifications.principal_settings` table holding one row per principal with a single `webhook_url`. Real-world usage is overwhelmingly a single webhook destination per principal (their Slack incoming webhook, PagerDuty integration URL, etc.) — per-category routing is overkill and would multiply configuration UI complexity for no observed user need. If future demand for per-category routing emerges, a `webhook_url` column on the preferences row remains additive (resolver checks per-category override before falling back to the principal-level setting).
+
+The webhook channel itself uses Node's built-in `fetch` with a 10-second `AbortController` timeout, posting a stable `NotificationWebhookPayload` JSON envelope (defined in `@provenance/types`). HMAC signing of the request body is intentionally deferred — the URL itself is the shared secret in MVP, and adding HMAC requires either out-of-band secret distribution or per-principal secret generation, neither of which has demand yet. Webhooks are also restricted to `https` URLs at validation time; outbound notifications carry potentially sensitive payload content (deep links, SLO context) and plaintext delivery is not a credible threat model for a control plane.
 
 ---
 

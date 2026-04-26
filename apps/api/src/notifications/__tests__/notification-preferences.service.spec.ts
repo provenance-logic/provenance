@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException } from '@nestjs/common';
 import { NotificationPreferencesService } from '../notification-preferences.service.js';
 import { NotificationPreferenceEntity } from '../entities/notification-preference.entity.js';
+import { PrincipalNotificationSettingsEntity } from '../entities/principal-notification-settings.entity.js';
 
 const ORG_ID = 'org-1';
 const PRINCIPAL_A = 'principal-a';
@@ -30,6 +31,12 @@ describe('NotificationPreferencesService', () => {
     find: jest.Mock;
     delete: jest.Mock;
   };
+  let settingsRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+    find: jest.Mock;
+  };
 
   beforeEach(async () => {
     repo = {
@@ -44,10 +51,22 @@ describe('NotificationPreferencesService', () => {
       find: jest.fn().mockResolvedValue([]),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
     };
+    settingsRepo = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) =>
+        Promise.resolve({
+          ...v,
+          updatedAt: new Date('2026-04-26T12:00:00Z'),
+        }),
+      ),
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+    };
     const moduleRef = await Test.createTestingModule({
       providers: [
         NotificationPreferencesService,
         { provide: getRepositoryToken(NotificationPreferenceEntity), useValue: repo },
+        { provide: getRepositoryToken(PrincipalNotificationSettingsEntity), useValue: settingsRepo },
       ],
     }).compile();
     service = moduleRef.get(NotificationPreferencesService);
@@ -150,6 +169,113 @@ describe('NotificationPreferencesService', () => {
         principalId: PRINCIPAL_A,
         category: 'slo_violation',
       });
+    });
+  });
+
+  describe('settings — getSettings', () => {
+    it('returns a synthetic null-webhook record when no settings row exists', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      const result = await service.getSettings(ORG_ID, PRINCIPAL_A);
+      expect(result.principalId).toBe(PRINCIPAL_A);
+      expect(result.webhookUrl).toBeNull();
+    });
+
+    it('returns the saved row when one exists', async () => {
+      settingsRepo.findOne.mockResolvedValue({
+        orgId: ORG_ID,
+        principalId: PRINCIPAL_A,
+        webhookUrl: 'https://hooks.example.com/abc',
+        updatedAt: new Date('2026-04-26T12:00:00Z'),
+      });
+      const result = await service.getSettings(ORG_ID, PRINCIPAL_A);
+      expect(result.webhookUrl).toBe('https://hooks.example.com/abc');
+    });
+  });
+
+  describe('settings — upsertSettings', () => {
+    it('creates a new row with the supplied URL', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      const result = await service.upsertSettings(ORG_ID, PRINCIPAL_A, {
+        webhookUrl: 'https://hooks.example.com/abc',
+      });
+      expect(settingsRepo.save).toHaveBeenCalledTimes(1);
+      expect(result.webhookUrl).toBe('https://hooks.example.com/abc');
+    });
+
+    it('clears the URL when null is supplied', async () => {
+      settingsRepo.findOne.mockResolvedValue({
+        orgId: ORG_ID,
+        principalId: PRINCIPAL_A,
+        webhookUrl: 'https://old.example.com/hook',
+        updatedAt: new Date(),
+      });
+      const result = await service.upsertSettings(ORG_ID, PRINCIPAL_A, {
+        webhookUrl: null,
+      });
+      expect(result.webhookUrl).toBeNull();
+    });
+
+    it('treats an empty string as a clear request', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      const result = await service.upsertSettings(ORG_ID, PRINCIPAL_A, {
+        webhookUrl: '',
+      });
+      expect(result.webhookUrl).toBeNull();
+    });
+
+    it('rejects non-https URLs', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.upsertSettings(ORG_ID, PRINCIPAL_A, {
+          webhookUrl: 'http://example.com/hook',
+        }),
+      ).rejects.toThrow('https');
+    });
+
+    it('rejects malformed URLs', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.upsertSettings(ORG_ID, PRINCIPAL_A, {
+          webhookUrl: 'not a url',
+        }),
+      ).rejects.toThrow('valid URL');
+    });
+
+    it('rejects URLs over the length cap', async () => {
+      settingsRepo.findOne.mockResolvedValue(null);
+      const huge = 'https://example.com/' + 'a'.repeat(2100);
+      await expect(
+        service.upsertSettings(ORG_ID, PRINCIPAL_A, { webhookUrl: huge }),
+      ).rejects.toThrow('maximum length');
+    });
+  });
+
+  describe('settings — loadWebhookUrls', () => {
+    it('returns an empty map for empty principal list', async () => {
+      const result = await service.loadWebhookUrls(ORG_ID, []);
+      expect(result.size).toBe(0);
+      expect(settingsRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('skips principals whose settings row has a null webhookUrl', async () => {
+      settingsRepo.find.mockResolvedValue([
+        {
+          orgId: ORG_ID,
+          principalId: PRINCIPAL_A,
+          webhookUrl: 'https://a.example.com/hook',
+          updatedAt: new Date(),
+        },
+        {
+          orgId: ORG_ID,
+          principalId: 'principal-b',
+          webhookUrl: null,
+          updatedAt: new Date(),
+        },
+      ]);
+      const result = await service.loadWebhookUrls(ORG_ID, [PRINCIPAL_A, 'principal-b']);
+      expect(result.size).toBe(1);
+      expect(result.get(PRINCIPAL_A)).toBe('https://a.example.com/hook');
+      expect(result.has('principal-b')).toBe(false);
     });
   });
 });
