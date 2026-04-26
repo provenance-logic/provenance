@@ -83,7 +83,10 @@ describe('NotificationsService', () => {
     getManyAndCount: jest.Mock;
   };
   let principalRepo: { find: jest.Mock };
-  let preferences: { loadByRecipients: jest.Mock };
+  let preferences: {
+    loadByRecipients: jest.Mock;
+    loadWebhookUrls: jest.Mock;
+  };
   let txnNotifRepo: { create: jest.Mock; save: jest.Mock };
   let txnOutboxRepo: { create: jest.Mock; save: jest.Mock };
   let dataSource: { transaction: jest.Mock };
@@ -116,6 +119,7 @@ describe('NotificationsService', () => {
     // preference branches override this on a case-by-case basis.
     preferences = {
       loadByRecipients: jest.fn().mockResolvedValue(new Map<string, NotificationPreference>()),
+      loadWebhookUrls: jest.fn().mockResolvedValue(new Map<string, string>()),
     };
 
     txnNotifRepo = {
@@ -311,6 +315,81 @@ describe('NotificationsService', () => {
 
       expect(txnOutboxRepo.save).toHaveBeenCalledTimes(1);
       expect(txnOutboxRepo.create.mock.calls[0][0].channel).toBe('email');
+    });
+
+    it('writes a webhook outbox row when the principal has a configured URL and override', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+      preferences.loadByRecipients.mockResolvedValue(
+        new Map([
+          [
+            preferenceKey(PRINCIPAL_A, 'product_published'),
+            {
+              orgId: ORG_ID,
+              principalId: PRINCIPAL_A,
+              category: 'product_published',
+              enabled: true,
+              channels: ['webhook'],
+              updatedAt: '2026-04-26T12:00:00Z',
+            } as NotificationPreference,
+          ],
+        ]),
+      );
+      preferences.loadWebhookUrls.mockResolvedValue(
+        new Map([[PRINCIPAL_A, 'https://hooks.example.com/abc']]),
+      );
+
+      await service.enqueue(input({ category: 'product_published' }));
+
+      const webhookRow = txnOutboxRepo.create.mock.calls.find(
+        (c: unknown[]) => (c[0] as { channel: string }).channel === 'webhook',
+      );
+      expect(webhookRow).toBeDefined();
+      expect((webhookRow![0] as { target: string }).target).toBe(
+        'https://hooks.example.com/abc',
+      );
+    });
+
+    it('skips webhook outbox row when principal has no webhook URL on file', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+      preferences.loadByRecipients.mockResolvedValue(
+        new Map([
+          [
+            preferenceKey(PRINCIPAL_A, 'product_published'),
+            {
+              orgId: ORG_ID,
+              principalId: PRINCIPAL_A,
+              category: 'product_published',
+              enabled: true,
+              channels: ['webhook'],
+              updatedAt: '2026-04-26T12:00:00Z',
+            } as NotificationPreference,
+          ],
+        ]),
+      );
+      preferences.loadWebhookUrls.mockResolvedValue(new Map());
+
+      await service.enqueue(input({ category: 'product_published' }));
+
+      // In-platform row still written; no webhook row because no URL.
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(1);
+      const webhookRow = txnOutboxRepo.create.mock.calls.find(
+        (c: unknown[]) => (c[0] as { channel: string }).channel === 'webhook',
+      );
+      expect(webhookRow).toBeUndefined();
+    });
+
+    it('does not query webhook URLs when no resolved channel includes webhook', async () => {
+      qb.getOne.mockResolvedValue(null);
+      // Default category default channels for slo_violation is in_platform + email,
+      // not webhook — so loadWebhookUrls should not be called.
+      await service.enqueue(input({ category: 'slo_violation' }));
+      expect(preferences.loadWebhookUrls).not.toHaveBeenCalled();
     });
 
     it('still delivers governance-mandatory categories at in_platform even when opted out', async () => {

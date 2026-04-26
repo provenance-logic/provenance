@@ -75,20 +75,23 @@ export class NotificationsService {
       input.recipients,
     );
     const channelsByRecipient = new Map<string, NotificationDeliveryChannel[]>();
-    let needContactLookup = false;
+    let needEmailLookup = false;
+    let needWebhookLookup = false;
     for (const recipientPrincipalId of input.recipients) {
       const pref =
         principalPreferences.get(preferenceKey(recipientPrincipalId, input.category)) ?? null;
       const channels = resolveChannels(input.category, pref);
       channelsByRecipient.set(recipientPrincipalId, channels);
-      if (channels.some((c) => c !== 'in_platform')) {
-        needContactLookup = true;
-      }
+      if (channels.includes('email')) needEmailLookup = true;
+      if (channels.includes('webhook')) needWebhookLookup = true;
     }
 
-    const principalContacts = needContactLookup
+    const principalContacts = needEmailLookup
       ? await this.loadPrincipalContacts(input.recipients)
       : new Map<string, PrincipalEntity>();
+    const webhookUrls = needWebhookLookup
+      ? await this.preferences.loadWebhookUrls(input.orgId, input.recipients)
+      : new Map<string, string>();
 
     const out: Notification[] = [];
 
@@ -132,6 +135,7 @@ export class NotificationsService {
             channel,
             recipientPrincipalId,
             principalContacts,
+            webhookUrls,
           );
           if (!target) continue;
           const outboxRow = outboxRepo.create({
@@ -247,13 +251,14 @@ export class NotificationsService {
     channel: NotificationDeliveryChannel,
     recipientPrincipalId: string,
     contacts: Map<string, PrincipalEntity>,
+    webhookUrls: Map<string, string>,
   ): string | null {
     if (channel === 'email') {
       const principal = contacts.get(recipientPrincipalId);
       if (!principal || !principal.email) {
         // Principal lookup miss or no email on file. The in-platform row is
         // still written; the recipient sees the notification next time they
-        // log in. Webhook channel (PR #4) follows the same pattern.
+        // log in.
         this.logger.warn(
           `No email on file for principal ${recipientPrincipalId}; skipping email delivery`,
         );
@@ -261,7 +266,19 @@ export class NotificationsService {
       }
       return principal.email;
     }
-    // PR #4 will add 'webhook' resolution against principal preferences.
+    if (channel === 'webhook') {
+      const url = webhookUrls.get(recipientPrincipalId);
+      if (!url) {
+        // Same pattern as email: in-platform delivery still happens, the
+        // out-of-band channel is silently skipped when the principal hasn't
+        // configured a webhook URL.
+        this.logger.warn(
+          `No webhook URL on file for principal ${recipientPrincipalId}; skipping webhook delivery`,
+        );
+        return null;
+      }
+      return url;
+    }
     return null;
   }
 

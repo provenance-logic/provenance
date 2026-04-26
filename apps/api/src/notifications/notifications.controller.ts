@@ -22,7 +22,9 @@ import type {
   NotificationCategory,
   NotificationList,
   NotificationPreference,
+  PrincipalNotificationSettings,
   UpdateNotificationPreferenceRequest,
+  UpdatePrincipalNotificationSettingsRequest,
 } from '@provenance/types';
 
 // Domain 11 notification surface.
@@ -114,5 +116,24 @@ export class NotificationsController {
     @Param('category') category: NotificationCategory,
   ): Promise<void> {
     return this.preferencesService.reset(ctx.principalId, category);
+  }
+
+  @Get('settings')
+  getSettings(
+    @ReqContext() ctx: RequestContext,
+  ): Promise<PrincipalNotificationSettings> {
+    return this.preferencesService.getSettings(ctx.orgId, ctx.principalId);
+  }
+
+  @Put('settings')
+  upsertSettings(
+    @ReqContext() ctx: RequestContext,
+    @Body() body: UpdatePrincipalNotificationSettingsRequest,
+  ): Promise<PrincipalNotificationSettings> {
+    return this.preferencesService.upsertSettings(
+      ctx.orgId,
+      ctx.principalId,
+      body,
+    );
   }
 }

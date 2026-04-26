@@ -197,6 +197,52 @@ paths:
           description: Preference reset
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /organizations/{orgId}/notifications/settings:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+
+    get:
+      operationId: getPrincipalNotificationSettings
+      summary: Get the calling principal's notification settings
+      tags: [NotificationPreferences]
+      description: |
+        Returns one row per principal containing cross-category settings —
+        currently only the outbound webhook URL. A principal who has never
+        configured settings receives a synthetic row with `webhookUrl: null`,
+        not a 404.
+      responses:
+        '200':
+          description: Settings (real or synthetic)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalNotificationSettings'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    put:
+      operationId: updatePrincipalNotificationSettings
+      summary: Update the calling principal's notification settings
+      tags: [NotificationPreferences]
+      description: |
+        Sets the outbound webhook URL the delivery worker uses when a
+        notification's resolved channel set includes `webhook`. Pass `null`
+        or an empty string to clear the URL. The URL must be `https`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePrincipalNotificationSettingsRequest'
+      responses:
+        '200':
+          description: Saved settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalNotificationSettings'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
   parameters:
     orgId:
@@ -431,3 +477,35 @@ components:
             the category default.
           items:
             $ref: '#/components/schemas/NotificationDeliveryChannel'
+
+    PrincipalNotificationSettings:
+      type: object
+      required: [orgId, principalId, updatedAt]
+      properties:
+        orgId:
+          type: string
+          format: uuid
+        principalId:
+          type: string
+          format: uuid
+        webhookUrl:
+          type: [string, 'null']
+          maxLength: 2000
+          description: |
+            Outbound webhook URL the delivery worker POSTs to when a
+            notification's resolved channel set includes `webhook`. Null
+            when the principal has not configured a webhook.
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdatePrincipalNotificationSettingsRequest:
+      type: object
+      required: [webhookUrl]
+      properties:
+        webhookUrl:
+          type: [string, 'null']
+          maxLength: 2000
+          description: |
+            Pass null or an empty string to clear an existing URL. Must be
+            `https` if non-null.

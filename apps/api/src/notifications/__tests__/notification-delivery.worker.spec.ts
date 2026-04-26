@@ -199,21 +199,131 @@ describe('NotificationDeliveryWorker', () => {
     });
   });
 
-  describe('drainOnce — channel guard', () => {
-    it('treats an unimplemented channel as a hard failure on the first claim', async () => {
-      // Webhook rows can be queued by future trigger code before PR #4 lands;
-      // the worker must surface the gap loudly rather than silently dropping.
-      const row = makeOutboxRow({ channel: 'webhook', target: 'https://example.com/hook' });
+  describe('drainOnce — webhook channel', () => {
+    let originalFetch: typeof fetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('POSTs the JSON envelope to the snapshotted target URL on a 2xx response', async () => {
+      const row = makeOutboxRow({
+        channel: 'webhook',
+        target: 'https://hooks.example.com/abc',
+      });
       queryBuilder.getMany.mockResolvedValue([row]);
+      const fetchMock = jest.fn().mockResolvedValue({
+        status: 200,
+        statusText: 'OK',
+      } as Response);
+      global.fetch = fetchMock as unknown as typeof fetch;
 
       const result = await worker.drainOnce();
 
-      expect(emailService.send).not.toHaveBeenCalled();
-      // Treated like any other delivery exception — increments attempt count
-      // and either schedules a retry or marks failed depending on attemptCount.
-      expect(result.retried + result.failed).toBe(1);
+      expect(result.delivered).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://hooks.example.com/abc');
+      const initObj = init as { method: string; headers: Record<string, string>; body: string };
+      expect(initObj.method).toBe('POST');
+      expect(initObj.headers['content-type']).toBe('application/json');
+      const body = JSON.parse(initObj.body);
+      expect(body).toMatchObject({
+        category: 'slo_violation',
+        orgId: ORG_ID,
+        notificationId: 'notif-1',
+        deepLink: expect.stringContaining('/products/product-1/observability'),
+      });
+      expect(body.payload).toEqual({ productId: 'product-1' });
+    });
+
+    it('treats a non-2xx response as a delivery failure', async () => {
+      const row = makeOutboxRow({
+        channel: 'webhook',
+        target: 'https://hooks.example.com/abc',
+        attemptCount: 0,
+      });
+      queryBuilder.getMany.mockResolvedValue([row]);
+      global.fetch = jest.fn().mockResolvedValue({
+        status: 500,
+        statusText: 'Internal Server Error',
+      } as Response) as unknown as typeof fetch;
+
+      const result = await worker.drainOnce();
+
+      expect(result.delivered).toBe(0);
+      expect(result.retried).toBe(1);
       const updateArgs = entityManager.update.mock.calls[0][2];
-      expect(updateArgs.lastError).toContain('webhook');
+      expect(updateArgs.lastError).toContain('500');
+    });
+
+    it('treats a fetch network error as a delivery failure', async () => {
+      const row = makeOutboxRow({
+        channel: 'webhook',
+        target: 'https://hooks.example.com/abc',
+        attemptCount: 0,
+      });
+      queryBuilder.getMany.mockResolvedValue([row]);
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('ECONNREFUSED 127.0.0.1:443')) as unknown as typeof fetch;
+
+      const result = await worker.drainOnce();
+
+      expect(result.retried).toBe(1);
+      const updateArgs = entityManager.update.mock.calls[0][2];
+      expect(updateArgs.lastError).toContain('ECONNREFUSED');
+    });
+
+    it('passes an AbortSignal so the worker can time out long-running requests', async () => {
+      const row = makeOutboxRow({
+        channel: 'webhook',
+        target: 'https://hooks.example.com/slow',
+        attemptCount: 0,
+      });
+      queryBuilder.getMany.mockResolvedValue([row]);
+      // Honor the abort: reject the fetch promise immediately when the signal
+      // fires. We trigger the abort ourselves below so the promise actually
+      // settles within the test (no dangling open handles).
+      const fetchMock = jest
+        .fn()
+        .mockImplementation((_url: string, init: { signal: AbortSignal }) => {
+          return new Promise((_resolve, reject) => {
+            if (init.signal.aborted) {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+              return;
+            }
+            init.signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+            // Trigger the abort on the next microtask to simulate a timeout.
+            queueMicrotask(() => {
+              const ac = (init as unknown as { signal: AbortSignal & { abort?: () => void } }).signal;
+              // The signal we received is from the worker's AbortController;
+              // there's no abort() method on the signal directly. Instead,
+              // simulate by dispatching the abort event.
+              const evt = new Event('abort');
+              ac.dispatchEvent(evt);
+            });
+          });
+        });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await worker.drainOnce();
+
+      // The fetch reject path goes through the catch block in sendWebhook,
+      // which throws — processOne treats it as a retry-eligible failure.
+      expect(result.retried + result.failed).toBe(1);
+      const initArg = fetchMock.mock.calls[0][1] as { signal: AbortSignal };
+      expect(initArg.signal).toBeDefined();
     });
   });
 });

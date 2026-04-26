@@ -8,9 +8,12 @@ import {
   type NotificationCategory,
   type NotificationDeliveryChannel,
   type NotificationPreference,
+  type PrincipalNotificationSettings,
   type UpdateNotificationPreferenceRequest,
+  type UpdatePrincipalNotificationSettingsRequest,
 } from '@provenance/types';
 import { NotificationPreferenceEntity } from './entities/notification-preference.entity.js';
+import { PrincipalNotificationSettingsEntity } from './entities/principal-notification-settings.entity.js';
 
 // Per-principal preference CRUD (F11.3). Caller scoping is enforced at the
 // controller layer — this service trusts the principalId argument.
@@ -19,6 +22,8 @@ export class NotificationPreferencesService {
   constructor(
     @InjectRepository(NotificationPreferenceEntity)
     private readonly repo: Repository<NotificationPreferenceEntity>,
+    @InjectRepository(PrincipalNotificationSettingsEntity)
+    private readonly settingsRepo: Repository<PrincipalNotificationSettingsEntity>,
   ) {}
 
   async list(orgId: string, principalId: string): Promise<NotificationPreference[]> {
@@ -92,6 +97,86 @@ export class NotificationPreferencesService {
     await this.repo.delete({ principalId, category });
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-principal settings (PR #4 — webhook URL configuration)
+  // ---------------------------------------------------------------------------
+
+  async getSettings(
+    orgId: string,
+    principalId: string,
+  ): Promise<PrincipalNotificationSettings> {
+    const row = await this.settingsRepo.findOne({
+      where: { orgId, principalId },
+    });
+    if (!row) {
+      // Return a synthetic "no settings yet" record so the caller doesn't have
+      // to special-case 404 vs "no webhook configured." Both states are the
+      // same to clients: no webhook URL on file.
+      return {
+        orgId,
+        principalId,
+        webhookUrl: null,
+        updatedAt: new Date(0).toISOString(),
+      };
+    }
+    return this.toSettingsDto(row);
+  }
+
+  async upsertSettings(
+    orgId: string,
+    principalId: string,
+    update: UpdatePrincipalNotificationSettingsRequest,
+  ): Promise<PrincipalNotificationSettings> {
+    const normalized = normalizeWebhookUrl(update.webhookUrl);
+    const existing = await this.settingsRepo.findOne({
+      where: { principalId },
+    });
+    const merged: PrincipalNotificationSettingsEntity = existing ?? this.settingsRepo.create({
+      orgId,
+      principalId,
+      webhookUrl: null,
+    });
+    merged.webhookUrl = normalized;
+    const saved = await this.settingsRepo.save(merged);
+    return this.toSettingsDto(saved);
+  }
+
+  /**
+   * Bulk lookup of webhook URLs keyed by principal_id. Used by
+   * NotificationsService.enqueue alongside loadByRecipients() so the
+   * snapshotted target on each outbox row reflects the URL on file at
+   * trigger time (ADR-009 §3 — recipients snapshotted at trigger time).
+   */
+  async loadWebhookUrls(
+    orgId: string,
+    principalIds: string[],
+  ): Promise<Map<string, string>> {
+    if (principalIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.settingsRepo.find({
+      where: { orgId, principalId: In(principalIds) },
+    });
+    const out = new Map<string, string>();
+    for (const r of rows) {
+      if (r.webhookUrl) {
+        out.set(r.principalId, r.webhookUrl);
+      }
+    }
+    return out;
+  }
+
+  private toSettingsDto(
+    row: PrincipalNotificationSettingsEntity,
+  ): PrincipalNotificationSettings {
+    return {
+      orgId: row.orgId,
+      principalId: row.principalId,
+      webhookUrl: row.webhookUrl,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
   private toDto(row: NotificationPreferenceEntity): NotificationPreference {
     return {
       orgId: row.orgId,
@@ -127,4 +212,32 @@ function validateChannelSet(channels: NotificationDeliveryChannel[]): void {
   if (new Set(channels).size !== channels.length) {
     throw new BadRequestException('Channel override contains duplicates');
   }
+}
+
+const MAX_WEBHOOK_URL_LENGTH = 2000;
+
+// Trims whitespace, normalizes empty string to null, and rejects anything
+// other than https. The schema permits up to 2000 chars; we reject longer.
+function normalizeWebhookUrl(input: string | null | undefined): string | null {
+  if (input == null) return null;
+  const trimmed = input.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length > MAX_WEBHOOK_URL_LENGTH) {
+    throw new BadRequestException(
+      `Webhook URL exceeds maximum length of ${MAX_WEBHOOK_URL_LENGTH} characters`,
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new BadRequestException('Webhook URL is not a valid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    // http: rejected — outbound notifications carry potentially sensitive
+    // payload (e.g. SLO violation context, deep links into the platform).
+    // Plaintext webhook delivery is not a credible threat model.
+    throw new BadRequestException('Webhook URL must use https');
+  }
+  return trimmed;
 }
