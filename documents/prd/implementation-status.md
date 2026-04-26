@@ -325,7 +325,7 @@ Architecture decisions in ADR-009 (notification routing, channels, dedup, retry)
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
 | F11.1 | Notification Service | Partially implemented | `NotificationsService.enqueue()` writes one row per recipient to `notifications.notifications` (V21). Recipients snapshotted at trigger time per ADR-009 §3. Trigger-module wiring deferred to PRs #7–12 in the Domain 11 phasing. |
-| F11.2 | Delivery Channels | Partially implemented | In-platform channel implemented (the row IS the delivery). Email (SMTP) and webhook channels deferred to PRs #3 and #4. |
+| F11.2 | Delivery Channels | Partially implemented | In-platform and email channels implemented. Email reuses the existing platform-wide `EmailService` (nodemailer/SMTP) — per-org SMTP config deferred per ADR-009 implementation note. Webhook channel deferred to PR #4. Outbox at `notifications.delivery_outbox` (V22, RLS-free internal queue) drained by `NotificationDeliveryWorker` on a 30-second cron with FOR UPDATE SKIP LOCKED, NF11.3 retries (1m/5m/25m, 3 attempts then mark failed). |
 | F11.3 | Notification Preferences | Not implemented | Deferred to PR #5. |
 | F11.4 | Notification Center UI | Partially implemented | Backend REST surface live: `GET /organizations/{orgId}/notifications`, `POST :id/read`, `POST :id/dismiss`. Frontend bell + drawer deferred to PR #6. |
 | F11.5 | Notification Deduplication | Implemented | `(orgId, recipient, category, dedupKey)` lookup over the configurable window (default 15 min, `DEFAULT_DEDUP_WINDOW_SECONDS`). Dedup hit increments `dedup_count` on the existing row instead of inserting; suppresses both the inbox row and any downstream channel send (ADR-009 §5). |

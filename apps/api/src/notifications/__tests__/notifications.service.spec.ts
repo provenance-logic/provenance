@@ -1,13 +1,16 @@
 import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
 import type { EnqueueNotificationInput } from '@provenance/types';
 import { NotificationsService } from '../notifications.service.js';
 import { NotificationEntity } from '../entities/notification.entity.js';
+import { NotificationDeliveryOutboxEntity } from '../entities/notification-delivery-outbox.entity.js';
+import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 
 const ORG_ID = 'org-1';
 const PRINCIPAL_A = 'principal-a';
 const PRINCIPAL_B = 'principal-b';
+const PRINCIPAL_NO_EMAIL = 'principal-no-email';
 
 function input(overrides: Partial<EnqueueNotificationInput> = {}): EnqueueNotificationInput {
   return {
@@ -22,7 +25,7 @@ function input(overrides: Partial<EnqueueNotificationInput> = {}): EnqueueNotifi
 }
 
 function makeRow(overrides: Partial<NotificationEntity> = {}): NotificationEntity {
-  const row: NotificationEntity = {
+  return {
     id: overrides.id ?? 'notif-1',
     orgId: ORG_ID,
     recipientPrincipalId: PRINCIPAL_A,
@@ -37,7 +40,20 @@ function makeRow(overrides: Partial<NotificationEntity> = {}): NotificationEntit
     updatedAt: new Date('2026-04-26T12:00:00Z'),
     ...overrides,
   };
-  return row;
+}
+
+function makePrincipal(overrides: Partial<PrincipalEntity> = {}): PrincipalEntity {
+  return {
+    id: PRINCIPAL_A,
+    orgId: ORG_ID,
+    principalType: 'human_user',
+    keycloakSubject: `kc-${overrides.id ?? PRINCIPAL_A}`,
+    email: 'principal-a@example.com',
+    displayName: 'Principal A',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
 }
 
 describe('NotificationsService', () => {
@@ -59,6 +75,10 @@ describe('NotificationsService', () => {
     getOne: jest.Mock;
     getManyAndCount: jest.Mock;
   };
+  let principalRepo: { find: jest.Mock };
+  let txnNotifRepo: { create: jest.Mock; save: jest.Mock };
+  let txnOutboxRepo: { create: jest.Mock; save: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
 
   beforeEach(async () => {
     qb = {
@@ -72,6 +92,19 @@ describe('NotificationsService', () => {
     };
     repo = {
       create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn(),
+      findOne: jest.fn(),
+      increment: jest.fn().mockResolvedValue({ affected: 1 }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    };
+
+    principalRepo = {
+      find: jest.fn().mockResolvedValue([makePrincipal()]),
+    };
+
+    txnNotifRepo = {
+      create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockImplementation((v) =>
         Promise.resolve({
           ...v,
@@ -80,16 +113,29 @@ describe('NotificationsService', () => {
           updatedAt: new Date('2026-04-26T12:00:00Z'),
         }),
       ),
-      findOne: jest.fn(),
-      increment: jest.fn().mockResolvedValue({ affected: 1 }),
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
-      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    };
+    txnOutboxRepo = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const entityManager = {
+      getRepository: jest.fn().mockImplementation((entity) => {
+        if (entity === NotificationEntity) return txnNotifRepo;
+        if (entity === NotificationDeliveryOutboxEntity) return txnOutboxRepo;
+        throw new Error(`Unexpected repository for ${String(entity)}`);
+      }),
+    };
+    dataSource = {
+      transaction: jest.fn().mockImplementation((cb) => cb(entityManager)),
     };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         NotificationsService,
         { provide: getRepositoryToken(NotificationEntity), useValue: repo },
+        { provide: getRepositoryToken(PrincipalEntity), useValue: principalRepo },
+        { provide: getDataSourceToken(), useValue: dataSource },
       ],
     }).compile();
 
@@ -97,15 +143,19 @@ describe('NotificationsService', () => {
   });
 
   describe('enqueue', () => {
-    it('writes one row per recipient when no dedup hit exists', async () => {
+    it('writes one notification row per recipient when no dedup hit exists', async () => {
       qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+        makePrincipal({ id: PRINCIPAL_B, email: 'b@example.com' }),
+      ]);
 
       const created = await service.enqueue(
         input({ recipients: [PRINCIPAL_A, PRINCIPAL_B] }),
       );
 
       expect(created).toHaveLength(2);
-      expect(repo.save).toHaveBeenCalledTimes(2);
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(2);
       expect(created[0].recipientPrincipalId).toBe(PRINCIPAL_A);
       expect(created[1].recipientPrincipalId).toBe(PRINCIPAL_B);
       expect(created.every((n) => n.dedupCount === 1)).toBe(true);
@@ -114,8 +164,64 @@ describe('NotificationsService', () => {
     it('returns an empty array and writes nothing when recipients is empty', async () => {
       const created = await service.enqueue(input({ recipients: [] }));
       expect(created).toEqual([]);
-      expect(repo.save).not.toHaveBeenCalled();
-      expect(repo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(principalRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('writes an email outbox row for a category whose default channels include email', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+
+      await service.enqueue(input({ category: 'slo_violation' }));
+
+      expect(txnOutboxRepo.save).toHaveBeenCalledTimes(1);
+      const outboxArg = txnOutboxRepo.create.mock.calls[0][0];
+      expect(outboxArg.channel).toBe('email');
+      expect(outboxArg.target).toBe('a@example.com');
+      expect(outboxArg.category).toBe('slo_violation');
+      expect(outboxArg.deepLink).toBe('/products/product-1/observability');
+      expect(outboxArg.payload).toEqual({
+        productId: 'product-1',
+        sloType: 'freshness',
+      });
+      expect(outboxArg.attemptCount).toBe(0);
+    });
+
+    it('writes no outbox rows for in-platform-only categories', async () => {
+      qb.getOne.mockResolvedValue(null);
+      // Even with email available, product_published is in_platform-only by default
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+
+      await service.enqueue(input({ category: 'product_published' }));
+
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(1);
+      expect(txnOutboxRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('skips the email outbox row for principals with no email on file', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_NO_EMAIL, email: null }),
+      ]);
+
+      await service.enqueue(
+        input({ category: 'slo_violation', recipients: [PRINCIPAL_NO_EMAIL] }),
+      );
+
+      // The notification row is still written (in-platform delivery still works);
+      // only the email outbox row is skipped.
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(1);
+      expect(txnOutboxRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('does not query principals when no out-of-band channels are needed', async () => {
+      qb.getOne.mockResolvedValue(null);
+      await service.enqueue(input({ category: 'product_published' }));
+      expect(principalRepo.find).not.toHaveBeenCalled();
     });
 
     it('bumps dedup_count on the existing row instead of inserting when a recent duplicate exists', async () => {
@@ -127,19 +233,10 @@ describe('NotificationsService', () => {
       expect(created).toHaveLength(1);
       expect(created[0].id).toBe('existing-1');
       expect(repo.increment).toHaveBeenCalledWith({ id: 'existing-1' }, 'dedupCount', 1);
-      expect(repo.save).not.toHaveBeenCalled();
-    });
-
-    it('creates a new row when the only matching dedup_key is older than the dedup window', async () => {
-      // The service queries for rows newer than (now - dedupWindow); any row
-      // older than that does not match the query, so getOne returns null.
-      qb.getOne.mockResolvedValue(null);
-
-      const created = await service.enqueue(input());
-
-      expect(created).toHaveLength(1);
-      expect(repo.save).toHaveBeenCalledTimes(1);
-      expect(created[0].dedupCount).toBe(1);
+      // No new notification row, and no email — dedup suppression covers
+      // downstream channels too.
+      expect(txnNotifRepo.save).not.toHaveBeenCalled();
+      expect(txnOutboxRepo.save).not.toHaveBeenCalled();
     });
 
     it('looks up dedup matches scoped by org, recipient, category, and dedup_key', async () => {
@@ -158,7 +255,6 @@ describe('NotificationsService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('n.dedupKey = :dedupKey', {
         dedupKey: 'slo_violation:product-1:freshness',
       });
-      // Window predicate uses createdAt >= some cutoff
       const calls = qb.andWhere.mock.calls.map((c: unknown[]) => c[0]);
       expect(calls).toContain('n.createdAt >= :since');
     });
@@ -242,8 +338,6 @@ describe('NotificationsService', () => {
     });
 
     it('throws NotFoundException when the notification belongs to another principal', async () => {
-      // The service must scope its lookup by recipientPrincipalId, so the row
-      // appears not to exist from the caller's perspective.
       repo.findOne.mockResolvedValue(null);
 
       await expect(

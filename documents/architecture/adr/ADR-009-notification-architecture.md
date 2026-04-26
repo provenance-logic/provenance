@@ -1,7 +1,7 @@
 # ADR-009: Notification Architecture
 
 **Date:** April 26, 2026
-**Status:** Proposed
+**Status:** Accepted (2026-04-26 — PR #2 landed in-platform tier; PR #3 landed email channel reusing the existing platform-wide `EmailService` rather than building per-org SMTP. See Implementation Notes below.)
 **Author:** Provenance Platform Team
 
 ---
@@ -274,6 +274,28 @@ Use Keycloak user attributes for notification preferences instead of a platform 
 
 ---
 
+## Implementation Notes
+
+These notes capture decisions made during implementation that did not change the architecture but did narrow the scope of the original proposal. Architectural direction (outbox + worker, SMTP-pluggable transport, snapshotted recipients, dedup-at-enqueue) is unchanged.
+
+### Per-org SMTP configuration deferred (PR #3)
+
+The original proposal in §6 specified per-org SMTP configuration (`notifications.org_email_config`) so each organization could route email through its own SMTP relay. PR #3 instead reuses the existing platform-wide `EmailService` (already used by Domain 10 self-serve registration and invitations), which provides nodemailer-backed SMTP via the existing `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` env vars.
+
+Rationale: the platform already had a working SMTP path. Building a parallel per-org SMTP pipeline would have doubled the operational surface (per-org Secrets Manager ARN management, per-org config UI, separate transport instances) for a feature with no concrete demand. Per-org SMTP can be added without an architectural change — the outbox already snapshots `target` per delivery, and the worker would only need to look up an org-scoped transport instead of the platform default. Tracked as a follow-up.
+
+### Outbox table is RLS-free (PR #3)
+
+`notifications.delivery_outbox` is an internal queue, not customer-facing data. The cron-driven `NotificationDeliveryWorker` runs without per-request org context and needs to scan across orgs in a single pass. Following the existing precedent of `observability.trust_score_history` (also written by a cross-org cron), the outbox skips RLS. The user-facing `notifications.notifications` table retains RLS.
+
+To avoid forcing the worker to JOIN against the RLS-enforced notifications table, rendering inputs (`category`, `payload`, `deep_link`) are snapshotted onto each outbox row at enqueue time. This duplication is bounded (delivered rows are pruned after 7 days) and keeps the worker self-contained.
+
+### Category-default channel map (PR #3)
+
+`CATEGORY_DEFAULT_CHANNELS` (in `@provenance/types`) hardcodes a sensible default channel set per category. Per-org overrides and per-principal preferences (PR #5) layer on top of this map. The map errs on the side of including email for categories that typically need timely out-of-band action (SLO violations, access requests, governance events) and limiting to in-platform-only for lower-urgency informational categories (`product_published`, `trust_score_significant_change`, `connection_package_refreshed`).
+
+---
+
 ## References
 
 - PRD Domain 11 (F11.1–F11.27) — full notification requirements
@@ -281,3 +303,4 @@ Use Keycloak user attributes for notification preferences instead of a platform 
 - ADR-007 — connection reference state propagation, the outbox pattern this ADR reuses
 - CLAUDE.md — module boundary rule, Secrets Manager ARN credential rule, Keycloak Admin API GET-merge-PUT pattern
 - `apps/api/src/consent/entities/connection-reference-outbox.entity.ts` — reference implementation of the outbox pattern
+- `apps/api/src/email/email.service.ts` — existing platform-wide SMTP transport reused by the notification email channel
