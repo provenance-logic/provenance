@@ -324,17 +324,17 @@ Architecture decisions in ADR-009 (notification routing, channels, dedup, retry)
 
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
-| F11.1 | Notification Service | Partially implemented | `NotificationsService.enqueue()` writes one row per recipient to `notifications.notifications` (V21). Recipients snapshotted at trigger time per ADR-009 §3. Trigger-module wiring deferred to PRs #7–12 in the Domain 11 phasing. |
+| F11.1 | Notification Service | Implemented | `NotificationsService.enqueue()` writes one row per recipient to `notifications.notifications` (V21). Recipients snapshotted at trigger time per ADR-009 §3. First trigger bundle (access — F11.6/7/8/9/10/11) wired in PR #7. Remaining trigger bundles in PRs #8–12 are additive callers; the service surface is stable. |
 | F11.2 | Delivery Channels | Implemented | All three channels live: in-platform (the row itself), email (platform-wide `EmailService`), webhook (Node `fetch` with 10s `AbortController` timeout, https-only, posts stable `NotificationWebhookPayload` envelope). Per-org SMTP config deferred per ADR-009 note; HMAC signing of webhook bodies deferred. URL config at `notifications.principal_settings` (V24, per-principal not per-category — see ADR-009 implementation note). Same outbox + worker pipeline drains all out-of-band channels with NF11.3 retries (1m/5m/25m, 3 attempts then mark failed). |
 | F11.3 | Notification Preferences | Implemented | Per-(principal, category) preferences with `enabled` opt-in/out and `channels[]` override at `notifications.principal_preferences` (V23). Resolution via `channel-resolver.ts` at enqueue time (see ADR-009 Implementation Notes for the deviation from "delivery time"). Governance-mandatory categories (`GOVERNANCE_MANDATORY_CATEGORIES`) keep at least the in-platform channel even when opted out. REST surface: `GET /organizations/:orgId/notifications/preferences`, `PUT /:category`, `DELETE /:category` (reset). Org-level defaults and per-principal webhook URL deferred (deferred per PR #4 bundle). |
 | F11.4 | Notification Center UI | Partially implemented | Backend REST surface live: `GET /organizations/{orgId}/notifications`, `POST :id/read`, `POST :id/dismiss`. Frontend bell + drawer deferred to PR #6. |
 | F11.5 | Notification Deduplication | Implemented | `(orgId, recipient, category, dedupKey)` lookup over the configurable window (default 15 min, `DEFAULT_DEDUP_WINDOW_SECONDS`). Dedup hit increments `dedup_count` on the existing row instead of inserting; suppresses both the inbox row and any downstream channel send (ADR-009 §5). |
-| F11.6 | Access Request Submitted | Not implemented | Blocker. Trigger wiring lands in PR #7 (access bundle). |
-| F11.7 | Access Request Approved | Not implemented | Blocker. PR #7. |
-| F11.8 | Access Request Denied | Not implemented | PR #7. |
-| F11.9 | Access Request SLA Warning | Not implemented | Blocker. PR #7. |
-| F11.10 | Access Request SLA Breach | Not implemented | Blocker. PR #7. |
-| F11.11 | Access Grant Expiring | Not implemented | PR #7. |
+| F11.6 | Access Request Submitted | Implemented | Fired from `AccessService.submitRequest` to the product owner. Best-effort wrapper: notification failure does not roll back the request. |
+| F11.7 | Access Request Approved | Implemented | Fired from `AccessService.approveRequest` to the requester with grant ID and expiry. |
+| F11.8 | Access Request Denied | Implemented | Fired from `AccessService.denyRequest` to the requester with the denial reason. |
+| F11.9 | Access Request SLA Warning | Implemented | `AccessNotificationsTriggerWorker` (every 5 min) scans pending requests where `requested_at <= now - 0.8 * APPROVAL_TIMEOUT_HOURS` and `sla_warning_sent_at IS NULL` (V25). Stamps the row on success so each request fires at most once. |
+| F11.10 | Access Request SLA Breach | Implemented | Same worker scans pending requests past `APPROVAL_TIMEOUT_HOURS` with `sla_breach_notified_at IS NULL`. Recipients: product owner + governance team (`identity.role_assignments.role = 'governance_member'`), deduplicated when overlap. |
+| F11.11 | Access Grant Expiring | Implemented | Same worker scans active grants where `expires_at` is within 14 days and `expiry_warning_sent_at IS NULL`. Stamps the grant on success. |
 | F11.12 | Product Deprecated | Not implemented | Blocker. Trigger wiring lands in PR #8 (product lifecycle bundle). |
 | F11.13 | Product Decommissioned | Not implemented | PR #8. |
 | F11.14 | Product Published | Not implemented | PR #8. |

@@ -44,4 +44,12 @@ export class AccessGrantEntity {
   /** Connection package generated at grant time (F10.8). Null for legacy grants. */
   @Column({ name: 'connection_package', type: 'jsonb', nullable: true })
   connectionPackage!: Record<string, unknown> | null;
+
+  /**
+   * Idempotency marker for the time-driven F11.11 grant-expiring trigger.
+   * Set the first time AccessNotificationsTriggerWorker emits the warning so
+   * subsequent cron passes skip the grant.
+   */
+  @Column({ name: 'expiry_warning_sent_at', type: 'timestamptz', nullable: true })
+  expiryWarningSentAt!: Date | null;
 }
