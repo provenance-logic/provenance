@@ -18,6 +18,7 @@ import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentService } from '../consent/consent.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { getConfig } from '../config.js';
 import type {
   AccessGrant,
@@ -53,6 +54,7 @@ export class AccessService {
     private readonly temporalClient: Client,
     private readonly connectionPackageService: ConnectionPackageService,
     private readonly consentService: ConsentService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -346,6 +348,25 @@ export class AccessService {
       // The request is still created — Temporal is best-effort for now.
     }
 
+    // F11.6 — notify the product owner of the new access request.
+    await this.fireNotification(() =>
+      this.notificationsService.enqueue({
+        orgId,
+        category: 'access_request_submitted',
+        recipients: [product.ownerPrincipalId],
+        payload: {
+          requestId: saved.id,
+          productId: product.id,
+          productName: product.name,
+          requesterPrincipalId,
+          justification: saved.justification,
+        },
+        deepLink: `/access/requests/${saved.id}`,
+        // Each request is unique; the dedup_key just provides traceability.
+        dedupKey: `access_request_submitted:${saved.id}`,
+      }),
+    );
+
     return this.toRequest(saved);
   }
 
@@ -399,6 +420,24 @@ export class AccessService {
     // Signal the workflow that a human decision was made (best-effort).
     await this.signalWorkflowResolved(request.temporalWorkflowId);
 
+    // F11.7 — notify the requester of the approval.
+    await this.fireNotification(() =>
+      this.notificationsService.enqueue({
+        orgId,
+        category: 'access_request_approved',
+        recipients: [request.requesterPrincipalId],
+        payload: {
+          requestId: request.id,
+          productId: request.productId,
+          grantId: savedGrant.id,
+          expiresAt: savedGrant.expiresAt ? savedGrant.expiresAt.toISOString() : null,
+          note: dto.note ?? null,
+        },
+        deepLink: `/marketplace/products/${request.productId}`,
+        dedupKey: `access_request_approved:${request.id}`,
+      }),
+    );
+
     return {
       request: this.toRequest(savedRequest),
       grant: this.toGrant(savedGrant),
@@ -427,6 +466,22 @@ export class AccessService {
 
     await this.recordEvent(orgId, requestId, 'denied', deniedByPrincipalId, dto.note ?? null);
     await this.signalWorkflowResolved(request.temporalWorkflowId);
+
+    // F11.8 — notify the requester of the denial.
+    await this.fireNotification(() =>
+      this.notificationsService.enqueue({
+        orgId,
+        category: 'access_request_denied',
+        recipients: [request.requesterPrincipalId],
+        payload: {
+          requestId: request.id,
+          productId: request.productId,
+          reason: dto.note ?? null,
+        },
+        deepLink: `/marketplace/products/${request.productId}`,
+        dedupKey: `access_request_denied:${request.id}`,
+      }),
+    );
 
     return this.toRequest(saved);
   }
@@ -565,5 +620,20 @@ export class AccessService {
       note: e.note,
       occurredAt: e.occurredAt.toISOString(),
     };
+  }
+
+  // Wraps a notification enqueue so a notification failure cannot fail or
+  // roll back the action that triggered it. The notification itself is
+  // best-effort delivery on a separate code path; the user-visible action
+  // (request submitted, approved, etc.) has already happened by the time
+  // we get here.
+  private async fireNotification(fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn();
+    } catch (err) {
+      this.logger.error(
+        `Notification enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }

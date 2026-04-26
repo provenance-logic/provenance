@@ -14,6 +14,7 @@ import { TEMPORAL_CLIENT } from './temporal/temporal-client.provider.js';
 import { createApprovalActivities } from './temporal/approval.activities.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentService } from '../consent/consent.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -63,6 +64,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   accessScope: null,
   approvalRequestId: null,
   connectionPackage: null,
+  expiryWarningSentAt: null,
   ...overrides,
 });
 
@@ -79,6 +81,8 @@ const makeRequest = (overrides: Partial<AccessRequestEntity> = {}): AccessReques
   resolvedAt: null,
   resolvedBy: null,
   resolutionNote: null,
+  slaWarningSentAt: null,
+  slaBreachNotifiedAt: null,
   updatedAt: now,
   ...overrides,
 });
@@ -140,6 +144,10 @@ describe('AccessService', () => {
         {
           provide: ConsentService,
           useValue: { cascadeRevokeForGrant: jest.fn().mockResolvedValue(0) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { enqueue: jest.fn().mockResolvedValue([]) },
         },
       ],
     }).compile();

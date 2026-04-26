@@ -13,6 +13,7 @@ import { TEMPORAL_CLIENT } from '../temporal/temporal-client.provider.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { ConnectionPackageService } from '../connection-package.service.js';
 import { ConsentService } from '../../consent/consent.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -62,6 +63,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   accessScope: null,
   approvalRequestId: null,
   connectionPackage: null,
+  expiryWarningSentAt: null,
   ...overrides,
 });
 
@@ -78,6 +80,8 @@ const makeRequest = (overrides: Partial<AccessRequestEntity> = {}): AccessReques
   resolvedAt: null,
   resolvedBy: null,
   resolutionNote: null,
+  slaWarningSentAt: null,
+  slaBreachNotifiedAt: null,
   updatedAt: now,
   ...overrides,
 });
@@ -97,6 +101,8 @@ const makeProduct = (overrides: Partial<DataProductEntity> = {}): Partial<DataPr
   id: 'product-1',
   orgId: 'org-1',
   status: 'published',
+  name: 'Customer Events',
+  ownerPrincipalId: 'owner-1',
   ...overrides,
 });
 
@@ -112,9 +118,11 @@ describe('AccessService', () => {
   let productRepo: ReturnType<typeof mockRepo>;
   let temporalClient: ReturnType<typeof mockTemporalClient>;
   let consentService: { cascadeRevokeForGrant: jest.Mock };
+  let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     consentService = { cascadeRevokeForGrant: jest.fn().mockResolvedValue(0) };
+    notificationsService = { enqueue: jest.fn().mockResolvedValue([]) };
     const module = await Test.createTestingModule({
       providers: [
         AccessService,
@@ -128,6 +136,7 @@ describe('AccessService', () => {
           useValue: { generateForProduct: jest.fn().mockResolvedValue(null) },
         },
         { provide: ConsentService, useValue: consentService },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -402,6 +411,43 @@ describe('AccessService', () => {
 
       expect(result.status).toBe('pending');
     });
+
+    it('enqueues access_request_submitted notification to the product owner (F11.6)', async () => {
+      grantRepo.findOne.mockResolvedValue(null);
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }));
+      requestRepo.findOne.mockResolvedValue(null);
+      const request = makeRequest();
+      requestRepo.create.mockReturnValue(request);
+      requestRepo.save.mockResolvedValue(request);
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent());
+
+      await service.submitRequest('org-1', { productId: 'product-1' }, 'principal-2');
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'access_request_submitted',
+          recipients: ['owner-1'],
+          dedupKey: 'access_request_submitted:request-1',
+        }),
+      );
+    });
+
+    it('still returns the request even if the notification enqueue fails (best-effort)', async () => {
+      grantRepo.findOne.mockResolvedValue(null);
+      productRepo.findOne.mockResolvedValue(makeProduct());
+      requestRepo.findOne.mockResolvedValue(null);
+      const request = makeRequest();
+      requestRepo.create.mockReturnValue(request);
+      requestRepo.save.mockResolvedValue(request);
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent());
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('notif boom'));
+
+      const result = await service.submitRequest('org-1', { productId: 'product-1' }, 'principal-2');
+      expect(result.status).toBe('pending');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -456,6 +502,28 @@ describe('AccessService', () => {
 
       expect(temporalClient.workflow.getHandle).toHaveBeenCalledWith('approval-request-1');
     });
+
+    it('enqueues access_request_approved notification to the requester (F11.7)', async () => {
+      const request = makeRequest({ requesterPrincipalId: 'requester-1' });
+      requestRepo.findOne.mockResolvedValue(request);
+      requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      const grant = makeGrant({ approvalRequestId: 'request-1', expiresAt: new Date('2026-12-31T00:00:00Z') });
+      grantRepo.create.mockReturnValue(grant);
+      grantRepo.save.mockResolvedValue(grant);
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent({ action: 'approved' }));
+
+      await service.approveRequest('org-1', 'request-1', { note: 'OK' }, 'principal-1');
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'access_request_approved',
+          recipients: ['requester-1'],
+          dedupKey: 'access_request_approved:request-1',
+        }),
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -481,6 +549,26 @@ describe('AccessService', () => {
       await expect(
         service.denyRequest('org-1', 'request-1', {}, 'principal-1'),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('enqueues access_request_denied notification to the requester (F11.8)', async () => {
+      const request = makeRequest({ requesterPrincipalId: 'requester-1' });
+      requestRepo.findOne.mockResolvedValue(request);
+      requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent({ action: 'denied' }));
+
+      await service.denyRequest('org-1', 'request-1', { note: 'Insufficient justification' }, 'principal-1');
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'access_request_denied',
+          recipients: ['requester-1'],
+          dedupKey: 'access_request_denied:request-1',
+          payload: expect.objectContaining({ reason: 'Insufficient justification' }),
+        }),
+      );
     });
   });
 

@@ -45,6 +45,15 @@ export class AccessRequestEntity {
   @Column({ name: 'resolution_note', type: 'text', nullable: true })
   resolutionNote!: string | null;
 
+  // Idempotency markers for the time-driven access notification triggers
+  // (F11.9 / F11.10). Set by AccessNotificationsTriggerWorker the first time
+  // each notification is fired so subsequent cron passes skip the row.
+  @Column({ name: 'sla_warning_sent_at', type: 'timestamptz', nullable: true })
+  slaWarningSentAt!: Date | null;
+
+  @Column({ name: 'sla_breach_notified_at', type: 'timestamptz', nullable: true })
+  slaBreachNotifiedAt!: Date | null;
+
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
 }
