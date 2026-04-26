@@ -2,6 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
+  Body,
   Param,
   Query,
   HttpCode,
@@ -12,22 +15,30 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { ReqContext } from '../auth/request-context.decorator.js';
 import { NotificationsService } from './notifications.service.js';
+import { NotificationPreferencesService } from './notification-preferences.service.js';
 import type {
   RequestContext,
   Notification,
   NotificationCategory,
   NotificationList,
+  NotificationPreference,
+  UpdateNotificationPreferenceRequest,
 } from '@provenance/types';
 
-// Domain 11 in-platform notification surface (PR #2 of the Domain 11 phasing).
+// Domain 11 notification surface.
 //
-// Recipient is always the calling principal — read access to another
-// principal's inbox is not exposed on this surface (and is not exposed
-// elsewhere either; admin tooling is governed separately).
+// Inbox endpoints (PR #2): GET /, POST /:id/read, POST /:id/dismiss.
+// Preferences endpoints (PR #5): GET/PUT/DELETE /preferences/:category.
+//
+// All routes scope by the calling principal — read or write access to another
+// principal's inbox or preferences is never exposed on this surface.
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('organizations/:orgId/notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly preferencesService: NotificationPreferencesService,
+  ) {}
 
   @Get()
   list(
@@ -73,5 +84,35 @@ export class NotificationsController {
       ctx.principalId,
       notificationId,
     );
+  }
+
+  @Get('preferences')
+  listPreferences(
+    @ReqContext() ctx: RequestContext,
+  ): Promise<NotificationPreference[]> {
+    return this.preferencesService.list(ctx.orgId, ctx.principalId);
+  }
+
+  @Put('preferences/:category')
+  upsertPreference(
+    @ReqContext() ctx: RequestContext,
+    @Param('category') category: NotificationCategory,
+    @Body() body: UpdateNotificationPreferenceRequest,
+  ): Promise<NotificationPreference> {
+    return this.preferencesService.upsert(
+      ctx.orgId,
+      ctx.principalId,
+      category,
+      body,
+    );
+  }
+
+  @Delete('preferences/:category')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  resetPreference(
+    @ReqContext() ctx: RequestContext,
+    @Param('category') category: NotificationCategory,
+  ): Promise<void> {
+    return this.preferencesService.reset(ctx.principalId, category);
   }
 }

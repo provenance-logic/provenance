@@ -294,6 +294,20 @@ To avoid forcing the worker to JOIN against the RLS-enforced notifications table
 
 `CATEGORY_DEFAULT_CHANNELS` (in `@provenance/types`) hardcodes a sensible default channel set per category. Per-org overrides and per-principal preferences (PR #5) layer on top of this map. The map errs on the side of including email for categories that typically need timely out-of-band action (SLO violations, access requests, governance events) and limiting to in-platform-only for lower-urgency informational categories (`product_published`, `trust_score_significant_change`, `connection_package_refreshed`).
 
+### Channel selection happens at enqueue, not delivery (PR #5)
+
+The original §4 proposal called for channel selection to be resolved at delivery time, so that a preference change would take effect immediately for any not-yet-delivered notification. PR #5 instead resolves channels at enqueue time via `channel-resolver.ts` and writes outbox rows accordingly. A preference change therefore only affects future enqueue calls — already-queued outbox rows are unaffected.
+
+Rationale: a preference-change-affects-queued-rows model would require a `skipped` terminal state on the outbox plus per-row preference re-evaluation in the worker hot path. The current implementation keeps the worker simple (the row says "deliver to this target on this channel" — the worker has no preference logic) and accepts at most a 30-second window where a freshly-queued row reflects the previous preference. That window is acceptable for a preference change made by the recipient themselves.
+
+### Per-principal preferences only; per-org defaults deferred (PR #5)
+
+ADR-009 §4 defined a three-tier resolution: hard-coded category default → org override → principal preference. PR #5 ships per-principal preferences only; the org-override tier is deferred. The shipped resolver has two tiers: `CATEGORY_DEFAULT_CHANNELS` then per-principal preference. Adding org-level overrides later is additive — a new table (`notifications.org_category_defaults`) and one extra step in the resolver.
+
+### Webhook URL configuration moves to PR #4 bundle
+
+ADR-009 §7 placed `webhook_url` on `notifications.principal_preferences`. PR #5 ships preferences without that column because the webhook channel itself is not yet implemented (PR #4). When PR #4 lands, it will add webhook URL configuration alongside the webhook delivery handler so the two land together. Until then, opting a category to `webhook` via the preferences API has no effect — the channel resolver will include `webhook` in the result, but `enqueue` cannot snapshot a target URL and the row is not written. This is acceptable transitional state given the deliberate phasing.
+
 ---
 
 ## References

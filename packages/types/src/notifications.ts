@@ -215,6 +215,43 @@ export const DELIVERY_RETRY_DELAYS_SECONDS: ReadonlyArray<number> = [
  */
 export const MAX_DELIVERY_ATTEMPTS = 3;
 
+// ---------------------------------------------------------------------------
+// Per-principal preferences (PR #5, F11.3)
+// ---------------------------------------------------------------------------
+
+export interface NotificationPreference {
+  orgId: Uuid;
+  /** Principal these preferences belong to. */
+  principalId: Uuid;
+  category: NotificationCategory;
+  /**
+   * When false, the principal opts out of this category. Governance-mandatory
+   * categories (GOVERNANCE_MANDATORY_CATEGORIES) ignore enabled=false at
+   * resolution time — they are always delivered to at least the in-platform
+   * channel regardless of preference.
+   */
+  enabled: boolean;
+  /**
+   * Channel override. When non-empty, replaces the category's default channel
+   * set for this principal. The in-platform channel is always added back at
+   * resolution time so the notification reaches the inbox regardless of
+   * override. Empty array means "no override; use the category default."
+   */
+  channels: NotificationDeliveryChannel[];
+  updatedAt: IsoTimestamp;
+}
+
+export interface UpdateNotificationPreferenceRequest {
+  enabled?: boolean;
+  /**
+   * Channel override; pass an empty array to clear an override and fall back
+   * to the category default.
+   */
+  channels?: NotificationDeliveryChannel[];
+}
+
+export type NotificationPreferenceList = PaginatedList<NotificationPreference>;
+
 /**
  * Categories that are governance-mandatory per F11.3. Principals may not opt
  * out of these. Channel overrides are still permitted, but the notification
