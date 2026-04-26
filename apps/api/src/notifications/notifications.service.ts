@@ -8,12 +8,16 @@ import {
   type NotificationDeliveryChannel,
   type NotificationList,
   type NotificationListFilters,
-  CATEGORY_DEFAULT_CHANNELS,
   DEFAULT_DEDUP_WINDOW_SECONDS,
 } from '@provenance/types';
 import { NotificationEntity } from './entities/notification.entity.js';
 import { NotificationDeliveryOutboxEntity } from './entities/notification-delivery-outbox.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { resolveChannels } from './channel-resolver.js';
+import {
+  NotificationPreferencesService,
+  preferenceKey,
+} from './notification-preferences.service.js';
 
 // In-platform notification routing for Domain 11 (ADR-009).
 //
@@ -38,6 +42,7 @@ export class NotificationsService {
     private readonly principalRepo: Repository<PrincipalEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly preferences: NotificationPreferencesService,
   ) {}
 
   // F11.1 + F11.2 (in-platform + email) + F11.5. Routes a notification to
@@ -58,15 +63,32 @@ export class NotificationsService {
     }
 
     const since = new Date(Date.now() - DEFAULT_DEDUP_WINDOW_SECONDS * 1000);
-    const channels = CATEGORY_DEFAULT_CHANNELS[input.category];
-    const outOfBandChannels = channels.filter((c) => c !== 'in_platform');
 
-    // Pre-resolve recipient contact info so the transaction below stays short
-    // and read-only outside of writes. Only fetched if we actually need it.
-    const principalContacts =
-      outOfBandChannels.length > 0
-        ? await this.loadPrincipalContacts(input.recipients)
-        : new Map<string, PrincipalEntity>();
+    // Resolve per-recipient channel set up front. Each recipient may have
+    // their own preference (opt-out, channel override, etc.); we batch the
+    // preference lookup so this is one round-trip regardless of recipient
+    // count. The pre-resolved channel sets feed both the contact-info
+    // pre-fetch (only fetch principals if any out-of-band channels are
+    // actually in play) and the per-recipient outbox write loop below.
+    const principalPreferences = await this.preferences.loadByRecipients(
+      input.orgId,
+      input.recipients,
+    );
+    const channelsByRecipient = new Map<string, NotificationDeliveryChannel[]>();
+    let needContactLookup = false;
+    for (const recipientPrincipalId of input.recipients) {
+      const pref =
+        principalPreferences.get(preferenceKey(recipientPrincipalId, input.category)) ?? null;
+      const channels = resolveChannels(input.category, pref);
+      channelsByRecipient.set(recipientPrincipalId, channels);
+      if (channels.some((c) => c !== 'in_platform')) {
+        needContactLookup = true;
+      }
+    }
+
+    const principalContacts = needContactLookup
+      ? await this.loadPrincipalContacts(input.recipients)
+      : new Map<string, PrincipalEntity>();
 
     const out: Notification[] = [];
 
@@ -84,6 +106,9 @@ export class NotificationsService {
         out.push(this.toDto({ ...existing, dedupCount: existing.dedupCount + 1 }));
         continue;
       }
+
+      const recipientChannels = channelsByRecipient.get(recipientPrincipalId) ?? ['in_platform'];
+      const outOfBandChannels = recipientChannels.filter((c) => c !== 'in_platform');
 
       const saved = await this.dataSource.transaction(async (em) => {
         const notifRepo = em.getRepository(NotificationEntity);

@@ -1,11 +1,18 @@
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
-import type { EnqueueNotificationInput } from '@provenance/types';
+import type {
+  EnqueueNotificationInput,
+  NotificationPreference,
+} from '@provenance/types';
 import { NotificationsService } from '../notifications.service.js';
 import { NotificationEntity } from '../entities/notification.entity.js';
 import { NotificationDeliveryOutboxEntity } from '../entities/notification-delivery-outbox.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
+import {
+  NotificationPreferencesService,
+  preferenceKey,
+} from '../notification-preferences.service.js';
 
 const ORG_ID = 'org-1';
 const PRINCIPAL_A = 'principal-a';
@@ -76,6 +83,7 @@ describe('NotificationsService', () => {
     getManyAndCount: jest.Mock;
   };
   let principalRepo: { find: jest.Mock };
+  let preferences: { loadByRecipients: jest.Mock };
   let txnNotifRepo: { create: jest.Mock; save: jest.Mock };
   let txnOutboxRepo: { create: jest.Mock; save: jest.Mock };
   let dataSource: { transaction: jest.Mock };
@@ -101,6 +109,13 @@ describe('NotificationsService', () => {
 
     principalRepo = {
       find: jest.fn().mockResolvedValue([makePrincipal()]),
+    };
+
+    // Default: no per-principal preferences saved → resolver falls back to
+    // CATEGORY_DEFAULT_CHANNELS for every recipient. Tests that exercise
+    // preference branches override this on a case-by-case basis.
+    preferences = {
+      loadByRecipients: jest.fn().mockResolvedValue(new Map<string, NotificationPreference>()),
     };
 
     txnNotifRepo = {
@@ -136,6 +151,7 @@ describe('NotificationsService', () => {
         { provide: getRepositoryToken(NotificationEntity), useValue: repo },
         { provide: getRepositoryToken(PrincipalEntity), useValue: principalRepo },
         { provide: getDataSourceToken(), useValue: dataSource },
+        { provide: NotificationPreferencesService, useValue: preferences },
       ],
     }).compile();
 
@@ -236,6 +252,94 @@ describe('NotificationsService', () => {
       // No new notification row, and no email — dedup suppression covers
       // downstream channels too.
       expect(txnNotifRepo.save).not.toHaveBeenCalled();
+      expect(txnOutboxRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('skips the email outbox row when the recipient has opted out of the category', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+      preferences.loadByRecipients.mockResolvedValue(
+        new Map([
+          [
+            preferenceKey(PRINCIPAL_A, 'slo_violation'),
+            {
+              orgId: ORG_ID,
+              principalId: PRINCIPAL_A,
+              category: 'slo_violation',
+              enabled: false,
+              channels: [],
+              updatedAt: '2026-04-26T12:00:00Z',
+            } as NotificationPreference,
+          ],
+        ]),
+      );
+
+      await service.enqueue(input({ category: 'slo_violation' }));
+
+      // In-platform row still written (resolver always retains in_platform).
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(1);
+      // No email outbox row — opt-out collapsed channels to in_platform only.
+      expect(txnOutboxRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('honors a channel override when one is set on the preference', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+      // product_published is in_platform-only by default. The principal here
+      // has overridden it to include email — confirm the outbox row appears.
+      preferences.loadByRecipients.mockResolvedValue(
+        new Map([
+          [
+            preferenceKey(PRINCIPAL_A, 'product_published'),
+            {
+              orgId: ORG_ID,
+              principalId: PRINCIPAL_A,
+              category: 'product_published',
+              enabled: true,
+              channels: ['email'],
+              updatedAt: '2026-04-26T12:00:00Z',
+            } as NotificationPreference,
+          ],
+        ]),
+      );
+
+      await service.enqueue(input({ category: 'product_published' }));
+
+      expect(txnOutboxRepo.save).toHaveBeenCalledTimes(1);
+      expect(txnOutboxRepo.create.mock.calls[0][0].channel).toBe('email');
+    });
+
+    it('still delivers governance-mandatory categories at in_platform even when opted out', async () => {
+      qb.getOne.mockResolvedValue(null);
+      principalRepo.find.mockResolvedValue([
+        makePrincipal({ id: PRINCIPAL_A, email: 'a@example.com' }),
+      ]);
+      preferences.loadByRecipients.mockResolvedValue(
+        new Map([
+          [
+            preferenceKey(PRINCIPAL_A, 'frozen_operation_disposition'),
+            {
+              orgId: ORG_ID,
+              principalId: PRINCIPAL_A,
+              category: 'frozen_operation_disposition',
+              enabled: false,
+              channels: [],
+              updatedAt: '2026-04-26T12:00:00Z',
+            } as NotificationPreference,
+          ],
+        ]),
+      );
+
+      await service.enqueue(input({ category: 'frozen_operation_disposition' }));
+
+      // The notification still lands in the inbox; governance-mandatory
+      // can't be fully suppressed.
+      expect(txnNotifRepo.save).toHaveBeenCalledTimes(1);
+      // Email is stripped though — out-of-band channels honor the opt-out.
       expect(txnOutboxRepo.save).not.toHaveBeenCalled();
     });
 

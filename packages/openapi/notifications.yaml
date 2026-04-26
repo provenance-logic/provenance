@@ -19,6 +19,8 @@ servers:
 tags:
   - name: Notifications
     description: In-platform notification inbox
+  - name: NotificationPreferences
+    description: Per-principal notification preferences (F11.3)
 
 paths:
   /organizations/{orgId}/notifications:
@@ -116,6 +118,84 @@ paths:
                 $ref: '#/components/schemas/Notification'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /organizations/{orgId}/notifications/preferences:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+
+    get:
+      operationId: listNotificationPreferences
+      summary: List the calling principal's notification preferences (F11.3)
+      tags: [NotificationPreferences]
+      description: |
+        Returns every preference row the calling principal has saved. Categories
+        without a saved row use the platform-default channel set
+        (`CATEGORY_DEFAULT_CHANNELS` in `@provenance/types`); the absence of a
+        row is the answer for those categories.
+      responses:
+        '200':
+          description: Array of saved preferences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationPreference'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /organizations/{orgId}/notifications/preferences/{category}:
+    parameters:
+      - $ref: '#/components/parameters/orgId'
+      - name: category
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/NotificationCategory'
+
+    put:
+      operationId: upsertNotificationPreference
+      summary: Set the calling principal's preference for a category
+      tags: [NotificationPreferences]
+      description: |
+        Creates or updates the preference row for the calling principal and
+        the given category. Either `enabled` or `channels` (or both) may be
+        supplied; missing fields keep their existing value.
+
+        Governance-mandatory categories (F11.3) ignore `enabled = false` at
+        resolution time and are always delivered to at least the in-platform
+        channel. The override request is still saved but does not actually
+        suppress delivery for those categories.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationPreferenceRequest'
+      responses:
+        '200':
+          description: Saved preference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    delete:
+      operationId: resetNotificationPreference
+      summary: Reset a category's preference to the platform default
+      tags: [NotificationPreferences]
+      description: |
+        Removes the saved preference row for the calling principal and the
+        given category. The channel resolver treats a missing row as
+        "use the platform default," so deletion is the correct shape for
+        "reset."
+
+        Idempotent — deleting a non-existent preference returns 204.
+      responses:
+        '204':
+          description: Preference reset
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
   parameters:
@@ -296,3 +376,58 @@ components:
             $ref: '#/components/schemas/Notification'
         meta:
           $ref: '#/components/schemas/PaginationMeta'
+
+    NotificationDeliveryChannel:
+      type: string
+      enum: [in_platform, email, webhook]
+
+    NotificationPreference:
+      type: object
+      required:
+        - orgId
+        - principalId
+        - category
+        - enabled
+        - channels
+        - updatedAt
+      properties:
+        orgId:
+          type: string
+          format: uuid
+        principalId:
+          type: string
+          format: uuid
+        category:
+          $ref: '#/components/schemas/NotificationCategory'
+        enabled:
+          type: boolean
+          description: |
+            When false, the principal opts out of this category. Governance-
+            mandatory categories ignore this flag at resolution time.
+        channels:
+          type: array
+          description: |
+            Channel override. When non-empty, replaces the category's default
+            channel set for this principal. The in-platform channel is always
+            re-added at resolution time.
+          items:
+            $ref: '#/components/schemas/NotificationDeliveryChannel'
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdateNotificationPreferenceRequest:
+      type: object
+      description: |
+        At least one of `enabled` or `channels` must be supplied; missing
+        fields are left unchanged.
+      properties:
+        enabled:
+          type: boolean
+        channels:
+          type: array
+          description: |
+            Pass an empty array to clear an existing override and fall back to
+            the category default.
+          items:
+            $ref: '#/components/schemas/NotificationDeliveryChannel'
