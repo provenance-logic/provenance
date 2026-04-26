@@ -1,45 +1,73 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import {
   type EnqueueNotificationInput,
   type Notification,
   type NotificationCategory,
+  type NotificationDeliveryChannel,
   type NotificationList,
   type NotificationListFilters,
+  CATEGORY_DEFAULT_CHANNELS,
   DEFAULT_DEDUP_WINDOW_SECONDS,
 } from '@provenance/types';
 import { NotificationEntity } from './entities/notification.entity.js';
+import { NotificationDeliveryOutboxEntity } from './entities/notification-delivery-outbox.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 
 // In-platform notification routing for Domain 11 (ADR-009).
 //
-// This service is the single entry point for any module that needs to
-// notify a principal about a platform event. Trigger modules call
-// `enqueue()` with a pre-resolved recipient list (recipients are
-// snapshotted at trigger time, never resolved lazily here).
+// Single entry point for any module that needs to notify a principal about a
+// platform event. Trigger modules call `enqueue()` with a pre-resolved
+// recipient list (recipients are snapshotted at trigger time, never resolved
+// lazily here).
 //
-// PR #2 covers the in-platform channel only — the row written here IS
-// the in-platform delivery. Email/webhook delivery channels and the
-// outbox/worker that drives them land in subsequent PRs.
+// PR #2 landed the in-platform tier; PR #3 (this version) wires the email
+// channel by writing rows to notifications.delivery_outbox in the same
+// transaction as the parent notifications.notifications row. The outbox is
+// drained asynchronously by NotificationDeliveryWorker. Webhook channel
+// (PR #4) reuses the same outbox.
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(NotificationEntity)
     private readonly repo: Repository<NotificationEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
-  // F11.1 + F11.5. Routes a notification to each recipient, deduplicating
-  // against any row with the same (orgId, recipientPrincipalId, category,
-  // dedupKey) created within DEFAULT_DEDUP_WINDOW_SECONDS. On dedup hit,
-  // the existing row's dedupCount is incremented and the existing row is
-  // returned in place of a new row — the caller cannot distinguish a
-  // dedup hit from a fresh row except by inspecting dedupCount.
+  // F11.1 + F11.2 (in-platform + email) + F11.5. Routes a notification to
+  // each recipient, deduplicating against any row with the same (orgId,
+  // recipientPrincipalId, category, dedupKey) created within
+  // DEFAULT_DEDUP_WINDOW_SECONDS. On dedup hit, the existing row's
+  // dedupCount is incremented and no new outbox rows are written —
+  // suppression covers downstream channels too (ADR-009 §5).
+  //
+  // For each fresh notification, outbox rows are written for every
+  // out-of-band channel the category routes to by default. Recipient
+  // contact info (email address) is snapshotted on the outbox row at
+  // enqueue time so a later profile change cannot redirect a queued
+  // delivery (ADR-009 §3).
   async enqueue(input: EnqueueNotificationInput): Promise<Notification[]> {
     if (input.recipients.length === 0) {
       return [];
     }
 
     const since = new Date(Date.now() - DEFAULT_DEDUP_WINDOW_SECONDS * 1000);
+    const channels = CATEGORY_DEFAULT_CHANNELS[input.category];
+    const outOfBandChannels = channels.filter((c) => c !== 'in_platform');
+
+    // Pre-resolve recipient contact info so the transaction below stays short
+    // and read-only outside of writes. Only fetched if we actually need it.
+    const principalContacts =
+      outOfBandChannels.length > 0
+        ? await this.loadPrincipalContacts(input.recipients)
+        : new Map<string, PrincipalEntity>();
+
     const out: Notification[] = [];
 
     for (const recipientPrincipalId of input.recipients) {
@@ -53,24 +81,57 @@ export class NotificationsService {
 
       if (existing) {
         await this.repo.increment({ id: existing.id }, 'dedupCount', 1);
-        // Return the in-memory row with the bumped count to avoid an extra
-        // round-trip; the persisted row is now dedupCount + 1 either way.
         out.push(this.toDto({ ...existing, dedupCount: existing.dedupCount + 1 }));
         continue;
       }
 
-      const draft = this.repo.create({
-        orgId: input.orgId,
-        recipientPrincipalId,
-        category: input.category,
-        payload: input.payload,
-        deepLink: input.deepLink,
-        dedupKey: input.dedupKey,
-        dedupCount: 1,
-        readAt: null,
-        dismissedAt: null,
+      const saved = await this.dataSource.transaction(async (em) => {
+        const notifRepo = em.getRepository(NotificationEntity);
+        const outboxRepo = em.getRepository(NotificationDeliveryOutboxEntity);
+
+        const draft = notifRepo.create({
+          orgId: input.orgId,
+          recipientPrincipalId,
+          category: input.category,
+          payload: input.payload,
+          deepLink: input.deepLink,
+          dedupKey: input.dedupKey,
+          dedupCount: 1,
+          readAt: null,
+          dismissedAt: null,
+        });
+        const savedRow = await notifRepo.save(draft);
+
+        for (const channel of outOfBandChannels) {
+          const target = this.resolveTargetForChannel(
+            channel,
+            recipientPrincipalId,
+            principalContacts,
+          );
+          if (!target) continue;
+          const outboxRow = outboxRepo.create({
+            notificationId: savedRow.id,
+            orgId: input.orgId,
+            channel,
+            target,
+            // Snapshot rendering inputs so the cron worker can render without
+            // joining notifications.notifications (which is RLS-enforced and
+            // would require setting an org context per-row).
+            category: input.category,
+            payload: input.payload,
+            deepLink: input.deepLink,
+            attemptCount: 0,
+            nextAttemptAt: new Date(),
+            deliveredAt: null,
+            failedAt: null,
+            lastError: null,
+          });
+          await outboxRepo.save(outboxRow);
+        }
+
+        return savedRow;
       });
-      const saved = await this.repo.save(draft);
+
       out.push(this.toDto(saved));
     }
 
@@ -147,6 +208,37 @@ export class NotificationsService {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  private async loadPrincipalContacts(
+    principalIds: string[],
+  ): Promise<Map<string, PrincipalEntity>> {
+    const rows = await this.principalRepo.find({
+      where: { id: In(principalIds) },
+    });
+    return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  private resolveTargetForChannel(
+    channel: NotificationDeliveryChannel,
+    recipientPrincipalId: string,
+    contacts: Map<string, PrincipalEntity>,
+  ): string | null {
+    if (channel === 'email') {
+      const principal = contacts.get(recipientPrincipalId);
+      if (!principal || !principal.email) {
+        // Principal lookup miss or no email on file. The in-platform row is
+        // still written; the recipient sees the notification next time they
+        // log in. Webhook channel (PR #4) follows the same pattern.
+        this.logger.warn(
+          `No email on file for principal ${recipientPrincipalId}; skipping email delivery`,
+        );
+        return null;
+      }
+      return principal.email;
+    }
+    // PR #4 will add 'webhook' resolution against principal preferences.
+    return null;
+  }
 
   private async findDedupCandidate(args: {
     orgId: string;

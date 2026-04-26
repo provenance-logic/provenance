@@ -122,6 +122,100 @@ export interface EnqueueNotificationInput {
 export const DEFAULT_DEDUP_WINDOW_SECONDS = 15 * 60;
 
 /**
+ * Delivery channels supported by the notification service.
+ * `in_platform` is satisfied by the notification row itself (no outbox row is
+ * written for it); `email` and `webhook` are queued via
+ * notifications.delivery_outbox and drained by NotificationDeliveryWorker.
+ */
+export type NotificationDeliveryChannel = 'in_platform' | 'email' | 'webhook';
+
+/**
+ * Status of a single delivery attempt for an out-of-band channel (email or webhook).
+ *
+ * - `pending`   — has not yet been attempted, or is scheduled for retry; the
+ *                 worker picks it up when `next_attempt_at <= now()`
+ * - `delivered` — successfully sent (delivered_at populated)
+ * - `failed`    — exhausted retry budget (failed_at and last_error populated)
+ */
+export type NotificationDeliveryStatus = 'pending' | 'delivered' | 'failed';
+
+export interface NotificationOutboxEntry {
+  id: string;
+  notificationId: Uuid;
+  orgId: Uuid;
+  channel: NotificationDeliveryChannel;
+  /** Snapshot of the destination (email address or webhook URL) at enqueue time. */
+  target: string;
+  attemptCount: number;
+  nextAttemptAt: IsoTimestamp;
+  deliveredAt: IsoTimestamp | null;
+  failedAt: IsoTimestamp | null;
+  lastError: string | null;
+  createdAt: IsoTimestamp;
+}
+
+/**
+ * Hard-coded default channels per category for PR #3 (before per-principal
+ * preferences land in PR #5). Every category routes to in-platform; the more
+ * urgent categories also route to email by default. The set is conservative —
+ * principals will always see the in-platform notification, and email is added
+ * for events that typically require timely action outside the platform UI.
+ *
+ * This map is the platform-shipped default. Org-level overrides and
+ * principal-level preferences land in PR #5.
+ */
+export const CATEGORY_DEFAULT_CHANNELS: Readonly<
+  Record<NotificationCategory, ReadonlyArray<NotificationDeliveryChannel>>
+> = {
+  // Access — owners and consumers act on these out-of-band frequently
+  access_request_submitted: ['in_platform', 'email'],
+  access_request_approved: ['in_platform', 'email'],
+  access_request_denied: ['in_platform', 'email'],
+  access_request_sla_warning: ['in_platform', 'email'],
+  access_request_sla_breach: ['in_platform', 'email'],
+  access_grant_expiring: ['in_platform', 'email'],
+  // Product lifecycle — high-impact for downstream consumers
+  product_deprecated: ['in_platform', 'email'],
+  product_decommissioned: ['in_platform', 'email'],
+  product_published: ['in_platform'],
+  schema_drift_detected: ['in_platform', 'email'],
+  // Observability — incident-shaped; email by default
+  slo_violation: ['in_platform', 'email'],
+  trust_score_significant_change: ['in_platform'],
+  connector_health_degraded: ['in_platform', 'email'],
+  // Governance
+  policy_change_impact: ['in_platform', 'email'],
+  compliance_drift_detected: ['in_platform', 'email'],
+  grace_period_expiring: ['in_platform', 'email'],
+  classification_changed: ['in_platform', 'email'],
+  // Agents — oversight contacts and governance act on these
+  agent_classification_changed: ['in_platform', 'email'],
+  agent_suspended: ['in_platform', 'email'],
+  human_review_required: ['in_platform', 'email'],
+  frozen_operation_disposition: ['in_platform', 'email'],
+  // Connection package + Domain 12 fan-out
+  connection_package_refreshed: ['in_platform'],
+  connection_reference_request: ['in_platform', 'email'],
+};
+
+/**
+ * Retry schedule for failed out-of-band deliveries (NF11.3: 3 attempts, exponential).
+ * Index N is the delay between attempt N (0-indexed) and the next attempt.
+ * After the third entry is consumed the row is marked failed.
+ */
+export const DELIVERY_RETRY_DELAYS_SECONDS: ReadonlyArray<number> = [
+  60,    // 1 minute after first failure
+  5 * 60, // 5 minutes after second failure
+  25 * 60, // 25 minutes after third failure (the cap before marking failed)
+];
+
+/**
+ * Maximum number of delivery attempts for an out-of-band channel. After this
+ * many failures the outbox row is marked failed and is not retried further.
+ */
+export const MAX_DELIVERY_ATTEMPTS = 3;
+
+/**
  * Categories that are governance-mandatory per F11.3. Principals may not opt
  * out of these. Channel overrides are still permitted, but the notification
  * will always be delivered through at least the in-platform channel.
