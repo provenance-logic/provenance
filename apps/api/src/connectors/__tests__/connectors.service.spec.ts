@@ -12,6 +12,8 @@ import { SourceRegistrationEntity } from '../entities/source-registration.entity
 import { SchemaSnapshotEntity } from '../entities/schema-snapshot.entity.js';
 import { ConnectorProbeService } from '../probe/connector-probe.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
+import { RoleAssignmentEntity } from '../../organizations/entities/role-assignment.entity.js';
 import type { ConnectorType } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,8 @@ describe('ConnectorsService', () => {
   let snapshotRepo: ReturnType<typeof mockRepo>;
   let probeService: ReturnType<typeof mockProbeService>;
   let kafkaProducer: ReturnType<typeof mockKafkaProducer>;
+  let roleRepo: ReturnType<typeof mockRepo>;
+  let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -119,8 +123,13 @@ describe('ConnectorsService', () => {
         { provide: getRepositoryToken(ConnectorHealthEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(SourceRegistrationEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(SchemaSnapshotEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(RoleAssignmentEntity), useFactory: mockRepo },
         { provide: ConnectorProbeService, useFactory: mockProbeService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducer },
+        {
+          provide: NotificationsService,
+          useValue: { enqueue: jest.fn().mockResolvedValue([]) },
+        },
       ],
     }).compile();
 
@@ -131,6 +140,8 @@ describe('ConnectorsService', () => {
     snapshotRepo = module.get(getRepositoryToken(SchemaSnapshotEntity));
     probeService = module.get(ConnectorProbeService);
     kafkaProducer = module.get(KafkaProducerService);
+    roleRepo = module.get(getRepositoryToken(RoleAssignmentEntity));
+    notificationsService = module.get(NotificationsService);
   });
 
   // -------------------------------------------------------------------------
@@ -302,6 +313,93 @@ describe('ConnectorsService', () => {
         'connector-1',
         expect.objectContaining({ eventType: 'connector.health_checked' }),
       );
+    });
+
+    it('enqueues connector_health_degraded only on transition from valid to invalid (F11.18)', async () => {
+      // Probe will return unreachable → newStatus 'invalid'.
+      probeService.probe.mockResolvedValueOnce({
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage: 'Connection refused',
+      });
+      const entity = makeConnectorEntity({ validationStatus: 'valid' });
+      connectorRepo.findOne.mockResolvedValue(entity);
+      connectorRepo.save.mockResolvedValue(entity);
+      healthEventRepo.create.mockImplementation((d: any) => d);
+      healthEventRepo.save.mockResolvedValue({
+        ...makeHealthEventEntity(),
+        status: 'unreachable',
+        errorMessage: 'Connection refused',
+      });
+      roleRepo.find.mockResolvedValue([
+        { principalId: 'domain-owner-1' },
+        { principalId: 'domain-owner-2' },
+      ]);
+
+      await service.validateConnector('org-1', 'connector-1');
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'connector_health_degraded',
+          recipients: ['domain-owner-1', 'domain-owner-2'],
+          dedupKey: 'connector_health_degraded:connector-1',
+        }),
+      );
+    });
+
+    it('does not enqueue when the connector was already invalid', async () => {
+      probeService.probe.mockResolvedValueOnce({
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage: 'still down',
+      });
+      const entity = makeConnectorEntity({ validationStatus: 'invalid' });
+      connectorRepo.findOne.mockResolvedValue(entity);
+      connectorRepo.save.mockResolvedValue(entity);
+      healthEventRepo.create.mockImplementation((d: any) => d);
+      healthEventRepo.save.mockResolvedValue({
+        ...makeHealthEventEntity(),
+        status: 'unreachable',
+      });
+
+      await service.validateConnector('org-1', 'connector-1');
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('does not enqueue when transition is invalid → valid (recovery is informational only)', async () => {
+      // Probe returns healthy. Connector was previously invalid.
+      const entity = makeConnectorEntity({ validationStatus: 'invalid' });
+      connectorRepo.findOne.mockResolvedValue(entity);
+      connectorRepo.save.mockResolvedValue(entity);
+      healthEventRepo.create.mockImplementation((d: any) => d);
+      healthEventRepo.save.mockResolvedValue(makeHealthEventEntity());
+
+      await service.validateConnector('org-1', 'connector-1');
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('skips the notification when no domain owners are configured', async () => {
+      probeService.probe.mockResolvedValueOnce({
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage: 'Down',
+      });
+      const entity = makeConnectorEntity({ validationStatus: 'valid' });
+      connectorRepo.findOne.mockResolvedValue(entity);
+      connectorRepo.save.mockResolvedValue(entity);
+      healthEventRepo.create.mockImplementation((d: any) => d);
+      healthEventRepo.save.mockResolvedValue({
+        ...makeHealthEventEntity(),
+        status: 'unreachable',
+      });
+      roleRepo.find.mockResolvedValue([]);
+
+      await service.validateConnector('org-1', 'connector-1');
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
     });
   });
 

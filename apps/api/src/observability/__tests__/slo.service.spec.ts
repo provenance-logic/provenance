@@ -6,6 +6,7 @@ import { SloDeclarationEntity } from '../entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from '../entities/slo-evaluation.entity.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { TrustScoreService } from '../../trust-score/trust-score.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -78,6 +79,7 @@ describe('SloService', () => {
   let declRepo: ReturnType<typeof mockRepo>;
   let evalRepo: ReturnType<typeof mockRepo>;
   let productRepo: ReturnType<typeof mockRepo>;
+  let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     declRepo = mockRepo();
@@ -91,10 +93,12 @@ describe('SloService', () => {
         { provide: getRepositoryToken(SloEvaluationEntity), useValue: evalRepo },
         { provide: getRepositoryToken(DataProductEntity), useValue: productRepo },
         { provide: TrustScoreService, useValue: { recompute: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { enqueue: jest.fn().mockResolvedValue([]) } },
       ],
     }).compile();
 
     service = module.get(SloService);
+    notificationsService = module.get(NotificationsService);
   });
 
   // -------------------------------------------------------------------------
@@ -197,6 +201,84 @@ describe('SloService', () => {
         evaluated_by: 'test',
       }),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  test('createEvaluation does not enqueue a notification when the evaluation passes', async () => {
+    const decl = makeDecl({ active: true });
+    declRepo.findOne.mockResolvedValue(decl);
+    evalRepo.create.mockImplementation((d: any) => d);
+    evalRepo.save.mockImplementation((d: any) =>
+      Promise.resolve({ ...d, evaluatedAt: new Date(d.evaluatedAt), createdAt: new Date() }),
+    );
+
+    await service.createEvaluation(ORG_ID, SLO_ID, {
+      measured_value: 18.5,
+      passed: true,
+      evaluated_at: '2026-04-27T00:00:00Z',
+      evaluated_by: 'test',
+    });
+
+    expect(notificationsService.enqueue).not.toHaveBeenCalled();
+  });
+
+  test('createEvaluation enqueues slo_violation when the evaluation fails (F11.16)', async () => {
+    const decl = makeDecl({ active: true });
+    declRepo.findOne.mockResolvedValue(decl);
+    evalRepo.create.mockImplementation((d: any) => d);
+    evalRepo.save.mockImplementation((d: any) =>
+      Promise.resolve({ ...d, evaluatedAt: new Date(d.evaluatedAt), createdAt: new Date() }),
+    );
+    productRepo.findOne.mockResolvedValue({
+      id: PRODUCT_ID,
+      orgId: ORG_ID,
+      name: 'Customer Events',
+      ownerPrincipalId: 'owner-1',
+    });
+
+    await service.createEvaluation(ORG_ID, SLO_ID, {
+      measured_value: 28.7,
+      passed: false,
+      evaluated_at: '2026-04-27T00:00:00Z',
+      evaluated_by: 'test',
+    });
+
+    expect(notificationsService.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: ORG_ID,
+        category: 'slo_violation',
+        recipients: ['owner-1'],
+        // Date-bucketed dedup so a sustained breach does not spam.
+        dedupKey: `slo_violation:${SLO_ID}:2026-04-27`,
+      }),
+    );
+    const call = notificationsService.enqueue.mock.calls[0][0] as { payload: Record<string, unknown> };
+    expect(call.payload.measuredValue).toBe(28.7);
+    expect(call.payload.sloId).toBe(SLO_ID);
+  });
+
+  test('createEvaluation completes even if notification enqueue throws', async () => {
+    const decl = makeDecl({ active: true });
+    declRepo.findOne.mockResolvedValue(decl);
+    evalRepo.create.mockImplementation((d: any) => d);
+    evalRepo.save.mockImplementation((d: any) =>
+      Promise.resolve({ ...d, evaluatedAt: new Date(d.evaluatedAt), createdAt: new Date(), id: 'eval-1' }),
+    );
+    productRepo.findOne.mockResolvedValue({
+      id: PRODUCT_ID,
+      orgId: ORG_ID,
+      name: 'X',
+      ownerPrincipalId: 'owner-1',
+    });
+    notificationsService.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+    const result = await service.createEvaluation(ORG_ID, SLO_ID, {
+      measured_value: 50,
+      passed: false,
+      evaluated_at: '2026-04-27T00:00:00Z',
+      evaluated_by: 'test',
+    });
+
+    expect(result.id).toBe('eval-1');
   });
 
   // -------------------------------------------------------------------------

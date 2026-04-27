@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -14,6 +15,8 @@ import { SchemaSnapshotEntity } from './entities/schema-snapshot.entity.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import type {
   Connector,
   ConnectorList,
@@ -34,6 +37,8 @@ import type {
 
 @Injectable()
 export class ConnectorsService {
+  private readonly logger = new Logger(ConnectorsService.name);
+
   constructor(
     @InjectRepository(ConnectorEntity)
     private readonly connectorRepo: Repository<ConnectorEntity>,
@@ -43,8 +48,11 @@ export class ConnectorsService {
     private readonly sourceRepo: Repository<SourceRegistrationEntity>,
     @InjectRepository(SchemaSnapshotEntity)
     private readonly snapshotRepo: Repository<SchemaSnapshotEntity>,
+    @InjectRepository(RoleAssignmentEntity)
+    private readonly roleRepo: Repository<RoleAssignmentEntity>,
     private readonly probeService: ConnectorProbeService,
     private readonly kafkaProducer: KafkaProducerService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -422,9 +430,44 @@ export class ConnectorsService {
       result.status === 'healthy' || result.status === 'degraded'
         ? 'valid'
         : 'invalid';
+    const previousStatus = connector.validationStatus;
     connector.validationStatus = newStatus;
     connector.lastValidatedAt = healthEvent.checkedAt;
     await this.connectorRepo.save(connector);
+
+    // F11.18 — fire connector health degraded notification on transition
+    // valid → invalid. Only on transition (not while continuously invalid)
+    // so the domain owner gets one notification per incident, not one per
+    // probe cycle. Best-effort: never fail the probe call because of
+    // notification failure.
+    if (previousStatus === 'valid' && newStatus === 'invalid') {
+      try {
+        const recipients = await this.domainOwners(connector.orgId, connector.domainId);
+        if (recipients.length > 0) {
+          await this.notificationsService.enqueue({
+            orgId: connector.orgId,
+            category: 'connector_health_degraded',
+            recipients,
+            payload: {
+              connectorId: connector.id,
+              connectorName: connector.name,
+              domainId: connector.domainId,
+              probeStatus: result.status,
+              errorMessage: result.errorMessage ?? null,
+              checkedAt: healthEvent.checkedAt.toISOString(),
+            },
+            deepLink: `/admin/connectors/${connector.id}`,
+            // dedup_key per-connector — flapping in/out of invalid within
+            // the dedup window collapses to one notification.
+            dedupKey: `connector_health_degraded:${connector.id}`,
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `Connector health degraded notification enqueue failed for ${connector.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     const message: ConnectorHealthEventMessage = {
       eventId: randomUUID(),
@@ -441,6 +484,18 @@ export class ConnectorsService {
     await this.kafkaProducer.publish('connector.health', connector.id, message);
 
     return this.toHealthEvent(healthEvent);
+  }
+
+  /**
+   * Resolves principal IDs of domain owners for the given (org, domain) pair.
+   * F11.18 recipient set per PRD: "the domain owner of the domain that
+   * registered the connector."
+   */
+  private async domainOwners(orgId: string, domainId: string): Promise<string[]> {
+    const rows = await this.roleRepo.find({
+      where: { orgId, role: 'domain_owner', domainId },
+    });
+    return rows.map((r) => r.principalId);
   }
 
   // ---------------------------------------------------------------------------
