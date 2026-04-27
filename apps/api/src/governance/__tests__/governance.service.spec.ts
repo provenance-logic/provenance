@@ -14,6 +14,7 @@ import { PrincipalEntity } from '../../organizations/entities/principal.entity.j
 import { OpaClient } from '../opa/opa-client.js';
 import { RegoCompiler } from '../compilation/rego-compiler.js';
 import { TrustScoreService } from '../../trust-score/trust-score.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 import type { DataProduct, RequestContext } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -111,7 +112,9 @@ describe('GovernanceService', () => {
   let complianceStateRepo: ReturnType<typeof mockRepo>;
   let exceptionRepo: ReturnType<typeof mockRepo>;
   let principalRepo: ReturnType<typeof mockRepo>;
+  let productRepo: ReturnType<typeof mockRepo>;
   let opaClient: ReturnType<typeof mockOpaClient>;
+  let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -129,6 +132,7 @@ describe('GovernanceService', () => {
         { provide: OpaClient, useFactory: mockOpaClient },
         RegoCompiler,
         { provide: TrustScoreService, useValue: { recompute: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { enqueue: jest.fn().mockResolvedValue([]) } },
       ],
     }).compile();
 
@@ -138,7 +142,9 @@ describe('GovernanceService', () => {
     complianceStateRepo = module.get(getRepositoryToken(ComplianceStateEntity));
     exceptionRepo = module.get(getRepositoryToken(ExceptionEntity));
     principalRepo = module.get(getRepositoryToken(PrincipalEntity));
+    productRepo = module.get(getRepositoryToken(DataProductEntity));
     opaClient = module.get(OpaClient);
+    notificationsService = module.get(NotificationsService);
 
     // Default: ensurePrincipal returns an existing principal
     principalRepo.findOne.mockResolvedValue({ id: 'principal-1', keycloakSubject: 'kc-sub-1' });
@@ -304,6 +310,113 @@ describe('GovernanceService', () => {
 
       const result = await service.evaluate('org-1', makeProduct());
       expect(result.violations).toEqual([violation]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F11.20 — compliance_drift_detected notification
+  // ---------------------------------------------------------------------------
+
+  describe('compliance drift notification (F11.20)', () => {
+    it('enqueues compliance_drift_detected on transition compliant → non_compliant', async () => {
+      effectivePolicyRepo.find.mockResolvedValue([
+        makeEffectivePolicyEntity('product_schema'),
+      ]);
+      opaClient.evaluate.mockResolvedValue([
+        { rule_id: 'require_output_port', detail: 'no port', policyDomain: 'product_schema' },
+      ]);
+      complianceStateRepo.findOne.mockResolvedValue(makeComplianceStateEntity('compliant'));
+      complianceStateRepo.save.mockImplementation((d: any) => Promise.resolve(d));
+      productRepo.findOne.mockResolvedValue({
+        id: 'product-1',
+        orgId: 'org-1',
+        name: 'Customer Events',
+        ownerPrincipalId: 'owner-1',
+      });
+
+      await service.evaluate('org-1', makeProduct());
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'compliance_drift_detected',
+          recipients: ['owner-1'],
+          dedupKey: 'compliance_drift_detected:product-1',
+        }),
+      );
+    });
+
+    it('does NOT enqueue when state stays compliant', async () => {
+      effectivePolicyRepo.find.mockResolvedValue([
+        makeEffectivePolicyEntity('product_schema'),
+      ]);
+      opaClient.evaluate.mockResolvedValue([]);
+      complianceStateRepo.findOne.mockResolvedValue(makeComplianceStateEntity('compliant'));
+      complianceStateRepo.save.mockImplementation((d: any) => Promise.resolve(d));
+
+      await service.evaluate('org-1', makeProduct());
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('does NOT enqueue when state stays non_compliant (no transition)', async () => {
+      effectivePolicyRepo.find.mockResolvedValue([
+        makeEffectivePolicyEntity('product_schema'),
+      ]);
+      opaClient.evaluate.mockResolvedValue([
+        { rule_id: 'require_owner', detail: 'still missing', policyDomain: 'product_schema' },
+      ]);
+      complianceStateRepo.findOne.mockResolvedValue(makeComplianceStateEntity('non_compliant'));
+      complianceStateRepo.save.mockImplementation((d: any) => Promise.resolve(d));
+
+      await service.evaluate('org-1', makeProduct());
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('enqueues when a fresh row starts non_compliant (no prior state, never compliant)', async () => {
+      effectivePolicyRepo.find.mockResolvedValue([
+        makeEffectivePolicyEntity('product_schema'),
+      ]);
+      opaClient.evaluate.mockResolvedValue([
+        { rule_id: 'require_owner', detail: 'no owner', policyDomain: 'product_schema' },
+      ]);
+      complianceStateRepo.findOne.mockResolvedValue(null);
+      complianceStateRepo.create.mockImplementation((d: any) => d);
+      complianceStateRepo.save.mockResolvedValue({});
+      productRepo.findOne.mockResolvedValue({
+        id: 'product-1',
+        orgId: 'org-1',
+        name: 'X',
+        ownerPrincipalId: 'owner-1',
+      });
+
+      await service.evaluate('org-1', makeProduct());
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'compliance_drift_detected' }),
+      );
+    });
+
+    it('completes the evaluation even when notification enqueue throws', async () => {
+      effectivePolicyRepo.find.mockResolvedValue([
+        makeEffectivePolicyEntity('product_schema'),
+      ]);
+      opaClient.evaluate.mockResolvedValue([
+        { rule_id: 'r', detail: 'x', policyDomain: 'product_schema' },
+      ]);
+      complianceStateRepo.findOne.mockResolvedValue(makeComplianceStateEntity('compliant'));
+      complianceStateRepo.save.mockImplementation((d: any) => Promise.resolve(d));
+      productRepo.findOne.mockResolvedValue({
+        id: 'product-1',
+        orgId: 'org-1',
+        name: 'X',
+        ownerPrincipalId: 'owner-1',
+      });
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await service.evaluate('org-1', makeProduct());
+      expect(result.nonCompliant).toBe(1);
     });
   });
 

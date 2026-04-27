@@ -14,7 +14,9 @@ import { OpaClient, OPA_BASE_URL } from './opa/opa-client.js';
 import { RegoCompiler } from './compilation/rego-compiler.js';
 import { GovernanceService } from './governance.service.js';
 import { GovernanceController } from './governance.controller.js';
+import { GovernanceNotificationsTriggerWorker } from './governance-notifications-trigger.worker.js';
 import { TrustScoreModule } from '../trust-score/trust-score.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { TrustScoreModule } from '../trust-score/trust-score.module.js';
       PrincipalEntity,
     ]),
     forwardRef(() => TrustScoreModule),
+    NotificationsModule,
   ],
   providers: [
     {
@@ -39,6 +42,7 @@ import { TrustScoreModule } from '../trust-score/trust-score.module.js';
     OpaClient,
     RegoCompiler,
     GovernanceService,
+    GovernanceNotificationsTriggerWorker,
   ],
   controllers: [GovernanceController],
   // Export GovernanceService so ProductsModule can call evaluate() at publish time.

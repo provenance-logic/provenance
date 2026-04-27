@@ -40,6 +40,14 @@ export class GracePeriodEntity {
   @Column({ length: 32, default: 'pending' })
   outcome!: GracePeriodOutcome;
 
+  /**
+   * Idempotency marker for the F11.21 grace-period-expiring trigger.
+   * Set the first time GovernanceNotificationsTriggerWorker emits the
+   * warning so subsequent cron passes skip the row.
+   */
+  @Column({ name: 'expiry_warning_sent_at', type: 'timestamptz', nullable: true })
+  expiryWarningSentAt!: Date | null;
+
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
 }
