@@ -339,9 +339,9 @@ Architecture decisions in ADR-009 (notification routing, channels, dedup, retry)
 | F11.13 | Product Decommissioned | Implemented | Fired from `ProductsService.decommissionProduct` to all grantees including those whose grants were revoked within the past 90 days (per PRD wording). |
 | F11.14 | Product Published | Not implemented | Deferred — requires a subscription / interest model that does not exist in the codebase yet. PRD wording: "principals who have subscribed to the publishing domain or have expressed interest in the product's classification or tags." Will be wired when the subscription primitive lands. |
 | F11.15 | Schema Drift Detected | Not implemented | Deferred — there is no schema-drift detection code path in the codebase. The platform has compliance-state drift detection (governance domain) but nothing that compares port contract schemas across product versions. Will be wired when schema-drift detection itself ships. |
-| F11.16 | SLO Violation | Not implemented | Blocker. Trigger wiring lands in PR #9 (observability bundle). |
-| F11.17 | Trust Score Significant Change | Not implemented | PR #9. |
-| F11.18 | Connector Health Degraded | Not implemented | PR #9. |
+| F11.16 | SLO Violation | Implemented | Fired from `SloService.createEvaluation` when `passed = false`. Recipients: product owner. Date-bucketed `dedupKey` (`slo_violation:{sloId}:{YYYY-MM-DD}`) so a sustained breach collapses to one notification per day per SLO without preventing next-day repeats. Best-effort wrapper. |
+| F11.17 | Trust Score Significant Change | Not implemented | Deferred to PR #9b. Requires prior-score lookup + delta computation + consumer fan-out + per-day idempotency, all of which are substantial enough to warrant their own focused PR. |
+| F11.18 | Connector Health Degraded | Implemented | Fired from `ConnectorsService.runProbeAndRecord` only on transition `validationStatus: valid → invalid` (not while continuously invalid; not on recovery). Recipients: domain owners (`role='domain_owner' AND domain_id=connector.domainId`). Per-connector `dedupKey` so flapping in/out of invalid within the dedup window collapses. Best-effort wrapper. |
 | F11.19 | Policy Change Impact | Not implemented | Trigger wiring lands in PR #10 (governance bundle). |
 | F11.20 | Compliance Drift Detected | Not implemented | PR #10. |
 | F11.21 | Grace Period Expiring | Not implemented | PR #10. |

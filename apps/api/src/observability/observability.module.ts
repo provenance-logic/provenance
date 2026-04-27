@@ -6,6 +6,7 @@ import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { SloService } from './slo.service.js';
 import { SloController } from './slo.controller.js';
 import { TrustScoreModule } from '../trust-score/trust-score.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { TrustScoreModule } from '../trust-score/trust-score.module.js';
       DataProductEntity,
     ]),
     forwardRef(() => TrustScoreModule),
+    NotificationsModule,
   ],
   providers: [SloService],
   controllers: [SloController],

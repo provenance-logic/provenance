@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   Inject,
@@ -11,6 +12,7 @@ import { SloDeclarationEntity } from './entities/slo-declaration.entity.js';
 import { SloEvaluationEntity } from './entities/slo-evaluation.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { TrustScoreService } from '../trust-score/trust-score.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 // ---------------------------------------------------------------------------
 // DTO interfaces (used by controller and trust score engine)
@@ -60,6 +62,8 @@ export interface SloSummaryDto {
 
 @Injectable()
 export class SloService {
+  private readonly logger = new Logger(SloService.name);
+
   constructor(
     @InjectRepository(SloDeclarationEntity)
     private readonly declarationRepo: Repository<SloDeclarationEntity>,
@@ -69,6 +73,7 @@ export class SloService {
     private readonly productRepo: Repository<DataProductEntity>,
     @Inject(forwardRef(() => TrustScoreService))
     private readonly trustScoreService: TrustScoreService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -173,6 +178,47 @@ export class SloService {
 
     // Fire-and-forget trust score recompute
     this.trustScoreService.recompute(orgId, decl.productId).catch(() => {});
+
+    // F11.16 — fire SLO violation notification when the evaluation failed.
+    // Best-effort; never roll back the evaluation insert if notification fails.
+    if (!saved.passed) {
+      try {
+        const product = await this.productRepo.findOne({
+          where: { id: decl.productId, orgId },
+        });
+        if (product) {
+          // Dedup key includes evaluation date so multiple breaches in the
+          // same calendar day collapse, but a recurrence on the next day
+          // still fires (the 15-min in-memory dedup window would otherwise
+          // expire too quickly to suppress repeats during a sustained
+          // incident).
+          const dateBucket = saved.evaluatedAt.toISOString().slice(0, 10);
+          await this.notificationsService.enqueue({
+            orgId,
+            category: 'slo_violation',
+            recipients: [product.ownerPrincipalId],
+            payload: {
+              productId: product.id,
+              productName: product.name,
+              sloId: decl.id,
+              sloName: decl.name,
+              sloType: decl.sloType,
+              metricName: decl.metricName,
+              thresholdValue: Number(decl.thresholdValue),
+              thresholdOperator: decl.thresholdOperator,
+              measuredValue: Number(saved.measuredValue),
+              evaluatedAt: saved.evaluatedAt.toISOString(),
+            },
+            deepLink: `/products/${product.id}/observability`,
+            dedupKey: `slo_violation:${decl.id}:${dateBucket}`,
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `SLO violation notification enqueue failed for SLO ${decl.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     return this.toEvaluationDto(saved);
   }
