@@ -15,6 +15,8 @@ import { NewOrganizationForm } from '../features/onboarding/NewOrganizationForm.
 import { NewDomainForm } from '../features/onboarding/NewDomainForm.js';
 import { AcceptInvitePage } from '../features/onboarding/AcceptInvitePage.js';
 import { DomainTeamPage } from '../features/team/DomainTeamPage.js';
+import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
+import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 
 function ComingSoon({ title }: { title: string }) {
   return (
@@ -77,6 +79,10 @@ export function AppRouter() {
           <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
           <Route path="governance/exceptions" element={<ExceptionsPage />} />
           <Route path="agents" element={<ComingSoon title="Agents" />} />
+
+          {/* Notifications (Domain 11 — F11.4) */}
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="notifications/preferences" element={<NotificationPreferencesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
