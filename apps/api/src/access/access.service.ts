@@ -100,6 +100,49 @@ export class AccessService {
     };
   }
 
+  /**
+   * Returns deduplicated principal IDs for grants on a product. Used by
+   * trigger modules (e.g. ProductsService for F11.12 / F11.13) to resolve
+   * notification recipient sets.
+   *
+   * - When `includeRevokedSince` is omitted, only non-revoked + non-expired
+   *   grants are included (current consumers).
+   * - When `includeRevokedSince` is supplied, the result includes any grant
+   *   whose revoked_at is on or after that timestamp, in addition to active
+   *   grants. Used for "consumers within the past N days" recipient sets.
+   */
+  async listGranteesForProduct(
+    orgId: string,
+    productId: string,
+    options: { includeRevokedSince?: Date } = {},
+  ): Promise<string[]> {
+    const qb = this.grantRepo
+      .createQueryBuilder('grant')
+      .select('DISTINCT grant.granteePrincipalId', 'granteePrincipalId')
+      .where('grant.orgId = :orgId', { orgId })
+      .andWhere('grant.productId = :productId', { productId });
+
+    if (options.includeRevokedSince) {
+      // Active grants OR grants revoked on/after the cutoff.
+      qb.andWhere(
+        '(grant.revokedAt IS NULL OR grant.revokedAt >= :since)',
+        { since: options.includeRevokedSince },
+      ).andWhere(
+        '(grant.expiresAt IS NULL OR grant.expiresAt > :now OR grant.revokedAt IS NOT NULL)',
+        { now: new Date() },
+      );
+    } else {
+      // Active only.
+      qb.andWhere('grant.revokedAt IS NULL').andWhere(
+        '(grant.expiresAt IS NULL OR grant.expiresAt > :now)',
+        { now: new Date() },
+      );
+    }
+
+    const rows: { granteePrincipalId: string }[] = await qb.getRawMany();
+    return rows.map((r) => r.granteePrincipalId);
+  }
+
   async createGrant(
     orgId: string,
     dto: DirectGrantRequest,

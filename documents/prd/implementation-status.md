@@ -335,10 +335,10 @@ Architecture decisions in ADR-009 (notification routing, channels, dedup, retry)
 | F11.9 | Access Request SLA Warning | Implemented | `AccessNotificationsTriggerWorker` (every 5 min) scans pending requests where `requested_at <= now - 0.8 * APPROVAL_TIMEOUT_HOURS` and `sla_warning_sent_at IS NULL` (V25). Stamps the row on success so each request fires at most once. |
 | F11.10 | Access Request SLA Breach | Implemented | Same worker scans pending requests past `APPROVAL_TIMEOUT_HOURS` with `sla_breach_notified_at IS NULL`. Recipients: product owner + governance team (`identity.role_assignments.role = 'governance_member'`), deduplicated when overlap. |
 | F11.11 | Access Grant Expiring | Implemented | Same worker scans active grants where `expires_at` is within 14 days and `expiry_warning_sent_at IS NULL`. Stamps the grant on success. |
-| F11.12 | Product Deprecated | Not implemented | Blocker. Trigger wiring lands in PR #8 (product lifecycle bundle). |
-| F11.13 | Product Decommissioned | Not implemented | PR #8. |
-| F11.14 | Product Published | Not implemented | PR #8. |
-| F11.15 | Schema Drift Detected | Not implemented | PR #8. |
+| F11.12 | Product Deprecated | Implemented | Fired from `ProductsService.deprecateProduct` to all active grantees of the product. Recipients resolved via `AccessService.listGranteesForProduct`. |
+| F11.13 | Product Decommissioned | Implemented | Fired from `ProductsService.decommissionProduct` to all grantees including those whose grants were revoked within the past 90 days (per PRD wording). |
+| F11.14 | Product Published | Not implemented | Deferred — requires a subscription / interest model that does not exist in the codebase yet. PRD wording: "principals who have subscribed to the publishing domain or have expressed interest in the product's classification or tags." Will be wired when the subscription primitive lands. |
+| F11.15 | Schema Drift Detected | Not implemented | Deferred — there is no schema-drift detection code path in the codebase. The platform has compliance-state drift detection (governance domain) but nothing that compares port contract schemas across product versions. Will be wired when schema-drift detection itself ships. |
 | F11.16 | SLO Violation | Not implemented | Blocker. Trigger wiring lands in PR #9 (observability bundle). |
 | F11.17 | Trust Score Significant Change | Not implemented | PR #9. |
 | F11.18 | Connector Health Degraded | Not implemented | PR #9. |
