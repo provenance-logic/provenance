@@ -20,6 +20,7 @@ import { SearchIndexingService } from '../search/search-indexing.service.js';
 import { ProductEnrichmentService } from './product-enrichment.service.js';
 import { EncryptionService } from '../common/encryption.service.js';
 import { AccessService } from '../access/access.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConnectionProbeService } from './connection-probes/index.js';
 import { validateConnectionDetails } from './connection-details.schemas.js';
 import type {
@@ -63,6 +64,7 @@ export class ProductsService {
     private readonly enrichmentService: ProductEnrichmentService,
     private readonly encryptionService: EncryptionService,
     private readonly accessService: AccessService,
+    private readonly notificationsService: NotificationsService,
     private readonly connectionProbeService: ConnectionProbeService,
   ) {}
 
@@ -382,6 +384,24 @@ export class ProductsService {
     // Remove from semantic search index
     this.searchIndexingService.deleteFromIndex(productId).catch(() => {});
 
+    // F11.12 — notify all current consumers of the deprecation.
+    await this.fireNotification(async () => {
+      const recipients = await this.accessService.listGranteesForProduct(orgId, productId);
+      if (recipients.length === 0) return;
+      await this.notificationsService.enqueue({
+        orgId,
+        category: 'product_deprecated',
+        recipients,
+        payload: {
+          productId: saved.id,
+          productName: saved.name,
+          deprecatedAt: new Date().toISOString(),
+        },
+        deepLink: `/marketplace/products/${saved.id}`,
+        dedupKey: `product_deprecated:${saved.id}`,
+      });
+    });
+
     return this.toDataProduct(saved);
   }
 
@@ -406,7 +426,42 @@ export class ProductsService {
     // Remove from semantic search index
     this.searchIndexingService.deleteFromIndex(productId).catch(() => {});
 
+    // F11.13 — notify all consumers, including those whose grants were
+    // revoked within the past 90 days (per PRD wording).
+    await this.fireNotification(async () => {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const recipients = await this.accessService.listGranteesForProduct(orgId, productId, {
+        includeRevokedSince: ninetyDaysAgo,
+      });
+      if (recipients.length === 0) return;
+      await this.notificationsService.enqueue({
+        orgId,
+        category: 'product_decommissioned',
+        recipients,
+        payload: {
+          productId: saved.id,
+          productName: saved.name,
+          decommissionedAt: new Date().toISOString(),
+        },
+        deepLink: `/marketplace?replacement_for=${saved.id}`,
+        dedupKey: `product_decommissioned:${saved.id}`,
+      });
+    });
+
     return this.toDataProduct(saved);
+  }
+
+  // Wraps a notification enqueue so a notification failure cannot fail or
+  // roll back the lifecycle action that triggered it. The status transition
+  // and search-index removal have already happened by the time we get here.
+  private async fireNotification(fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn();
+    } catch (err) {
+      this.logger.error(
+        `Notification enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

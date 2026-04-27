@@ -20,6 +20,7 @@ import { SearchModule } from '../search/search.module.js';
 import { TrustScoreService } from '../search/trust-score.service.js';
 import { ProductEnrichmentModule } from './product-enrichment.module.js';
 import { AccessModule } from '../access/access.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConnectionProbeService } from './connection-probes/index.js';
 
 export { ProductsService };
@@ -45,6 +46,7 @@ export { ProductsService };
     SearchModule,
     ProductEnrichmentModule,
     AccessModule,
+    NotificationsModule,
   ],
   controllers: [ProductsController],
   providers: [ProductsService, TrustScoreService, ConnectionProbeService],

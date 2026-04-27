@@ -17,7 +17,17 @@ import { SearchIndexingService } from '../../search/search-indexing.service.js';
 import { ProductEnrichmentService } from '../product-enrichment.service.js';
 import { EncryptionService } from '../../common/encryption.service.js';
 import { AccessService } from '../../access/access.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 import { ConnectionProbeService } from '../connection-probes/index.js';
+
+// Provider factory for the NotificationsService mock so individual tests can
+// retrieve the mock and assert on enqueue calls.
+function notificationsServiceProvider() {
+  return {
+    provide: NotificationsService,
+    useValue: { enqueue: jest.fn().mockResolvedValue([]) },
+  };
+}
 import type { DataClassification } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -151,7 +161,11 @@ describe('ProductsService', () => {
   let principalRepo: ReturnType<typeof mockPrincipalRepo>;
   let governanceService: ReturnType<typeof mockGovernanceService>;
   let kafkaProducerService: ReturnType<typeof mockKafkaProducerService>;
-  let accessService: { refreshPackagesForProduct: jest.Mock };
+  let accessService: {
+    refreshPackagesForProduct: jest.Mock;
+    listGranteesForProduct: jest.Mock;
+  };
+  let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     module = await Test.createTestingModule({
@@ -164,7 +178,7 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
-        { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined) } },
+        { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined), deleteFromIndex: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ProductEnrichmentService,
           useValue: {
@@ -197,8 +211,10 @@ describe('ProductsService', () => {
           provide: AccessService,
           useValue: {
             refreshPackagesForProduct: jest.fn().mockResolvedValue({ refreshed: 0 }),
+            listGranteesForProduct: jest.fn().mockResolvedValue([]),
           },
         },
+        notificationsServiceProvider(),
         {
           provide: ConnectionProbeService,
           useValue: {
@@ -222,6 +238,7 @@ describe('ProductsService', () => {
     governanceService = module.get(GovernanceService);
     kafkaProducerService = module.get(KafkaProducerService);
     accessService = module.get(AccessService);
+    notificationsService = module.get(NotificationsService);
   });
 
   // ---------------------------------------------------------------------------
@@ -841,6 +858,90 @@ describe('ProductsService', () => {
 
       expect(lifecycleEventRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ note: 'Production ready' }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle notification triggers (PR #8 — F11.12 / F11.13)
+  // ---------------------------------------------------------------------------
+
+  describe('deprecateProduct() — F11.12 trigger', () => {
+    it('enqueues product_deprecated to all active grantees', async () => {
+      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'published', ports: [] }));
+      productRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      accessService.listGranteesForProduct.mockResolvedValue([
+        'consumer-1',
+        'consumer-2',
+      ]);
+      const notif = notificationsService;
+
+      await service.deprecateProduct('org-1', 'domain-1', 'product-1');
+
+      expect(accessService.listGranteesForProduct).toHaveBeenCalledWith('org-1', 'product-1');
+      expect(notif.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'product_deprecated',
+          recipients: ['consumer-1', 'consumer-2'],
+          dedupKey: 'product_deprecated:product-1',
+        }),
+      );
+    });
+
+    it('skips the notification when no grantees exist', async () => {
+      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'published', ports: [] }));
+      productRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      accessService.listGranteesForProduct.mockResolvedValue([]);
+      const notif = notificationsService;
+
+      await service.deprecateProduct('org-1', 'domain-1', 'product-1');
+
+      expect(notif.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('still completes the deprecation when notification enqueue fails (best-effort)', async () => {
+      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'published', ports: [] }));
+      productRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      accessService.listGranteesForProduct.mockResolvedValue(['consumer-1']);
+      const notif = notificationsService;
+      notif.enqueue.mockRejectedValueOnce(new Error('notif boom'));
+
+      const result = await service.deprecateProduct('org-1', 'domain-1', 'product-1');
+      expect(result.status).toBe('deprecated');
+    });
+  });
+
+  describe('decommissionProduct() — F11.13 trigger', () => {
+    it('enqueues product_decommissioned including grantees revoked within past 90 days', async () => {
+      productRepo.findOne.mockResolvedValue(makeProductEntity({ status: 'deprecated', ports: [] }));
+      productRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      accessService.listGranteesForProduct.mockResolvedValue([
+        'consumer-1',
+        'consumer-2',
+        'recently-revoked-consumer',
+      ]);
+      const notif = notificationsService;
+
+      await service.decommissionProduct('org-1', 'domain-1', 'product-1');
+
+      const call = accessService.listGranteesForProduct.mock.calls[0];
+      expect(call[0]).toBe('org-1');
+      expect(call[1]).toBe('product-1');
+      expect(call[2]).toMatchObject({ includeRevokedSince: expect.any(Date) });
+      // Cutoff should be approximately 90 days ago.
+      const cutoff = call[2].includeRevokedSince as Date;
+      const daysAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60 * 24);
+      expect(daysAgo).toBeGreaterThan(89);
+      expect(daysAgo).toBeLessThan(91);
+
+      expect(notif.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'product_decommissioned',
+          recipients: ['consumer-1', 'consumer-2', 'recently-revoked-consumer'],
+          dedupKey: 'product_decommissioned:product-1',
+        }),
       );
     });
   });
