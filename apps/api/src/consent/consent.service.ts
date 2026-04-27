@@ -10,6 +10,7 @@ import {
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { ConnectionPackageService } from '../access/connection-package.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type {
   ConnectionReference,
   ConnectionReferenceList,
@@ -52,6 +53,7 @@ export class ConsentService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => ConnectionPackageService))
     private readonly connectionPackageService: ConnectionPackageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getConnectionReference(
@@ -240,6 +242,41 @@ export class ConsentService {
     this.logger.log(
       `Connection reference ${saved.id} requested for agent ${saved.agentId} on product ${saved.productId} (classification ${classification})`,
     );
+
+    // F12.10 — fan out to the owning principal (product owner) so they can
+    // approve or deny. Best-effort: notification failure cannot roll back
+    // the request itself; it has already been transactionally persisted
+    // along with its outbox row and audit entry.
+    try {
+      await this.notificationsService.enqueue({
+        orgId,
+        category: 'connection_reference_request',
+        recipients: [product.ownerPrincipalId],
+        payload: {
+          referenceId: saved.id,
+          agentId: saved.agentId,
+          agentDisplayName: agent.displayName,
+          agentClassification: classification,
+          productId: saved.productId,
+          productName: product.name,
+          useCaseCategory: saved.useCaseCategory,
+          purposeElaboration: saved.purposeElaboration,
+          intendedScope: saved.intendedScope,
+          dataCategoryConstraints: saved.dataCategoryConstraints,
+          requestedDurationDays: saved.requestedDurationDays,
+          expiresAt: saved.expiresAt.toISOString(),
+        },
+        deepLink: `/admin/consent/connection-references/${saved.id}`,
+        // Per-reference dedup key — each request is unique; the key just
+        // provides traceability and collapses any rare double-submit.
+        dedupKey: `connection_reference_request:${saved.id}`,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Connection reference request notification failed for ${saved.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     return this.toDto(saved);
   }
 

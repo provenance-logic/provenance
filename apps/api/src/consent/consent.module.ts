@@ -6,6 +6,7 @@ import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessModule } from '../access/access.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConsentService } from './consent.service.js';
 import { ConsentController } from './consent.controller.js';
 
@@ -34,6 +35,7 @@ import { ConsentController } from './consent.controller.js';
     // package emission at activation). Both halves live behind forwardRef;
     // NestJS resolves the cycle at DI time.
     forwardRef(() => AccessModule),
+    NotificationsModule,
   ],
   providers: [ConsentService],
   controllers: [ConsentController],

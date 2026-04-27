@@ -16,6 +16,7 @@ import { DataProductEntity } from '../../products/entities/data-product.entity.j
 import { AgentIdentityEntity } from '../../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
 import { ConnectionPackageService } from '../../access/connection-package.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 const ORG_ID = 'org-1';
 const AGENT_ID = 'agent-1';
@@ -100,6 +101,7 @@ describe('ConsentService', () => {
   let grantRepo: { findOne: jest.Mock };
   let referenceRepo: { findOne: jest.Mock; createQueryBuilder: jest.Mock };
   let connectionPackageService: { generateForProduct: jest.Mock };
+  let notificationsService: { enqueue: jest.Mock };
   let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
   let outboxRepoInTxn: { create: jest.Mock; save: jest.Mock };
   let emQueryMock: jest.Mock;
@@ -127,6 +129,7 @@ describe('ConsentService', () => {
         ports: [{ portId: 'port-1', portName: 'events', interfaceType: 'rest_api', artifacts: {} }],
       }),
     };
+    notificationsService = { enqueue: jest.fn().mockResolvedValue([]) };
 
     referenceRepoInTxn = {
       create: jest.fn().mockImplementation((v) => v),
@@ -168,6 +171,7 @@ describe('ConsentService', () => {
         { provide: getRepositoryToken(AccessGrantEntity), useValue: grantRepo },
         { provide: getDataSourceToken(), useValue: dataSource },
         { provide: ConnectionPackageService, useValue: connectionPackageService },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -210,6 +214,39 @@ describe('ConsentService', () => {
       expect(auditArgs[4]).toBe('connection_reference');
       expect(auditArgs[5]).toBe('ref-1');
       expect(auditArgs[2]).toBe('ai_agent');
+    });
+
+    it('enqueues connection_reference_request to the product owner (F12.10)', async () => {
+      agentRepo.findOne.mockResolvedValue(makeAgent({ currentClassification: 'Autonomous' }));
+      productRepo.findOne.mockResolvedValue(makeProduct());
+      grantRepo.findOne.mockResolvedValue(makeGrant());
+
+      await service.requestConnectionReference(ORG_ID, AGENT_ID, makeDto());
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: ORG_ID,
+          category: 'connection_reference_request',
+          recipients: [OWNER_ID],
+          dedupKey: 'connection_reference_request:ref-1',
+        }),
+      );
+      const enqueueArg = notificationsService.enqueue.mock.calls[0][0] as {
+        payload: Record<string, unknown>;
+      };
+      expect(enqueueArg.payload.agentId).toBe(AGENT_ID);
+      expect(enqueueArg.payload.useCaseCategory).toBe('Reporting and Analytics');
+      expect(enqueueArg.payload.requestedDurationDays).toBe(30);
+    });
+
+    it('still creates the reference even if F12.10 notification enqueue fails (best-effort)', async () => {
+      agentRepo.findOne.mockResolvedValue(makeAgent({ currentClassification: 'Autonomous' }));
+      productRepo.findOne.mockResolvedValue(makeProduct());
+      grantRepo.findOne.mockResolvedValue(makeGrant());
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await service.requestConnectionReference(ORG_ID, AGENT_ID, makeDto());
+      expect(result.state).toBe('pending');
     });
 
     it('accepts a human proxy submitting on behalf of an Observed agent and records the proxy as the acting principal', async () => {
