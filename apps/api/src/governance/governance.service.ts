@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   Inject,
   forwardRef,
@@ -18,6 +19,7 @@ import { ExceptionEntity } from './entities/exception.entity.js';
 import { GracePeriodEntity } from './entities/grace-period.entity.js';
 import { OpaClient } from './opa/opa-client.js';
 import { RegoCompiler } from './compilation/rego-compiler.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type {
   PolicyDomain,
   PolicySchema,
@@ -51,6 +53,8 @@ import type {
 
 @Injectable()
 export class GovernanceService {
+  private readonly logger = new Logger(GovernanceService.name);
+
   constructor(
     @InjectRepository(PolicySchemaEntity)
     private readonly policySchemaRepo: Repository<PolicySchemaEntity>,
@@ -74,6 +78,7 @@ export class GovernanceService {
     private readonly regoCompiler: RegoCompiler,
     @Inject(forwardRef(() => TrustScoreService))
     private readonly trustScoreService: TrustScoreService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -618,6 +623,7 @@ export class GovernanceService {
     policyVersionId: string | null,
   ): Promise<void> {
     const existing = await this.complianceStateRepo.findOne({ where: { orgId, productId } });
+    const previousState: ComplianceStateValue | null = existing ? existing.state : null;
     if (existing) {
       existing.state = state;
       existing.violations = violations;
@@ -636,6 +642,42 @@ export class GovernanceService {
           nextEvaluationAt: null,
         }),
       );
+    }
+
+    // F11.20 — fire compliance_drift_detected on transition compliant → not.
+    // The PRD's "Drift Detected" state name corresponds to any non-compliant
+    // state in the codebase (`non_compliant`, `drift_detected`, etc.). The
+    // event of interest is the transition out of `compliant`. New rows that
+    // start non-compliant also count (no prior compliant state, but the
+    // product still went from "no record" → non-compliant; treat as drift).
+    if (state !== 'compliant' && previousState !== state) {
+      try {
+        const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
+        if (product) {
+          await this.notificationsService.enqueue({
+            orgId,
+            category: 'compliance_drift_detected',
+            recipients: [product.ownerPrincipalId],
+            payload: {
+              productId: product.id,
+              productName: product.name,
+              previousState,
+              currentState: state,
+              violationCount: violations.length,
+              violations,
+              policyVersionId,
+            },
+            deepLink: `/products/${product.id}/compliance`,
+            // Per-product key — multiple drifts within the dedup window
+            // collapse, but a recovery + new drift fires a fresh notification.
+            dedupKey: `compliance_drift_detected:${product.id}`,
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `Compliance drift notification enqueue failed for product ${productId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Fire-and-forget trust score recompute

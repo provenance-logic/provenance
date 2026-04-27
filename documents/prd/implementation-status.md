@@ -342,10 +342,10 @@ Architecture decisions in ADR-009 (notification routing, channels, dedup, retry)
 | F11.16 | SLO Violation | Implemented | Fired from `SloService.createEvaluation` when `passed = false`. Recipients: product owner. Date-bucketed `dedupKey` (`slo_violation:{sloId}:{YYYY-MM-DD}`) so a sustained breach collapses to one notification per day per SLO without preventing next-day repeats. Best-effort wrapper. |
 | F11.17 | Trust Score Significant Change | Not implemented | Deferred to PR #9b. Requires prior-score lookup + delta computation + consumer fan-out + per-day idempotency, all of which are substantial enough to warrant their own focused PR. |
 | F11.18 | Connector Health Degraded | Implemented | Fired from `ConnectorsService.runProbeAndRecord` only on transition `validationStatus: valid → invalid` (not while continuously invalid; not on recovery). Recipients: domain owners (`role='domain_owner' AND domain_id=connector.domainId`). Per-connector `dedupKey` so flapping in/out of invalid within the dedup window collapses. Best-effort wrapper. |
-| F11.19 | Policy Change Impact | Not implemented | Trigger wiring lands in PR #10 (governance bundle). |
-| F11.20 | Compliance Drift Detected | Not implemented | PR #10. |
-| F11.21 | Grace Period Expiring | Not implemented | PR #10. |
-| F11.22 | Classification Changed | Not implemented | PR #10. |
+| F11.19 | Policy Change Impact | Not implemented | Deferred — `GovernanceService.publishPolicyVersion` does not currently re-evaluate existing products. Detecting "policies that affect existing compliant products" requires that re-evaluation infrastructure to land first. |
+| F11.20 | Compliance Drift Detected | Implemented | Fired from `GovernanceService.upsertComplianceState` on transition `compliant → non_compliant` (or any non-compliant value). Also fires when a fresh row starts non-compliant (no prior compliant state). Per-product `dedupKey` collapses repeated drifts within the dedup window; recovery + new drift fires fresh. Recipients: product owner. Best-effort wrapper. |
+| F11.21 | Grace Period Expiring | Implemented | `GovernanceNotificationsTriggerWorker` (every 5 min) scans `governance.grace_periods` where `outcome='pending' AND expiry_warning_sent_at IS NULL AND ends_at` is within the next 7 days. Stamps `expiry_warning_sent_at` (V26) on success. Recipients: product owner. |
+| F11.22 | Classification Changed | Not implemented | Deferred — `ProductsService.updateProduct` rejects classification changes on published products (`ConflictException` at the controller layer). The trigger has no real recipients to notify in the current model. Will be wired if/when classification becomes mutable post-publish. |
 | F11.23 | Agent Classification Changed | Not implemented | Trigger wiring lands in PR #11 (agents bundle). |
 | F11.24 | Agent Suspended | Not implemented | PR #11. |
 | F11.25 | Human Review Required | Not implemented | Blocker. PR #11. |
