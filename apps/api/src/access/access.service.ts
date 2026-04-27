@@ -244,6 +244,7 @@ export class AccessService {
     if (!fresh) return { refreshed: 0 };
 
     let refreshed = 0;
+    const refreshedGrants: AccessGrantEntity[] = [];
     for (const grant of active) {
       const prior = grant.connectionPackage as unknown as ConnectionPackage | null;
       const nextVersion = (prior?.packageVersion ?? 0) + 1;
@@ -253,10 +254,42 @@ export class AccessService {
       } as unknown as Record<string, unknown>;
       await this.grantRepo.save(grant);
       refreshed++;
+      refreshedGrants.push(grant);
     }
     this.logger.log(
       `Refreshed ${refreshed} connection package(s) for product ${productId}`,
     );
+
+    // F11.27 — fire connection_package_refreshed per refreshed grant.
+    // Recipient: the grantee (typically an agent). The PRD also calls for
+    // the connection-reference-owning principal as a recipient, but the
+    // current F10.10 path operates at the grant level — references are
+    // notified separately when the system migrates to per-reference package
+    // refresh (ADR-008 follow-up). Best-effort wrapper.
+    for (const grant of refreshedGrants) {
+      try {
+        const newPackage = grant.connectionPackage as unknown as ConnectionPackage;
+        await this.notificationsService.enqueue({
+          orgId,
+          category: 'connection_package_refreshed',
+          recipients: [grant.granteePrincipalId],
+          payload: {
+            grantId: grant.id,
+            productId,
+            packageVersion: newPackage.packageVersion,
+          },
+          deepLink: `/marketplace/products/${productId}`,
+          // Per-grant + per-version key so a recipient sees one notification
+          // per actual refresh (not per cron tick if a refresh re-runs).
+          dedupKey: `connection_package_refreshed:${grant.id}:${newPackage.packageVersion}`,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Connection package refresh notification failed for grant ${grant.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     return { refreshed };
   }
 

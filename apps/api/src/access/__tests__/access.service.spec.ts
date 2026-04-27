@@ -343,6 +343,51 @@ describe('AccessService', () => {
       expect((g2.connectionPackage as { packageVersion: number }).packageVersion).toBe(1);
       expect((g1.connectionPackage as { ports: unknown[] }).ports).toEqual(freshPackage.ports);
     });
+
+    it('enqueues connection_package_refreshed per refreshed grant (F11.27)', async () => {
+      const g1 = makeGrant({
+        id: 'g1',
+        granteePrincipalId: 'consumer-1',
+        connectionPackage: { packageVersion: 3 } as Record<string, unknown>,
+      });
+      grantRepo.find.mockResolvedValue([g1]);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(freshPackage);
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+
+      await service.refreshPackagesForProduct('org-1', 'product-1');
+
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          category: 'connection_package_refreshed',
+          recipients: ['consumer-1'],
+          dedupKey: 'connection_package_refreshed:g1:4',
+        }),
+      );
+    });
+
+    it('does not enqueue when nothing was refreshed', async () => {
+      grantRepo.find.mockResolvedValue([]);
+      await service.refreshPackagesForProduct('org-1', 'product-1');
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('still completes the refresh when notification enqueue fails (best-effort)', async () => {
+      const g1 = makeGrant({
+        id: 'g1',
+        granteePrincipalId: 'consumer-1',
+        connectionPackage: null,
+      });
+      grantRepo.find.mockResolvedValue([g1]);
+      const cps = (service as unknown as { connectionPackageService: { generateForProduct: jest.Mock } }).connectionPackageService;
+      cps.generateForProduct.mockResolvedValueOnce(freshPackage);
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await service.refreshPackagesForProduct('org-1', 'product-1');
+      expect(result).toEqual({ refreshed: 1 });
+    });
   });
 
   // -------------------------------------------------------------------------
