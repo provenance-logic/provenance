@@ -12,7 +12,9 @@ import { z } from 'zod';
 import { AgentIdentityEntity } from './entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from './entities/agent-trust-classification.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type { RequestContext, RoleType } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -71,9 +73,12 @@ export class AgentsService {
     private readonly classificationRepo: Repository<AgentTrustClassificationEntity>,
     @InjectRepository(PrincipalEntity)
     private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectRepository(RoleAssignmentEntity)
+    private readonly roleRepo: Repository<RoleAssignmentEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly keycloakAdmin: KeycloakAdminService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async registerAgent(dto: CreateAgentDto, ctx: RequestContext) {
@@ -241,7 +246,79 @@ export class AgentsService {
       }
     }
 
+    // F11.23 — fire agent_classification_changed to oversight contact +
+    // governance team. Best-effort: notification failure must not roll back
+    // the classification change.
+    try {
+      const recipients = await this.classificationChangeRecipients(
+        agent.orgId,
+        agent.humanOversightContact,
+      );
+      if (recipients.length > 0) {
+        await this.notificationsService.enqueue({
+          orgId: agent.orgId,
+          category: 'agent_classification_changed',
+          recipients,
+          payload: {
+            agentId,
+            agentDisplayName: agent.displayName,
+            previousClassification: currentClassification,
+            newClassification: dto.classification,
+            transition: upgrade ? 'upgrade' : 'downgrade',
+            changedByPrincipalId: ctx.principalId,
+            reason: dto.reason,
+          },
+          deepLink: `/admin/agents/${agentId}`,
+          // Per-classification dedup key — collapses repeated notifications
+          // within the dedup window for the same transition, but a later
+          // change to a different classification produces a fresh notification.
+          dedupKey: `agent_classification_changed:${agentId}:${dto.classification}`,
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `Agent classification change notification failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     return this.formatAgentResponse(agent, savedClassification);
+  }
+
+  /**
+   * Resolves the recipient set for F11.23: the agent's human oversight
+   * contact (matched by email against identity.principals) plus all
+   * governance-role principals in the org. Deduplicated when overlap.
+   *
+   * If the oversight contact email does not match any platform principal,
+   * they are silently skipped — the governance team still receives the
+   * notification, and a warning is logged so operators can clean up the
+   * orphaned reference.
+   */
+  private async classificationChangeRecipients(
+    orgId: string,
+    oversightContactEmail: string,
+  ): Promise<string[]> {
+    const ids = new Set<string>();
+
+    const oversightPrincipal = await this.principalRepo.findOne({
+      where: { email: oversightContactEmail },
+    });
+    if (oversightPrincipal && oversightPrincipal.orgId === orgId) {
+      ids.add(oversightPrincipal.id);
+    } else {
+      this.logger.warn(
+        `Oversight contact ${oversightContactEmail} does not resolve to a platform principal in org ${orgId}; skipping`,
+      );
+    }
+
+    const governanceMembers = await this.roleRepo.find({
+      where: { orgId, role: 'governance_member' },
+    });
+    for (const m of governanceMembers) {
+      ids.add(m.principalId);
+    }
+
+    return Array.from(ids);
   }
 
   // ---------------------------------------------------------------------------

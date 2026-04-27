@@ -134,8 +134,10 @@ describe('AgentsService — registerAgent (Phase 5a-3)', () => {
       agentRepo as any,
       classificationRepo as any,
       principalRepo as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
       dsCtx.ds as any,
       keycloakAdmin as unknown as KeycloakAdminService,
+      { enqueue: jest.fn().mockResolvedValue([]) } as any,
     );
   });
 
@@ -326,8 +328,10 @@ describe('AgentsService — rotateSecret (Phase 5a-4)', () => {
       agentRepo as any,
       classificationRepo as any,
       principalRepo as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
       dsCtx.ds as any,
       keycloakAdmin as unknown as KeycloakAdminService,
+      { enqueue: jest.fn().mockResolvedValue([]) } as any,
     );
   });
 
@@ -490,8 +494,10 @@ describe('AgentsService — provisionCredentials (Phase 5c-10)', () => {
       agentRepo as any,
       classificationRepo as any,
       principalRepo as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
       dsCtx.ds as any,
       keycloakAdmin as unknown as KeycloakAdminService,
+      { enqueue: jest.fn().mockResolvedValue([]) } as any,
     );
   });
 
