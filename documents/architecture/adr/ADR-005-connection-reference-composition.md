@@ -146,7 +146,7 @@ Model each consent as a Rego policy rule and rely on OPA for evaluation. The con
 
 ## References
 
-- PRD Domain 12: `documents/prd/Provenance_PRD_v1.4.md` (F12.1 - F12.24, NF12.1 - NF12.8, AC12.1 - AC12.9)
+- PRD Domain 12: `documents/prd/Provenance_PRD_v1.5.md` (F12.1 - F12.25, NF12.1 - NF12.8, AC12.1 - AC12.9)
 - Microsoft Dataverse connection references: https://learn.microsoft.com/en-us/power-apps/maker/data-platform/create-connection-reference
 - PRD F6.7 (existing access grant model)
 - ADR-002 (JWT agent authentication, the identity primitive this composes with)

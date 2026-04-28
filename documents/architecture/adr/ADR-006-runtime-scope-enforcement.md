@@ -194,5 +194,5 @@ Write the scope match function in Rego but run it in an embedded OPA evaluator i
 - ADR-002 (JWT authentication, the preceding guard)
 - ADR-005 (connection reference composition primitive)
 - ADR-007 (state propagation, the source of cache invalidation events)
-- OPA policy evaluation documentation: `documents/architecture/Provenance_Architecture_v1.4.md` Section 3 (MVP Governance Architecture)
+- OPA policy evaluation documentation: `documents/architecture/Provenance_Architecture_v1.5.md` Section 3 (MVP Governance Architecture)
 - Transactional outbox pattern: Chris Richardson, *Microservices Patterns*, Chapter 3

@@ -223,7 +223,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
 | F7.1 | Unified Platform Shell | Implemented | |
-| F7.2 | Persona-Adaptive Navigation | Partially implemented | Navigation adapts; not fully persona-segmented per v1.4 spec |
+| F7.2 | Persona-Adaptive Navigation | Partially implemented | Navigation adapts; not fully persona-segmented per v1.5 spec |
 | F7.3 | Context Switching | Implemented | |
 | F7.4 | Global Search | Implemented | |
 | F7.5 | Notifications | Not implemented | Blocker - Domain 11 not implemented |
