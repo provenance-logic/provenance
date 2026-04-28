@@ -150,6 +150,7 @@ function ProductCard({ product, view }: { product: MarketplaceProduct; view: 'gr
       ? product.description.slice(0, 140) + '…'
       : product.description
     : null;
+  const isDeprecated = product.status === 'deprecated';
 
   const cardContent = (
     <>
@@ -159,6 +160,11 @@ function ProductCard({ product, view }: { product: MarketplaceProduct; view: 'gr
           <p className="text-xs text-slate-500 mt-0.5">{product.domainName}</p>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {isDeprecated && (
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 border border-orange-200">
+              Deprecated
+            </span>
+          )}
           <TrustBadge score={product.trustScore} />
           {product.complianceState && (
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${COMPLIANCE_BADGE[product.complianceState]}`}>
@@ -196,13 +202,17 @@ function ProductCard({ product, view }: { product: MarketplaceProduct; view: 'gr
     </>
   );
 
+  // Deprecated products are still navigable but visually muted so a viewer
+  // doesn't mistake them for first-class supported products at a glance.
+  const deprecatedClass = isDeprecated ? 'bg-slate-50 opacity-75 hover:opacity-100' : 'bg-white';
+
   if (view === 'list') {
     return (
       <button
         type="button"
         onClick={() => navigate(`/marketplace/${product.orgId}/${product.id}`)}
-        className="w-full text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-brand-500"
-        aria-label={`View details for ${product.name}`}
+        className={`w-full text-left ${deprecatedClass} border border-slate-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-brand-500`}
+        aria-label={`View details for ${product.name}${isDeprecated ? ' (deprecated)' : ''}`}
       >
         {cardContent}
       </button>
@@ -213,8 +223,8 @@ function ProductCard({ product, view }: { product: MarketplaceProduct; view: 'gr
     <button
       type="button"
       onClick={() => navigate(`/marketplace/${product.orgId}/${product.id}`)}
-      className="w-full text-left bg-white border border-slate-200 rounded-xl p-5 hover:border-brand-400 hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-brand-500 flex flex-col"
-      aria-label={`View details for ${product.name}`}
+      className={`w-full text-left ${deprecatedClass} border border-slate-200 rounded-xl p-5 hover:border-brand-400 hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-brand-500 flex flex-col`}
+      aria-label={`View details for ${product.name}${isDeprecated ? ' (deprecated)' : ''}`}
     >
       {cardContent}
     </button>
