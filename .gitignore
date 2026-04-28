@@ -56,3 +56,7 @@ infrastructure/terraform/.terraform.lock.hcl
 infrastructure/terraform/dev/.terraform/
 infrastructure/terraform/dev/*.tfstate
 infrastructure/terraform/dev/*.tfstate.backup
+
+# Claude Code runtime artifacts (per-machine session state)
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks/
