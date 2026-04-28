@@ -200,6 +200,99 @@ function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
           </div>
         </dl>
       </div>
+      {product.freshness && <FreshnessPanel freshness={product.freshness} />}
+      {product.columnSchema && <ColumnSchemaPanel columnSchema={product.columnSchema} />}
+    </div>
+  );
+}
+
+function FreshnessPanel({ freshness }: { freshness: NonNullable<MarketplaceProductDetail['freshness']> }) {
+  const lastRefreshedLabel = freshness.lastRefreshedAt
+    ? new Date(freshness.lastRefreshedAt).toLocaleString()
+    : 'Not yet observed';
+  const statusCls = freshness.passed
+    ? 'bg-green-50 text-green-700 border-green-200'
+    : 'bg-red-50 text-red-700 border-red-200';
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">Freshness</h3>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div>
+          <dt className="text-slate-400 text-xs">Status</dt>
+          <dd>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium border ${statusCls}`}>
+              {freshness.passed ? 'Within SLO' : 'Stale'}
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-400 text-xs">SLO type</dt>
+          <dd className="text-slate-700">{freshness.sloType}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-400 text-xs">Last refreshed</dt>
+          <dd className="text-slate-700">{lastRefreshedLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-400 text-xs">Last evaluated</dt>
+          <dd className="text-slate-700">{new Date(freshness.evaluatedAt).toLocaleString()}</dd>
+        </div>
+        {freshness.measuredValue !== null && (
+          <div className="col-span-2">
+            <dt className="text-slate-400 text-xs">Measured value</dt>
+            <dd className="text-slate-700 font-mono">{freshness.measuredValue}</dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function ColumnSchemaPanel({ columnSchema }: { columnSchema: NonNullable<MarketplaceProductDetail['columnSchema']> }) {
+  const PREVIEW_LIMIT = 20;
+  const previewColumns = columnSchema.columns.slice(0, PREVIEW_LIMIT);
+  const remaining = columnSchema.columnCount - previewColumns.length;
+  const capturedLabel = new Date(columnSchema.capturedAt).toLocaleString();
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-700">Column schema</h3>
+        <span className="text-xs text-slate-500">
+          {columnSchema.columnCount} column{columnSchema.columnCount === 1 ? '' : 's'}
+          {columnSchema.rowEstimate !== null && ` · ~${columnSchema.rowEstimate.toLocaleString()} rows`}
+        </span>
+      </div>
+      {previewColumns.length === 0 ? (
+        <p className="text-xs text-slate-500">No columns captured.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-400">
+                <th className="font-medium pb-2 pr-4">Name</th>
+                <th className="font-medium pb-2 pr-4">Type</th>
+                <th className="font-medium pb-2">Nullable</th>
+              </tr>
+            </thead>
+            <tbody className="text-slate-700">
+              {previewColumns.map((col) => (
+                <tr key={col.name} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-4 font-mono">{col.name}</td>
+                  <td className="py-1.5 pr-4 font-mono">{col.type}</td>
+                  <td className="py-1.5 text-slate-500">{col.nullable ? 'yes' : 'no'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {remaining > 0 && (
+            <p className="mt-2 text-xs text-slate-500">
+              + {remaining} more column{remaining === 1 ? '' : 's'} — see Schema tab for full contract.
+            </p>
+          )}
+        </div>
+      )}
+      <p className="mt-3 text-xs text-slate-400">Captured {capturedLabel}</p>
     </div>
   );
 }
