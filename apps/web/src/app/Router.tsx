@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { NavShell } from '../shared/components/NavShell.js';
 import { RequireAuth, RequireOrg } from '../auth/AuthProvider.js';
 import { DashboardRedirect } from '../features/publishing/DashboardRedirect.js';
@@ -15,12 +15,33 @@ import { NewOrganizationForm } from '../features/onboarding/NewOrganizationForm.
 import { NewDomainForm } from '../features/onboarding/NewDomainForm.js';
 import { AcceptInvitePage } from '../features/onboarding/AcceptInvitePage.js';
 import { DomainTeamPage } from '../features/team/DomainTeamPage.js';
+import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
+import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 
 function ComingSoon({ title }: { title: string }) {
   return (
     <div className="p-8">
       <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
       <p className="mt-2 text-sm text-slate-500">Coming in a later phase.</p>
+    </div>
+  );
+}
+
+function NotFoundPage() {
+  return (
+    <div className="p-8">
+      <h1 className="text-2xl font-semibold text-slate-900">Page not found</h1>
+      <p className="mt-2 text-sm text-slate-500">
+        That URL doesn&apos;t resolve to a page.
+      </p>
+      <div className="mt-4 flex gap-3 text-sm">
+        <Link to="/dashboard" className="text-brand-600 hover:text-brand-700">
+          Go to dashboard
+        </Link>
+        <Link to="/notifications" className="text-brand-600 hover:text-brand-700">
+          View notifications
+        </Link>
+      </div>
     </div>
   );
 }
@@ -77,6 +98,12 @@ export function AppRouter() {
           <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
           <Route path="governance/exceptions" element={<ExceptionsPage />} />
           <Route path="agents" element={<ComingSoon title="Agents" />} />
+
+          {/* Notifications (Domain 11 — F11.4) */}
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="notifications/preferences" element={<NotificationPreferencesPage />} />
+
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -32,6 +32,10 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { TrustScoreHistoryEntity } from '../trust-score/entities/trust-score-history.entity.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-classification.entity.js';
+import { NotificationEntity } from '../notifications/entities/notification.entity.js';
+import { NotificationDeliveryOutboxEntity } from '../notifications/entities/notification-delivery-outbox.entity.js';
+import { NotificationPreferenceEntity } from '../notifications/entities/notification-preference.entity.js';
+import { PrincipalNotificationSettingsEntity } from '../notifications/entities/principal-notification-settings.entity.js';
 
 @Module({
   imports: [
@@ -77,6 +81,10 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
             TrustScoreHistoryEntity,
             AgentIdentityEntity,
             AgentTrustClassificationEntity,
+            NotificationEntity,
+            NotificationDeliveryOutboxEntity,
+            NotificationPreferenceEntity,
+            PrincipalNotificationSettingsEntity,
           ],
           // Migrations are managed by Flyway — TypeORM never runs them.
           synchronize: false,

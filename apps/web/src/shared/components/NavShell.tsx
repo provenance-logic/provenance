@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider.js';
+import { NotificationBell } from '../../features/notifications/NotificationBell.js';
 
 interface NavItem {
   to: string;
@@ -42,6 +43,9 @@ export function NavShell() {
               </NavLink>
             </li>
           ))}
+          <li className="pt-2">
+            <NotificationBell />
+          </li>
         </ul>
 
         <div className="px-4 py-4 border-t border-slate-700">
