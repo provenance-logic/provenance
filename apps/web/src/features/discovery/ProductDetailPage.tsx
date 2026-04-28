@@ -456,11 +456,12 @@ function PortsTab({ ports }: { ports: Port[] }) {
   );
 }
 
-type EffectiveAccessState = 'owner' | 'granted' | 'pending' | 'denied' | 'not_requested';
+type EffectiveAccessState = 'owner' | 'granted' | 'pending' | 'denied' | 'cross_org' | 'not_requested';
 
 function deriveAccessState(
   product: MarketplaceProductDetail,
   principalId: string | undefined,
+  callerOrgId: string | undefined,
   submittedRequest: AccessRequest | null,
 ): EffectiveAccessState {
   if (principalId && product.ownerPrincipalId === principalId) return 'owner';
@@ -469,6 +470,11 @@ function deriveAccessState(
   if (status === 'granted')       return 'granted';
   if (status === 'pending')       return 'pending';
   if (status === 'denied')        return 'denied';
+  // Marketplace is cross-org but the access-request endpoint is org-scoped
+  // (`/organizations/:orgId/access/requests`) and the API rejects requests
+  // when product.org_id !== caller.org_id with 403. Surface the constraint
+  // visually instead of letting the user click into a 403.
+  if (callerOrgId && product.orgId !== callerOrgId) return 'cross_org';
   return 'not_requested';
 }
 
@@ -547,6 +553,15 @@ function AccessTab({
           <p className="text-sm font-semibold text-red-800">Request denied</p>
           <p className="text-xs text-red-700 mt-1">
             A previous access request was denied. Contact the product owner before submitting a new request.
+          </p>
+        </div>
+      )}
+
+      {effectiveState === 'cross_org' && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+          <p className="text-sm font-semibold text-slate-800">Different organisation</p>
+          <p className="text-xs text-slate-600 mt-1">
+            This product belongs to another organisation. Cross-organisation access requests are not supported on this platform yet — contact the publishing organisation directly.
           </p>
         </div>
       )}
@@ -637,7 +652,7 @@ function PageSkeleton() {
 
 export function ProductDetailPage() {
   const { productId } = useParams<{ orgId: string; productId: string }>();
-  const { principalId } = useAuth();
+  const { principalId, orgId: callerOrgId } = useAuth();
   const [product, setProduct]           = useState<MarketplaceProductDetail | null>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
@@ -675,7 +690,7 @@ export function ProductDetailPage() {
   }
 
   const outputPorts     = product.ports.filter((p) => p.portType === 'output');
-  const effectiveState  = deriveAccessState(product, principalId, submittedRequest);
+  const effectiveState  = deriveAccessState(product, principalId, callerOrgId, submittedRequest);
 
   function handleRequestSubmitted(req: AccessRequest) {
     setSubmittedRequest(req);
@@ -735,6 +750,11 @@ export function ProductDetailPage() {
           {effectiveState === 'denied' && (
             <span className="px-4 py-2 text-sm font-medium rounded-lg bg-red-50 text-red-700 border border-red-200">
               Access denied
+            </span>
+          )}
+          {effectiveState === 'cross_org' && (
+            <span className="px-4 py-2 text-sm font-medium rounded-lg bg-slate-50 text-slate-600 border border-slate-200">
+              Different organisation
             </span>
           )}
           {effectiveState === 'not_requested' && (

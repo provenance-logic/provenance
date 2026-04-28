@@ -17,6 +17,12 @@ interface AuthState {
    */
   principalId: string | undefined;
   /**
+   * Caller's bound organisation id. Read from the `provenance_org_id` JWT
+   * claim. Empty until the user has completed self-serve onboarding (the
+   * `RequireOrg` wrapper redirects to `/onboarding/org` in that case).
+   */
+  orgId: string | undefined;
+  /**
    * Kick off a Keycloak login redirect. Protected pages call this when the
    * user is not authenticated.
    */
@@ -91,16 +97,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const tokenParsed = keycloak.tokenParsed as
-    | { sub?: string; provenance_principal_id?: string }
+    | { sub?: string; provenance_principal_id?: string; provenance_org_id?: string }
     | undefined;
   const principalId = tokenParsed?.provenance_principal_id ?? tokenParsed?.sub;
+  const orgId = tokenParsed?.provenance_org_id;
 
   const login = () => {
     void keycloak.login({ redirectUri: window.location.href });
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak, principalId, login }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, token: keycloak.token, keycloak, principalId, orgId, login }}>
       {children}
     </AuthContext.Provider>
   );
