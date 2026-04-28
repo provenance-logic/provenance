@@ -5,8 +5,8 @@
 Provenance is an open-source, cloud-native platform that makes data mesh real — not as a philosophy, but as working software. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![PRD](https://img.shields.io/badge/docs-PRD%20v1.4-teal.svg)](./documents/prd)
-[![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.4-teal.svg)](./documents/architecture)
+[![PRD](https://img.shields.io/badge/docs-PRD%20v1.5-teal.svg)](./documents/prd)
+[![Architecture](https://img.shields.io/badge/docs-Architecture%20v1.5-teal.svg)](./documents/architecture)
 [![Status](https://img.shields.io/badge/status-Phase%205%20active-green.svg)]()
 
 ---
@@ -43,7 +43,7 @@ Provenance holds metadata, contracts, lineage, and governance records. Your data
 
 ## Architecture Overview
 
-> **Current infrastructure is a pre-revenue development environment, not the target production state.** Provenance is currently deployed as a NestJS modular monolith and React frontend running on two EC2 instances via Docker Compose. This setup is deliberately lean — it is the MVP build, not the shape the platform will take at scale. The target production architecture (Kubernetes on EKS, managed AWS services, SOC 2 hardening) is scoped as Phase 6 and is documented in [documents/architecture/Provenance_Architecture_v1.4.md](./documents/architecture/Provenance_Architecture_v1.4.md). Phase 6 is planned but not funded and will be triggered by enterprise customer engagement or funding, not by a calendar date.
+> **Current infrastructure is a pre-revenue development environment, not the target production state.** Provenance is currently deployed as a NestJS modular monolith and React frontend running on two EC2 instances via Docker Compose. This setup is deliberately lean — it is the MVP build, not the shape the platform will take at scale. The target production architecture (Kubernetes on EKS, managed AWS services, SOC 2 hardening) is scoped as Phase 6 and is documented in [documents/architecture/Provenance_Architecture_v1.5.md](./documents/architecture/Provenance_Architecture_v1.5.md). Phase 6 is planned but not funded and will be triggered by enterprise customer engagement or funding, not by a calendar date.
 
 The control plane (metadata, contracts, governance) is architecturally separated from the data plane (domain infrastructure) from day one, and that boundary holds in both the current MVP and the target production architecture.
 
@@ -99,7 +99,7 @@ The control plane (metadata, contracts, governance) is architecturally separated
 
 ## Project Status
 
-Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open Source Ready) is active. **Domain 10 Workstream A (self-serve registration, org creation, invitations) is complete**; **Workstream B (port connection details and connection packages) is in progress** as of 2026-04-19.
+Provenance is in active development. Phases 1–4 are complete; **Phase 5 (Open Source Ready) is active.** As of 2026-04-28, Domain 10 Workstream A (self-serve registration), Domain 10 Workstream B (port connection details and connection packages, mostly shipped), and **Domain 11 (Notifications, fully shipped — in-platform, email, and webhook channels with all 27 trigger requirements wired or explicitly deferred)** are live. Domain 12 (Connection References and Per-Use-Case Consent) is partial — data layer, state machine, REST surface, and connection package emission shipped; runtime scope enforcement at the Agent Query Layer remains. Phase 5 sub-workstreams 5.5 (anomaly detection), 5.6 (developer experience), and 5.7 (SOC 2 foundations) remain. See [implementation-status.md](./documents/prd/implementation-status.md) for the authoritative per-feature status.
 
 **Development environment:** An internal development deployment is served via Caddy with automatic HTTPS at a `*.provenancelogic.com` hostname for hands-on work by the core team. It is not a persistent public endpoint — the underlying EC2 instance is shut down most of the time, so the URL is not suitable for inclusion in user-facing documentation, blog posts, or link-outs, and no uptime is implied. To try Provenance, follow the [Getting Started](#getting-started) steps below to run the stack locally via Docker Compose. A reproducible demo environment (provisioned per demo from git with curated seed data) is documented in [documents/runbooks/demo-environment.md](./documents/runbooks/demo-environment.md).
 
@@ -109,14 +109,8 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 | **Phase 2 — Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
 | **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
 | **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
-| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, developer experience | 🔄 Active — 5.1–5.4 complete; Domain 10 Workstream A complete; Workstream B in progress; 5.5–5.7 remaining |
+| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, Domain 11 notifications, Domain 12 connection references, developer experience | 🔄 Active — 5.1–5.4 complete; Domain 10 Workstreams A & B mostly complete; Domain 11 complete; Domain 12 partial; 5.5–5.7 remaining |
 | **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
-
-### Verification Status (Phase 4 sign-off, April 2026)
-
-- **API tests:** 15/15 passing (health, domains, products, SLOs, trust scores, lineage, governance, marketplace)
-- **Browser checks:** 8/8 passing (auth, navigation, domain dashboard, product detail, marketplace, governance, lineage, observability)
-- **Known gaps:** Marketplace full-text search requires OpenSearch (disabled in dev stack); lineage chart visual polish pending
 
 ### What's Live Today
 
@@ -157,7 +151,19 @@ Provenance is in active development. Phases 1–4 are complete; Phase 5 (Open So
 
 **Self-Serve Infrastructure (Domain 10 — Phase 5)**
 - **Workstream A — complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. With the stack running locally (see [Getting Started](#getting-started)) a new user can sign up, create their org, and be authoring products in under 30 minutes with no platform operator involvement.
-- **Workstream B — in progress (2026-04-19):** every output port now carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export), and every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Full detail disclosure is gated by active access grant. Automated connectivity validation (F10.7) and connection-package refresh on edit (F10.10) remain open. See [implementation-status.md](./documents/prd/implementation-status.md) for per-feature status.
+- **Workstream B — mostly shipped (2026-04-28):** every output port carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export). Disclosure is gated by active access grant — owners and grantees see the full payload, authenticated non-grantees see a host/endpoint preview, and unauthenticated callers see nothing. Every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Connection packages auto-refresh when port details are edited. Connectivity validation runs real probes for REST, GraphQL, and Kafka with a typed `unsupported` response for SQL/JDBC and file export pending per-driver/per-storage probes. Schema authoring items (F10.11–F10.13) remain open.
+
+**Notifications (Domain 11 — Phase 5)**
+- **All 27 PRD trigger requirements wired or explicitly deferred** (deferrals tied to features that don't yet exist — subscription model, schema-drift detection, classification post-publish mutability, agent auto-suspension, human review queue, frozen-state machine).
+- **Three delivery channels live:** in-platform inbox (the row itself), email (platform-wide `EmailService`, dev stack uses Mailhog), webhook (https-only, 10s timeout, stable `NotificationWebhookPayload` envelope). One outbox + cron worker drains all out-of-band channels with retries on a 1m / 5m / 25m schedule.
+- **Per-(principal, category) preferences** with `enabled` opt-in/out and `channels[]` override; governance-mandatory categories keep the in-platform channel even when a user opts out.
+- **Notification center frontend:** bell icon with unread badge in the sidebar, popover drawer with read/dismiss controls and deep links, full inbox at `/notifications` with category and read-state filters, per-category preferences page at `/notifications/preferences`. Polls every 30s to match the worker drain cadence.
+- **Architecture decisions** captured in [ADR-009](./documents/architecture/adr/ADR-009-notification-architecture.md).
+
+**Connection References and Per-Use-Case Consent (Domain 12 — partial)**
+- New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enforcement for all agent access. Connection references compose with (do not replace) access grants — both must be active for any agent action against any product.
+- **Shipped:** data layer (V18/V19), state machine (`ConsentService` — request, approve, deny, principal-revoke, grant-revoke cascade), REST surface at `/organizations/:orgId/consent/connection-references`, and connection package emission at activation per [ADR-008](./documents/architecture/adr/ADR-008-connection-reference-and-package-relationship.md).
+- **Remaining:** runtime scope enforcement at the Agent Query Layer (the in-memory cache + Redpanda consumer per [ADR-006](./documents/architecture/adr/ADR-006-runtime-scope-enforcement.md)), automatic expiration, MAJOR-version suspension, governance override, legacy-agent migration, and the rest of the cascade triggers. See [implementation-status.md](./documents/prd/implementation-status.md) for per-requirement status.
 
 ---
 
@@ -174,6 +180,8 @@ provenance/
 │   │       ├── lineage/          # Neo4j lineage graph service
 │   │       ├── observability/    # SLOs, trust score computation
 │   │       ├── access/           # Access grants and requests
+│   │       ├── consent/          # Connection references and per-use-case consent (Domain 12)
+│   │       ├── notifications/    # In-platform, email, and webhook delivery (Domain 11)
 │   │       ├── agents/           # Agent identity and trust classification
 │   │       ├── search/           # OpenSearch integration
 │   │       └── trust-score/      # Trust score computation engine
@@ -187,6 +195,7 @@ provenance/
 │               ├── discovery/        # Marketplace, product detail
 │               ├── lineage/          # Lineage Explorer (React Flow + Dagre)
 │               ├── observability/    # SLO dashboard and evaluation history
+│               ├── notifications/    # Notification bell, drawer, inbox, preferences
 │               └── trust-score/      # Trust score panel and breakdown
 ├── packages/
 │   ├── types/                # Shared TypeScript types
@@ -283,10 +292,10 @@ AI agents in Provenance are first-class principals with their own identity model
 
 | Document | Description |
 |---|---|
-| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.4.md) | Complete requirements across all seven platform domains |
-| [Implementation Status](./documents/prd/implementation-status.md) | Per-requirement implementation status vs. PRD v1.4 and remaining Open Source Readiness blockers |
-| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.4.md) | MVP and production architecture, technology decisions, build sequence |
-| [Architecture Decision Records](./documents/architecture/adr/) | Individual decision records for significant technology choices |
+| [Product Requirements Document](./documents/prd/Provenance_PRD_v1.5.md) | Complete requirements across all twelve platform domains |
+| [Implementation Status](./documents/prd/implementation-status.md) | Per-requirement implementation status vs. PRD v1.5 and remaining Open Source Readiness blockers |
+| [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) | MVP and production architecture, technology decisions, build sequence |
+| [Architecture Decision Records](./documents/architecture/adr/) | Nine ADRs covering MVP and JWT agent authentication, lineage visualization, demo strategy, connection reference composition / runtime scope enforcement / state propagation / package relationship, and notification architecture |
 | [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |
 | [TypeScript Lineage SDK](./packages/sdk-ts/) | TypeScript SDK for pipeline lineage emission |
 
@@ -298,7 +307,7 @@ Provenance is Apache 2.0 licensed and welcomes contributions. Before contributin
 
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines and development setup
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) — community standards
-- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.4.md) — understand the system before contributing
+- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) — understand the system before contributing
 
 High-value contributions at this stage:
 - Additional connector implementations
