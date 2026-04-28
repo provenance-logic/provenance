@@ -42,7 +42,7 @@ Domain owners see one shape of truth while consumers see another, leading to con
 
 **Root cause.** The two pages grew independently — the publishing view was written first for domain teams; the marketplace view was written later and adopted a different get-product shape. Neither was consolidated when the 5.4 P1 enrichment work landed.
 
-**Proposed fix.** Both pages should consume the same product-detail hook backed by a single `get_product` response shape. The PRD v1.4 "Domain 9 Priority 1 completeness" gap is adjacent — resolve together.
+**Proposed fix.** Both pages should consume the same product-detail hook backed by a single `get_product` response shape. The PRD v1.5 "Domain 9 Priority 1 completeness" gap is adjacent — resolve together.
 
 ---
 
