@@ -204,6 +204,39 @@ function OverviewTab({ product }: { product: MarketplaceProductDetail }) {
   );
 }
 
+function LifecycleBanner({ status }: { status: MarketplaceProductDetail['status'] }) {
+  if (status === 'deprecated') {
+    return (
+      <div
+        role="alert"
+        className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm"
+      >
+        <p className="font-semibold text-orange-900">This product is deprecated.</p>
+        <p className="mt-1 text-orange-800">
+          New consumers should not adopt it. Existing access remains valid until the
+          product is decommissioned. Check the product owner for the recommended
+          replacement.
+        </p>
+      </div>
+    );
+  }
+  if (status === 'decommissioned') {
+    return (
+      <div
+        role="alert"
+        className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+      >
+        <p className="font-semibold text-red-900">This product has been decommissioned.</p>
+        <p className="mt-1 text-red-800">
+          The data is no longer maintained or guaranteed available. Do not use it for
+          new work. This page is kept for historical reference and audit.
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
 function FreshnessBadge({ product }: { product: MarketplaceProductDetail }) {
   if (!product.freshness) return null;
   const when = new Date(product.freshness.evaluatedAt).toLocaleDateString();
@@ -709,6 +742,8 @@ export function ProductDetailPage() {
           ← Marketplace
         </Link>
       </nav>
+
+      <LifecycleBanner status={product.status} />
 
       {/* Header */}
       <div className="mb-6">
