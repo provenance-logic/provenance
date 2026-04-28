@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { Notification } from '@provenance/types';
 import { CATEGORY_LABELS, formatRelativeTime } from './category-labels.js';
+import { resolveNotificationDestination } from './resolve-destination.js';
 
 interface NotificationDrawerProps {
   items: Notification[];
@@ -98,7 +99,7 @@ function NotificationRow({
               <span className="w-2 h-2 rounded-full bg-blue-500" aria-label="unread" />
             )}
             <Link
-              to={notification.deepLink}
+              to={resolveNotificationDestination(notification.deepLink)}
               onClick={() => {
                 if (isUnread) onMarkRead(notification.id);
                 onNavigate();

@@ -7,6 +7,7 @@ import {
   formatPayloadEntries,
   formatRelativeTime,
 } from './category-labels.js';
+import { resolveNotificationDestination } from './resolve-destination.js';
 
 const PAGE_SIZE = 20;
 
@@ -124,7 +125,7 @@ export function NotificationsPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <Link
-                      to={notification.deepLink}
+                      to={resolveNotificationDestination(notification.deepLink)}
                       onClick={() => { if (isUnread) void markRead(notification.id); }}
                       className="text-sm font-semibold text-slate-900 hover:text-brand-700"
                     >
