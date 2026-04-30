@@ -46,6 +46,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
   ],
   controllers: [GovernanceController],
   // Export GovernanceService so ProductsModule can call evaluate() at publish time.
-  exports: [GovernanceService],
+  // Export OpaClient so SeedModule can push compiled Rego at seed time.
+  exports: [GovernanceService, OpaClient],
 })
 export class GovernanceModule {}

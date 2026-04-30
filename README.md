@@ -257,6 +257,19 @@ provenance/
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
 
+6. **(Optional) Seed sample data:**
+   ```bash
+   API_BASE_URL=http://localhost:3001 \
+   SEED_API_KEY=dev-seed-token-change-me \
+   DATABASE_URL=postgres://provenance:provenance_dev_password@localhost:5432/provenance \
+   KEYCLOAK_URL=http://localhost:8080 \
+   KEYCLOAK_REALM=provenance \
+   KEYCLOAK_ADMIN_CLIENT_ID=provenance-admin \
+   KEYCLOAK_ADMIN_CLIENT_SECRET=provenance-admin-dev-secret \
+   pnpm --filter @provenance/seed seed
+   ```
+   Populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, and lineage. Idempotent — safe to re-run. Login as `admin@acme.example.com` (password `DemoPass123!`) to explore.
+
 ### EC2 Deployment
 
 For EC2 deployment, see the environment-specific compose files and start scripts in `infrastructure/docker/`. The Terraform configuration in `infrastructure/terraform/` provisions the required AWS resources.

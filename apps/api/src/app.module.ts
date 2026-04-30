@@ -17,6 +17,7 @@ import { LineageModule } from './lineage/lineage.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
 import { TrustScoreModule } from './trust-score/trust-score.module.js';
 import { AgentsModule } from './agents/agents.module.js';
+import { SeedModule } from './seed/seed.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
 @Module({
@@ -39,6 +40,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     ObservabilityModule,
     TrustScoreModule,
     AgentsModule,
+    SeedModule,
   ],
 })
 export class AppModule implements NestModule {
