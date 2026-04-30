@@ -7,6 +7,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main",
+    "reindex:search": "node dist/apps/api/src/scripts/reindex-search.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

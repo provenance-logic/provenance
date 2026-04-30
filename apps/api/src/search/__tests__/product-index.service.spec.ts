@@ -4,6 +4,7 @@ import { ProductIndexService, PRODUCT_INDEX } from '../product-index.service.js'
 import { TrustScoreService } from '../trust-score.service.js';
 import { OPENSEARCH_CLIENT } from '../opensearch.client.js';
 import { ComplianceStateEntity } from '../../governance/entities/compliance-state.entity.js';
+import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -99,8 +100,10 @@ describe('ProductIndexService', () => {
   let service: ProductIndexService;
   let osClient: ReturnType<typeof mockOsClient>;
   let trustScoreService: jest.Mocked<TrustScoreService>;
+  let productRepo: { findOne: jest.Mock };
 
   beforeEach(async () => {
+    productRepo = { findOne: jest.fn() };
     const module = await Test.createTestingModule({
       providers: [
         ProductIndexService,
@@ -113,6 +116,10 @@ describe('ProductIndexService', () => {
           useValue: {
             computeTrustScore: jest.fn().mockResolvedValue(0.9),
           },
+        },
+        {
+          provide: getRepositoryToken(DataProductEntity),
+          useValue: productRepo,
         },
       ],
     }).compile();
@@ -177,6 +184,52 @@ describe('ProductIndexService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('indexProductById()', () => {
+    it('looks up the entity by (productId, orgId) and indexes it (B-009)', async () => {
+      productRepo.findOne.mockResolvedValue({
+        id:               'product-1',
+        orgId:            'org-1',
+        domainId:         'domain-1',
+        name:             'Orders Product',
+        slug:             'orders-product',
+        description:      'Order data',
+        status:           'published',
+        version:          '1.0.0',
+        classification:   'internal',
+        ownerPrincipalId: 'principal-1',
+        tags:             ['orders'],
+        createdAt:        now,
+        updatedAt:        now,
+      });
+
+      await service.indexProductById('product-1', 'org-1');
+
+      expect(productRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'product-1', orgId: 'org-1' },
+      });
+      expect(osClient.index).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: PRODUCT_INDEX,
+          id:    'product-1',
+          body:  expect.objectContaining({
+            id:    'product-1',
+            orgId: 'org-1',
+            name:  'Orders Product',
+            tags:  ['orders'],
+          }),
+        }),
+      );
+    });
+
+    it('skips indexing when the product is not found (no throw)', async () => {
+      productRepo.findOne.mockResolvedValue(null);
+
+      await service.indexProductById('missing', 'org-1');
+
+      expect(osClient.index).not.toHaveBeenCalled();
     });
   });
 

@@ -14,6 +14,7 @@ import { PrincipalEntity } from '../../organizations/entities/principal.entity.j
 import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
+import { ProductIndexService } from '../../search/product-index.service.js';
 import { ProductEnrichmentService } from '../product-enrichment.service.js';
 import { EncryptionService } from '../../common/encryption.service.js';
 import { AccessService } from '../../access/access.service.js';
@@ -179,6 +180,7 @@ describe('ProductsService', () => {
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
         { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined), deleteFromIndex: jest.fn().mockResolvedValue(undefined) } },
+        { provide: ProductIndexService, useValue: { indexProductById: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ProductEnrichmentService,
           useValue: {
@@ -859,6 +861,28 @@ describe('ProductsService', () => {
       expect(lifecycleEventRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ note: 'Production ready' }),
       );
+    });
+
+    // B-009 — synchronously double-write to both OpenSearch indices on
+    // publish so marketplace keyword search (BM25) does not depend on the
+    // Redpanda consumer alone. Fire-and-forget; failures must not block.
+    it('synchronously writes to both kNN and BM25 OpenSearch indices', async () => {
+      setupValidPublish();
+      const searchIndexingService = (service as unknown as {
+        searchIndexingService: { indexProduct: jest.Mock };
+      }).searchIndexingService;
+      const productIndexService = (service as unknown as {
+        productIndexService: { indexProductById: jest.Mock };
+      }).productIndexService;
+
+      await service.publishProduct('org-1', 'domain-1', 'product-1', {}, mockCtx);
+
+      // The publish path fires both calls without awaiting; flush microtasks
+      // so the .catch() chain has run before we assert.
+      await new Promise((r) => setImmediate(r));
+
+      expect(searchIndexingService.indexProduct).toHaveBeenCalledWith('product-1', 'org-1');
+      expect(productIndexService.indexProductById).toHaveBeenCalledWith('product-1', 'org-1');
     });
   });
 
