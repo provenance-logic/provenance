@@ -46,6 +46,6 @@ import { SemanticSearchController } from './semantic-search.controller.js';
     HybridSearchService,
   ],
   controllers: [MarketplaceController, MarketplaceGlobalController, SemanticSearchController],
-  exports: [SearchIndexingService, NlQueryService, HybridSearchService],
+  exports: [SearchIndexingService, ProductIndexService, NlQueryService, HybridSearchService],
 })
 export class SearchModule {}

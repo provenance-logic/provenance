@@ -106,32 +106,6 @@ Blocks comfortable authoring now that connection details are required.
 
 ---
 
-## B-009 — OpenSearch `provenance-products` BM25 index is empty in dev
-
-- **Severity:** Medium
-- **Status:** Open
-- **Area:** Search / discovery
-- **Environment:** EC2 dev (`https://dev.provenancelogic.com`)
-
-**Symptom.** The keyword-search code path on the marketplace (`MarketplaceService.searchProducts`, hitting `provenance-products` over BM25) returns zero results regardless of query, even though the marketplace browse page (`listProducts`, hitting PostgreSQL) shows 7 real products. Confirmed by `curl /_cat/indices`:
-
-```
-provenance-products       0 docs,   228b
-data_products             7 docs,  89.5kb
-```
-
-The kNN index (`data_products`) is populated correctly via `SearchIndexingService` (synchronous double-write on product publish). The BM25 index (`provenance-products`) is supposed to be populated via Redpanda — `KafkaConsumerService` consumes `product.published` events and calls `ProductIndexService.indexProduct` — but the documents never arrived. CLAUDE.md describes both indices as "active and complementary," so this is a real gap, not legacy code: any agent or user who searches by keyword from the marketplace text input will get empty results.
-
-**Root cause (suspected).** Either (a) the seed-products path does not emit Redpanda `product.published` events, so the consumer has nothing to index; or (b) the consumer ran but lost its events when the dev stack was rebuilt; or (c) the index was wiped (or never created with data) and there is no backfill from PostgreSQL. The synchronous double-write done by `SearchIndexingService` for the kNN index is not mirrored for the BM25 index, leaving Redpanda as the only source of truth — which is fragile in a dev stack that gets torn down regularly.
-
-**Proposed fix.** Two parts:
-1. Add a synchronous double-write to `provenance-products` in the same product-publish code path that already double-writes to `data_products`. The Kafka path can stay as a backup, but the index should populate immediately on publish without depending on the broker.
-2. Add a one-shot reindex command (`pnpm --filter @provenance/api reindex:opensearch` or similar) that walks `products.data_products` and writes every published row to both indices. Use it during environment bootstrap and after dev resets so search is never silently broken.
-
-Lower-effort interim: drop the BM25 index entirely and have `searchProducts` query `data_products` (kNN) for both keyword and semantic paths. Cheaper but less capable — keyword search becomes lexical-as-vectors, which is OK for our ~7 products but degrades for any real-scale corpus. The "Build vs. Configure" note in CLAUDE.md says to configure OpenSearch rather than reinvent it; if we keep both indices, fix #1 is mandatory.
-
----
-
 ## B-008 — Request Access button shown to product owner in dashboard view
 
 - **Severity:** Medium

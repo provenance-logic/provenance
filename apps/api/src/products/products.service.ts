@@ -17,6 +17,7 @@ import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
+import { ProductIndexService } from '../search/product-index.service.js';
 import { ProductEnrichmentService } from './product-enrichment.service.js';
 import { EncryptionService } from '../common/encryption.service.js';
 import { AccessService } from '../access/access.service.js';
@@ -61,6 +62,7 @@ export class ProductsService {
     private readonly governanceService: GovernanceService,
     private readonly kafkaProducerService: KafkaProducerService,
     private readonly searchIndexingService: SearchIndexingService,
+    private readonly productIndexService: ProductIndexService,
     private readonly enrichmentService: ProductEnrichmentService,
     private readonly encryptionService: EncryptionService,
     private readonly accessService: AccessService,
@@ -205,9 +207,12 @@ export class ProductsService {
     if (dto.tags !== undefined) product.tags = dto.tags;
     const saved = await this.productRepo.save(product);
 
-    // Fire-and-forget: re-index if published product's searchable fields changed
+    // Fire-and-forget: re-index if published product's searchable fields changed.
+    // Both OpenSearch indices stay in sync — kNN (semantic) for agent queries
+    // and BM25 (keyword) for marketplace text search. See B-009.
     if (product.status === 'published' && searchFieldsChanged) {
       this.searchIndexingService.indexProduct(product.id, orgId).catch(() => {});
+      this.productIndexService.indexProductById(product.id, orgId).catch(() => {});
     }
 
     return this.toDataProduct(saved);
@@ -352,9 +357,15 @@ export class ProductsService {
     };
     await this.kafkaProducerService.publish('product.lifecycle', product.id, event);
 
-    // Fire-and-forget: index product embedding for semantic search.
-    // Do not await — embedding failure must never block publish.
+    // Fire-and-forget: index the product into both OpenSearch indices —
+    // kNN (semantic) for agent queries and BM25 (keyword) for marketplace
+    // text search. The Kafka consumer also writes BM25 from the product.
+    // lifecycle event, but the broker queue is reset on every dev-stack
+    // rebuild and was leaving the index empty (B-009); the synchronous
+    // write here makes BM25 indexing reliable on the publish path.
+    // Do not await — index failures must never block publish.
     this.searchIndexingService.indexProduct(product.id, orgId).catch(() => {});
+    this.productIndexService.indexProductById(product.id, orgId).catch(() => {});
 
     return snapshot;
   }
@@ -423,8 +434,12 @@ export class ProductsService {
     const saved = await this.productRepo.save(product);
     saved.ports = product.ports;
 
-    // Remove from semantic search index
+    // Remove from both OpenSearch indices on decommission. Deprecated
+    // products remain searchable in both indices (the marketplace renders
+    // them with a deprecated badge), but a decommissioned product must
+    // disappear. See B-009.
     this.searchIndexingService.deleteFromIndex(productId).catch(() => {});
+    this.productIndexService.removeProduct(productId).catch(() => {});
 
     // F11.13 — notify all consumers, including those whose grants were
     // revoked within the past 90 days (per PRD wording).
