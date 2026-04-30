@@ -160,7 +160,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F5.12 | Agent Lineage Emission | Implemented | Agent provenance in lineage events |
 | F5.13 | Lineage Drift Detection | Not implemented | |
 | F5.14 | Lineage Graph API | Implemented | Upstream/downstream traversal, get_lineage MCP tool |
-| F5.15 | Lineage Visualization | Not implemented | Blocker - D3 rejected; React Flow / Dagre required |
+| F5.15 | Lineage Visualization | Implemented | React Flow + Dagre per ADR-003. Deterministic left-to-right DAG layout (sources on the left, focal product in the middle, downstream consumers on the right). Card-style nodes show name, type pill (Source / DataProduct / Port / Transformation / Agent / Consumer), and trust score when present in metadata. Edge labels are humanized ("derives from", "transforms", "consumes", "depends on", "supersedes"); low-confidence edges render dashed. Built-in pan, zoom, fit-view, and a per-type-colored minimap. Read-only graph (`nodesDraggable=false`, `nodesConnectable=false`) so the deterministic Dagre layout stays the source of truth. Replaces the previous Cytoscape implementation. ADR-003 follow-ups not yet shipped: expand/collapse at any node, PNG/SVG export, time-travel snapshot mode (F5.17). |
 | F5.16 | Impact Analysis Workflow | Not implemented | |
 | F5.17 | Lineage Time Travel | Not implemented | |
 | F5.18 | Observability as a Port | Implemented | |
@@ -226,7 +226,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F7.2 | Persona-Adaptive Navigation | Partially implemented | Navigation adapts; not fully persona-segmented per v1.5 spec |
 | F7.3 | Context Switching | Implemented | |
 | F7.4 | Global Search | Implemented | |
-| F7.5 | Notifications | Not implemented | Blocker - Domain 11 not implemented |
+| F7.5 | Notifications | Implemented | Domain 11 fully shipped — all 27 PRD trigger requirements wired or explicitly deferred behind upstream features (subscription model, schema-drift detection, classification post-publish mutability, auto-suspension, human review queue, frozen-state machine). See the Domain 11 section below for per-trigger detail. |
 | F7.6 | Keyboard and Accessibility | Not implemented | WCAG 2.1 AA not verified |
 | F7.7 | Role Assignment UI | Not implemented | Blocker - requires Keycloak console today |
 | F7.8 | Progressive Disclosure | Partially implemented | |
@@ -421,16 +421,26 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 
 ### Blockers (must be resolved before open source ready)
 
-1. **F5.15 Lineage Visualization** - React Flow / Dagre not implemented; D3 rejected
-2. **F7.5 / Domain 11 Notifications** - Zero notification capability; access request flow, SLO violations, product deprecation all untriggered
-3. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
-4. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
-5. **F7.29 Access Request SLA and Escalation** - No SLA enforcement; no escalation path
-6. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
-7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10 Workstream B
-8. **Domain 10 Workstream B — Connection packages and schema authoring** - Mostly shipped. Connection details (F10.5), connection-details confidentiality (F10.6, end-to-end verified 2026-04-25), connection package generation (F10.8, F10.9), connection-package refresh on detail edit (F10.10, end-to-end verified 2026-04-25), and connectivity validation (F10.7, partial — REST/GraphQL/Kafka real probes plus typed `unsupported` response for SQL/JDBC and file_object_export) all implemented and deployed. Schema authoring items (F10.11–F10.13) untouched. Remaining: per-driver SQL probes (postgres/mysql/snowflake) and per-storage file probes (s3/gcs/adls) — additive, no blocker. Workstream A shipped earlier in Phase 5.
-9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
-10. **Domain 12 Connection References and Per-Use-Case Consent** - New in PRD v1.5. Universal per-use-case consent and runtime scope enforcement for all agent access; connection references compose with access grants and both must be active for any agent action. **Partial as of 2026-04-24** — data primitives (V18/V19), state-machine service (request / approve / deny / principal-revoke / grant-revoke cascade), REST surface at `/consent/connection-references`, and connection package emission at activation (ADR-008) have shipped. Runtime scope enforcement at the Agent Query Layer (ADR-006), automatic expiration (F12.22), governance override (F12.14/F12.20), MAJOR-version suspension (F12.15), legacy-agent migration (F12.25), outbox publisher, and notification fan-out (F12.10 — needs Domain 11) remain. Architectural decisions captured in ADR-005 through ADR-008.
+Down from 10 at the start of the April 30 push. Closed since: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), and Domain 10 Workstream B (mostly — F10.7 partial-but-deployed). Remaining:
+
+1. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
+2. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
+3. **F7.29 Access Request SLA and Escalation** - SLA notification triggers shipped in Domain 11 (F11.9 / F11.10), but no SLA enforcement timer at the access-grant layer and no escalation path beyond the breach notification
+4. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
+5. **F7.46 Onboarding Experience** - No guided onboarding
+6. **Domain 12 Connection References and Per-Use-Case Consent** - New in PRD v1.5. Universal per-use-case consent and runtime scope enforcement for all agent access; connection references compose with access grants and both must be active for any agent action. **Partial as of 2026-04-30** — data primitives (V18/V19), state-machine service (request / approve / deny / principal-revoke / grant-revoke cascade), REST surface at `/consent/connection-references`, connection package emission at activation (ADR-008), and F12.10 notification fan-out (in Domain 11 PR #12) have shipped. Remaining: runtime scope enforcement at the Agent Query Layer (ADR-006), automatic expiration (F12.22), governance override (F12.14/F12.20), MAJOR-version suspension (F12.15), legacy-agent migration (F12.25), outbox publisher, Supervised oversight-hold sub-state, and the rest of F12.21 cascade triggers (product lifecycle, owner deactivation). Architectural decisions captured in ADR-005 through ADR-008.
+
+### Phase 5.6 (Developer Experience) — partial as of 2026-04-30
+
+Shipped:
+- **B-009 OpenSearch BM25 reliability** (#52) — synchronous double-write to `provenance-products` on every publish/update/decommission, plus a one-shot `pnpm reindex:search` command for backfill after dev resets. Marketplace keyword search no longer silently returns empty results when the broker queue resets.
+- **In-product API reference** (#53) — `GET /api/v1/docs` serves an index of all 12 domain specs; `/api/v1/docs/:spec` renders Redoc; `/api/v1/docs/specs/:name.yaml` returns raw YAML. Reads from `packages/openapi/` at request time.
+- **Working seed CLI** (#54) — eight idempotent `/api/v1/seed/*` endpoints behind `SeedGuard` (constant-time token check + `SEED_ENABLED` flag, 404 in production). `pnpm --filter @provenance/seed seed` now runs end-to-end and populates 2 orgs / 9 domains / 17 principals / 8 policies / 16 published products / 27 ports / 2 agents / 86 lineage emissions.
+
+Remaining:
+- Local-setup-time measurement (clone → working stack on a fresh machine; needs a fresh contributor, not a simulation from inside the dev env)
+- Comprehensive seed-data richness (SLO declarations per product, sample access requests + grants, sample notifications) so every domain page has something visible after first seed
+- Lineage emit idempotency on re-seed (currently `emission_log` grows by ~8 rows on each re-run; small fix, separate PR)
 
 ### Post-Launch (important but not blocking)
 
