@@ -9,12 +9,17 @@ export interface ApiClient {
 
 export function createApiClient(config: SeedConfig, logger: Logger): ApiClient {
   const base = config.API_BASE_URL.replace(/\/$/, '');
+  // The API is always mounted under the global prefix /api/v1. Runner paths
+  // (e.g. '/seed/organizations') are prefixed here so the runner stays
+  // prefix-agnostic.
+  const apiPrefix = '/api/v1';
 
   async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, asPrincipal?: string): Promise<T> {
-    const url = `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    const url = `${base}${apiPrefix}${normalized}`;
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      'x-seed-service-token': config.MCP_API_KEY,
+      'x-seed-service-token': config.SEED_API_KEY,
     };
     if (asPrincipal) headers['x-seed-as-principal'] = asPrincipal;
     logger.debug(`${method} ${url}`, asPrincipal ? { asPrincipal } : {});

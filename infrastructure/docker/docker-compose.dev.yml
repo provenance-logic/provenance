@@ -157,6 +157,11 @@ services:
       # Local dev uses a throwaway key so the API boots without cloud creds.
       CONNECTION_DETAILS_SECRET_ARN: ${CONNECTION_DETAILS_SECRET_ARN:-}
       CONNECTION_DETAILS_DEV_KEY: ${CONNECTION_DETAILS_DEV_KEY:-00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff}
+      # Seed API (Phase 5.6 — dev experience).
+      # SEED_ENABLED=true mounts the /api/v1/seed/* controller for the
+      # @provenance/seed package's runner. Production must NEVER set this true.
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+      SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
       # Disabled services — connections fail gracefully (see comments above)
       REDPANDA_ENABLED: "false"
       OPENSEARCH_ENABLED: "false"

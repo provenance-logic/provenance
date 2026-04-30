@@ -29,9 +29,45 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       contactEmail: org.contactEmail,
     });
     orgIdBySlug.set(org.slug, res.id);
+  }
+
+  // Principals must be seeded before domains so /seed/domains can resolve the
+  // ownerEmail to an existing principal. Two-pass within /seed/principals
+  // (principal first, role assignments second) means non-domain roles land
+  // on the first pass; domain_owner role bindings get filled in on the second
+  // pass below, after domains exist.
+  logger.info('seed: users');
+  for (const user of seedUsers) {
+    const orgId = orgIdBySlug.get(user.orgSlug);
+    if (!orgId) throw new Error(`unknown org slug: ${user.orgSlug}`);
+    const kc = await ctx.keycloak.ensureUser({
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      password: user.password,
+      attributes: {
+        provenance_org_id: orgId,
+        provenance_principal_type: 'human',
+      },
+    });
+    await ctx.api.post('/seed/principals', {
+      orgId,
+      keycloakUserId: kc.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      roles: user.roles,
+      domainSlugs: user.domainSlugs ?? [],
+    });
+  }
+
+  logger.info('seed: domains');
+  for (const org of seedOrgs) {
+    const orgId = orgIdBySlug.get(org.slug);
+    if (!orgId) throw new Error(`unknown org slug: ${org.slug}`);
     for (const domain of org.domains) {
       await ctx.api.post('/seed/domains', {
-        orgId: res.id,
+        orgId,
         slug: domain.slug,
         name: domain.name,
         description: domain.description,
@@ -40,8 +76,13 @@ export async function runSeed(ctx: RunContext): Promise<void> {
     }
   }
 
-  logger.info('seed: users');
+  // Second pass: domain_owner role bindings now that domains exist. The
+  // /seed/principals endpoint is idempotent — re-posting only creates the
+  // missing role rows for users whose domain_owner role couldn't bind on
+  // the first pass.
+  logger.info('seed: domain role bindings');
   for (const user of seedUsers) {
+    if (!user.roles.includes('domain_owner')) continue;
     const orgId = orgIdBySlug.get(user.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${user.orgSlug}`);
     const kc = await ctx.keycloak.ensureUser({

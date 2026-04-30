@@ -478,6 +478,13 @@ services:
       # throwaway key — never use it outside a disposable environment.
       CONNECTION_DETAILS_SECRET_ARN: ${CONNECTION_DETAILS_SECRET_ARN:-}
       CONNECTION_DETAILS_DEV_KEY: ${CONNECTION_DETAILS_DEV_KEY:-00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff}
+      # Seed API (Phase 5.6 — dev experience).
+      # SEED_ENABLED=true mounts the /api/v1/seed/* controller for the
+      # @provenance/seed package's runner. Endpoints require an
+      # x-seed-service-token header that is constant-time-compared to
+      # SEED_API_KEY. Production must NEVER set SEED_ENABLED=true.
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+      SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached

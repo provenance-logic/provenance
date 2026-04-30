@@ -84,6 +84,18 @@ const envSchema = z.object({
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'must be a 64-character hex string')
     .optional(),
+
+  // Seed API (Phase 5.6 — dev experience)
+  // SEED_ENABLED gates the /api/v1/seed/* controller surface. The endpoints
+  // are guarded by a constant-time comparison against SEED_API_KEY and only
+  // mount when SEED_ENABLED='true'. Keep both at their defaults in any
+  // environment where untrusted callers can reach the API — production must
+  // never set SEED_ENABLED='true'.
+  SEED_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
+  SEED_API_KEY: z.string().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
