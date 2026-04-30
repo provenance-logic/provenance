@@ -37,6 +37,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY tsconfig.base.json ./
 COPY packages/types/ ./packages/types/
+COPY packages/openapi/ ./packages/openapi/
 COPY apps/api/ ./apps/api/
 WORKDIR /app/apps/api
 RUN pnpm build
@@ -50,6 +51,10 @@ RUN corepack enable && corepack prepare pnpm@9.1.0 --activate
 COPY --from=build /app/apps/api/dist ./dist
 COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./
+# OpenAPI specs are read at request time by the in-product /docs route.
+# Copy them under packages/openapi alongside the api so the same relative
+# walk used in dev (`../../packages/openapi`) resolves in prod too.
+COPY --from=build /app/packages/openapi /app/packages/openapi
 EXPOSE 3001
 USER node
 CMD ["node", "dist/apps/api/src/main"]
