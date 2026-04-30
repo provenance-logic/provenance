@@ -4,6 +4,7 @@ import { CommonModule } from './common/common.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
+import { DocsModule } from './docs/docs.module.js';
 import { OrganizationsModule } from './organizations/organizations.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { GovernanceModule } from './governance/governance.module.js';
@@ -25,6 +26,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     DatabaseModule,
     AuthModule,
     HealthModule,
+    DocsModule,
     OrganizationsModule,
     ProductsModule,
     GovernanceModule,

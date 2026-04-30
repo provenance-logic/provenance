@@ -253,6 +253,7 @@ provenance/
 5. **Access the application:**
    - Frontend: `http://localhost:5173`
    - API: `http://localhost:3001`
+   - **API reference (rendered OpenAPI):** `http://localhost:3001/api/v1/docs`
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
 
@@ -296,7 +297,7 @@ AI agents in Provenance are first-class principals with their own identity model
 | [Implementation Status](./documents/prd/implementation-status.md) | Per-requirement implementation status vs. PRD v1.5 and remaining Open Source Readiness blockers |
 | [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) | MVP and production architecture, technology decisions, build sequence |
 | [Architecture Decision Records](./documents/architecture/adr/) | Nine ADRs covering MVP and JWT agent authentication, lineage visualization, demo strategy, connection reference composition / runtime scope enforcement / state propagation / package relationship, and notification architecture |
-| [OpenAPI Specifications](./packages/openapi/) | OpenAPI specifications for all platform APIs |
+| [OpenAPI Specifications](./packages/openapi/) | OpenAPI 3.1 specs (source of truth) for all platform APIs — also rendered live by the API at `/api/v1/docs` once the stack is running |
 | [TypeScript Lineage SDK](./packages/sdk-ts/) | TypeScript SDK for pipeline lineage emission |
 
 ---

@@ -481,6 +481,7 @@ services:
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached
+      - ../../packages/openapi:/app/packages/openapi:cached
       - /app/apps/api/node_modules
     ports:
       - "3001:3001"
