@@ -116,3 +116,31 @@ export interface SeedSlo {
   thresholdUnit?: string;
   evaluationWindowHours?: number;
 }
+
+export type SeedAccessRequestStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
+
+export interface SeedAccessRequest {
+  productSlug: string;
+  requesterEmail: string;
+  justification: string;
+  status: SeedAccessRequestStatus;
+  // Days from "now" the request was submitted. Used to populate
+  // requested_at so SLA badges (F11.9 / F11.10) render meaningfully.
+  submittedDaysAgo: number;
+  // For resolved requests, days from "now" the resolution happened
+  // (must be ≤ submittedDaysAgo). Resolver email + note are optional.
+  resolvedDaysAgo?: number;
+  resolverEmail?: string;
+  resolutionNote?: string;
+}
+
+export interface SeedAccessGrant {
+  productSlug: string;
+  granteeEmail: string;
+  grantedByEmail: string;
+  // Days from "now" the grant was issued — populates granted_at.
+  grantedDaysAgo: number;
+  // Days from "now" the grant expires (positive = future). Omit for
+  // open-ended grants.
+  expiresInDays?: number;
+}

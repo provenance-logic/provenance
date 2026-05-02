@@ -24,6 +24,9 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
+import type { AccessRequestStatus } from '@provenance/types';
 import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
@@ -146,6 +149,27 @@ interface SeedSloDto {
   evaluationWindowHours?: number;
 }
 
+interface SeedAccessRequestDto {
+  orgId: string;
+  productId: string;
+  requesterPrincipalId: string;
+  justification: string;
+  status: AccessRequestStatus;
+  requestedAt: string;
+  resolvedAt?: string;
+  resolvedByPrincipalId?: string;
+  resolutionNote?: string;
+}
+
+interface SeedAccessGrantDto {
+  orgId: string;
+  productId: string;
+  granteePrincipalId: string;
+  grantedByPrincipalId: string;
+  grantedAt: string;
+  expiresAt?: string;
+}
+
 @UseGuards(SeedGuard)
 @Controller('seed')
 export class SeedController {
@@ -167,6 +191,10 @@ export class SeedController {
     private readonly effectivePolicyRepo: Repository<EffectivePolicyEntity>,
     @InjectRepository(SloDeclarationEntity)
     private readonly sloDeclRepo: Repository<SloDeclarationEntity>,
+    @InjectRepository(AccessGrantEntity)
+    private readonly accessGrantRepo: Repository<AccessGrantEntity>,
+    @InjectRepository(AccessRequestEntity)
+    private readonly accessRequestRepo: Repository<AccessRequestEntity>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly trustScoreService: TrustScoreService,
     private readonly lineageService: LineageService,
@@ -652,7 +680,112 @@ export class SeedController {
   }
 
   // ---------------------------------------------------------------------------
-  // 9. Trust score recompute
+  // 9. Access requests (cross-domain within an org)
+  // ---------------------------------------------------------------------------
+
+  @Public()
+  @Post('access-requests')
+  @HttpCode(HttpStatus.OK)
+  async accessRequest(@Body() dto: SeedAccessRequestDto): Promise<{ id: string }> {
+    const product = await this.productRepo.findOne({ where: { id: dto.productId } });
+    if (!product) {
+      throw new NotFoundException(`Access request product ${dto.productId} not found`);
+    }
+    if (product.orgId !== dto.orgId) {
+      throw new NotFoundException(
+        `Cross-org access requests are not supported by the seed (product ${dto.productId})`,
+      );
+    }
+
+    // Idempotent on (org, product, requester) — re-running the seed
+    // returns whatever row already exists regardless of its current
+    // status. Seed never declares more than one request per requester
+    // per product.
+    const existing = await this.accessRequestRepo.findOne({
+      where: {
+        orgId: dto.orgId,
+        productId: dto.productId,
+        requesterPrincipalId: dto.requesterPrincipalId,
+      },
+    });
+    if (existing) return { id: existing.id };
+
+    const requestedAt = new Date(dto.requestedAt);
+    const saved = await this.accessRequestRepo.save(
+      this.accessRequestRepo.create({
+        orgId: dto.orgId,
+        productId: dto.productId,
+        requesterPrincipalId: dto.requesterPrincipalId,
+        justification: dto.justification,
+        status: dto.status,
+        requestedAt,
+        resolvedAt: dto.resolvedAt ? new Date(dto.resolvedAt) : null,
+        resolvedBy: dto.resolvedByPrincipalId ?? null,
+        resolutionNote: dto.resolutionNote ?? null,
+      }),
+    );
+    // requestedAt is on a CreateDateColumn — TypeORM ignores the value
+    // we passed and stamps "now". Force-update to make seed timestamps
+    // realistic so SLA badges (F11.9 / F11.10) demo correctly.
+    await this.accessRequestRepo.update(saved.id, { requestedAt });
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 10. Access grants
+  // ---------------------------------------------------------------------------
+
+  @Public()
+  @Post('access-grants')
+  @HttpCode(HttpStatus.OK)
+  async accessGrant(@Body() dto: SeedAccessGrantDto): Promise<{ id: string }> {
+    const product = await this.productRepo.findOne({ where: { id: dto.productId } });
+    if (!product) {
+      throw new NotFoundException(`Access grant product ${dto.productId} not found`);
+    }
+    if (product.orgId !== dto.orgId) {
+      throw new NotFoundException(
+        `Cross-org access grants are not supported by the seed (product ${dto.productId})`,
+      );
+    }
+
+    // Idempotent on (org, product, grantee) where revoked_at IS NULL.
+    // A grant that was previously seeded and then revoked by hand will
+    // be re-seeded on next run — that matches the semantic that
+    // re-seeding restores demo state.
+    const existing = await this.accessGrantRepo.findOne({
+      where: {
+        orgId: dto.orgId,
+        productId: dto.productId,
+        granteePrincipalId: dto.granteePrincipalId,
+        revokedAt: IsNull(),
+      },
+    });
+    if (existing) return { id: existing.id };
+
+    const grantedAt = new Date(dto.grantedAt);
+    const saved = await this.accessGrantRepo.save(
+      this.accessGrantRepo.create({
+        orgId: dto.orgId,
+        productId: dto.productId,
+        granteePrincipalId: dto.granteePrincipalId,
+        grantedBy: dto.grantedByPrincipalId,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+        revokedAt: null,
+        revokedBy: null,
+        accessScope: null,
+        approvalRequestId: null,
+        connectionPackage: null,
+        expiryWarningSentAt: null,
+      }),
+    );
+    // grantedAt is on a CreateDateColumn — same pattern as access requests.
+    await this.accessGrantRepo.update(saved.id, { grantedAt });
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 11. Trust score recompute
   // ---------------------------------------------------------------------------
 
   @Public()

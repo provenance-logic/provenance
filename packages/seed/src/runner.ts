@@ -9,12 +9,19 @@ import { seedProducts } from './products/index.js';
 import { seedAgents } from './agents/index.js';
 import { seedLineageEdges } from './lineage/index.js';
 import { seedSlos } from './slos/index.js';
+import { seedAccessRequests, seedAccessGrants } from './access/index.js';
 
 interface RunContext {
   config: SeedConfig;
   logger: Logger;
   api: ApiClient;
   keycloak: KeycloakAdminClient;
+}
+
+// Negative `days` produces a future timestamp.
+function daysAgoIso(days: number): string {
+  const ms = Date.now() - days * 24 * 60 * 60 * 1000;
+  return new Date(ms).toISOString();
 }
 
 export async function runSeed(ctx: RunContext): Promise<void> {
@@ -38,6 +45,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   // on the first pass; domain_owner role bindings get filled in on the second
   // pass below, after domains exist.
   logger.info('seed: users');
+  const principalIdByEmail = new Map<string, string>();
   for (const user of seedUsers) {
     const orgId = orgIdBySlug.get(user.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${user.orgSlug}`);
@@ -51,7 +59,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
         provenance_principal_type: 'human',
       },
     });
-    await ctx.api.post('/seed/principals', {
+    const principal = await ctx.api.post<{ id: string }>('/seed/principals', {
       orgId,
       keycloakUserId: kc.id,
       email: user.email,
@@ -60,6 +68,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       roles: user.roles,
       domainSlugs: user.domainSlugs ?? [],
     });
+    principalIdByEmail.set(user.email, principal.id);
   }
 
   logger.info('seed: domains');
@@ -209,6 +218,61 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       thresholdValue: slo.thresholdValue,
       thresholdUnit: slo.thresholdUnit,
       evaluationWindowHours: slo.evaluationWindowHours,
+    });
+  }
+
+  logger.info('seed: access requests');
+  for (const req of seedAccessRequests) {
+    const productId = productIdBySlug.get(req.productSlug);
+    const orgId = orgIdByProductSlug.get(req.productSlug);
+    const requesterPrincipalId = principalIdByEmail.get(req.requesterEmail);
+    if (!productId || !orgId) {
+      throw new Error(`access request references unknown product: ${req.productSlug}`);
+    }
+    if (!requesterPrincipalId) {
+      throw new Error(`access request references unknown requester: ${req.requesterEmail}`);
+    }
+    const requestedAt = daysAgoIso(req.submittedDaysAgo);
+    const resolvedAt = req.resolvedDaysAgo !== undefined ? daysAgoIso(req.resolvedDaysAgo) : undefined;
+    const resolverId = req.resolverEmail ? principalIdByEmail.get(req.resolverEmail) : undefined;
+    if (req.resolverEmail && !resolverId) {
+      throw new Error(`access request references unknown resolver: ${req.resolverEmail}`);
+    }
+    await ctx.api.post('/seed/access-requests', {
+      orgId,
+      productId,
+      requesterPrincipalId,
+      justification: req.justification,
+      status: req.status,
+      requestedAt,
+      resolvedAt,
+      resolvedByPrincipalId: resolverId,
+      resolutionNote: req.resolutionNote,
+    });
+  }
+
+  logger.info('seed: access grants');
+  for (const grant of seedAccessGrants) {
+    const productId = productIdBySlug.get(grant.productSlug);
+    const orgId = orgIdByProductSlug.get(grant.productSlug);
+    const granteeId = principalIdByEmail.get(grant.granteeEmail);
+    const grantedById = principalIdByEmail.get(grant.grantedByEmail);
+    if (!productId || !orgId) {
+      throw new Error(`access grant references unknown product: ${grant.productSlug}`);
+    }
+    if (!granteeId) {
+      throw new Error(`access grant references unknown grantee: ${grant.granteeEmail}`);
+    }
+    if (!grantedById) {
+      throw new Error(`access grant references unknown grantor: ${grant.grantedByEmail}`);
+    }
+    await ctx.api.post('/seed/access-grants', {
+      orgId,
+      productId,
+      granteePrincipalId: granteeId,
+      grantedByPrincipalId: grantedById,
+      grantedAt: daysAgoIso(grant.grantedDaysAgo),
+      expiresAt: grant.expiresInDays !== undefined ? daysAgoIso(-grant.expiresInDays) : undefined,
     });
   }
 
