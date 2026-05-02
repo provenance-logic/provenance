@@ -439,10 +439,11 @@ Shipped:
 
 Remaining:
 - Local-setup-time measurement (clone → working stack on a fresh machine; needs a fresh contributor, not a simulation from inside the dev env)
-- Comprehensive seed-data richness (SLO declarations per product, sample access requests + grants, sample notifications) so every domain page has something visible after first seed
+- Seed-data richness — sample access requests + grants and sample notifications still missing so the access and notification pages remain empty on first seed
 
 Newly shipped (2026-05-02):
 - **Lineage emit idempotency** — `EmitLineageEventRequest.idempotency_key` plus a unique partial index on `(org_id, idempotency_key)` lets re-runs (seed, pipeline retries) skip the insert and the Neo4j edge merge. Verified locally: three back-to-back `pnpm seed` runs hold `emission_log` at 102 rows and Neo4j `LINEAGE_EDGE` at 100. Migration V27. SDKs can opt in for at-least-once dedup.
+- **SLO declaration seeding** — new `POST /api/v1/seed/slos` endpoint (idempotent on `(org_id, product_id, name)`) plus a 20-declaration seed list (2 per published seed product, mix of freshness / completeness / latency). Two back-to-back seed runs hold `observability.slo_declarations` stable at 28. Each seed product now renders meaningful SLO cards on the observability dashboard out of the box. Sample evaluations not seeded yet — separate follow-up.
 
 ### Post-Launch (important but not blocking)
 
