@@ -11,6 +11,8 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { LineageModule } from '../lineage/lineage.module.js';
 import { TrustScoreModule } from '../trust-score/trust-score.module.js';
@@ -32,6 +34,8 @@ import { SeedGuard } from './seed.guard.js';
       PolicyVersionEntity,
       EffectivePolicyEntity,
       SloDeclarationEntity,
+      AccessGrantEntity,
+      AccessRequestEntity,
     ]),
     GovernanceModule,
     LineageModule,
