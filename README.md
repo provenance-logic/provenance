@@ -218,8 +218,23 @@ provenance/
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- Node.js 20+ and npm
+- Node.js 20+ and pnpm
 - Git
+
+### Hardware Requirements
+
+Provenance is a coordination platform with a multi-service stack (Postgres, Neo4j, OpenSearch, Keycloak, Redpanda, Temporal, an embedding service, and three application processes). Local resource needs land in the same range as DataHub or OpenMetadata.
+
+| Profile | RAM floor | Disk | What you can run | Use it when |
+| --- | --- | --- | --- | --- |
+| **Lite** (`docker-compose.dev.yml`) | 8 GB | ~10 GB free | Postgres + Keycloak + OPA + API + web. Lineage, search, semantic queries, agent integration, access workflows, and notifications are explicitly disabled. | You want to sign up, click around, and see the UI. Good for a 30-minute first impression. |
+| **Full** (`docker-compose.ec2-dev.yml`) | 16 GB | ~30 GB free | Everything: lineage graph, search, semantic queries, agent MCP layer, access approval workflows, notifications, HTTPS via Caddy. | You want to actually evaluate Provenance or contribute to it. The recommended development configuration. |
+
+**32 GB+** is comfortable when you're running the stack alongside an IDE, a browser with several tabs, and the test suite at the same time.
+
+8 GB machines (older MacBook Airs, base-model laptops) can run the lite profile and edit code, but should not attempt the full stack — the JVM-based services (OpenSearch, Keycloak, Neo4j) thrash heavily under that ceiling.
+
+Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack runs on macOS, Linux, and Windows with WSL2.
 
 ### Running Locally
 
@@ -230,11 +245,20 @@ provenance/
    ```
 
 2. **Start the infrastructure stack:**
+
+   For the **full stack** (recommended, requires 16 GB RAM):
    ```bash
    cd infrastructure/docker
    docker compose up -d
    ```
-   This starts PostgreSQL, Neo4j, Redpanda, OpenSearch, OPA, Keycloak, and Kong.
+   Starts PostgreSQL, Neo4j, Redpanda, OpenSearch, OPA, Keycloak, Temporal, the embedding service, and Kong.
+
+   For the **lite stack** (8 GB laptops, basic UI exploration only):
+   ```bash
+   cd infrastructure/docker
+   docker compose -f docker-compose.dev.yml up -d
+   ```
+   Starts only Postgres + Keycloak + OPA + API + web. Lineage, search, agent features, access workflows, and notifications are disabled.
 
 3. **Install dependencies and start the API:**
    ```bash
