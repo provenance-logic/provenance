@@ -21,6 +21,15 @@ const envSchema = z.object({
   OPENSEARCH_NODE: z.string().url().default('http://localhost:9200'),
 
   // Temporal
+  // TEMPORAL_ENABLED gates the workflow client + worker. Set false in
+  // lightweight stacks (no temporal container running) so the API stops
+  // logging connection errors and access requests cleanly skip workflow
+  // start. Default true so accidentally omitting it in a real deployment
+  // surfaces the missing temporal dependency loudly.
+  TEMPORAL_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
   TEMPORAL_ADDRESS: z.string().min(1).default('localhost:7233'),
   TEMPORAL_NAMESPACE: z.string().min(1).default('default'),
   APPROVAL_TIMEOUT_HOURS: z.coerce.number().int().positive().default(72),

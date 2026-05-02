@@ -3,7 +3,11 @@
 # Stage 'development' is used by Docker Compose for local dev with hot-reload.
 # Stage 'production' builds an optimized image for deployment.
 
-FROM node:20-alpine AS base
+# Debian-based (glibc) rather than Alpine (musl) so the @temporalio/core-bridge
+# native Rust addon loads — it ships only x86_64-unknown-linux-gnu / aarch64-
+# unknown-linux-gnu prebuilds. Without this, the Temporal worker silently
+# disables itself with "Error loading shared library ld-linux-x86-64.so.2".
+FROM node:20-slim AS base
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.1.0 --activate
 
@@ -45,7 +49,7 @@ RUN pnpm build
 # ---------------------------------------------------------------------------
 # Production stage — minimal image
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.1.0 --activate
 COPY --from=build /app/apps/api/dist ./dist
