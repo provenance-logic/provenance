@@ -1,20 +1,20 @@
 # Provenance — EC2 Development Stack
 #
-# Lightweight compose for EC2 dev instances. Includes the core services
-# plus Neo4j and Redpanda for lineage and event streaming:
+# Compose for EC2 dev instances. Includes the core services plus Neo4j,
+# Redpanda, OpenSearch, the embedding service, the agent query layer,
+# Caddy for HTTPS, and Temporal for access approval workflows and the
+# Domain 12 connection-reference timers:
 #
-#   postgres, keycloak, opa, neo4j, redpanda, redpanda-init, api, web
+#   postgres, keycloak, opa, neo4j, redpanda, redpanda-init,
+#   opensearch, temporal, temporal-ui, embedding, agent-query,
+#   api, web, caddy
 #
-# Excluded (not needed for Phase 1 dev): minio,
-# temporal, kong, and all init/setup containers.
-#
-# Disabled features when running this stack:
-#   - Access workflows (TEMPORAL_ENABLED=false)
+# Excluded: minio, kong (not needed at this stage).
 #
 # Usage:
 #   ./start-ec2.sh up -d
 #
-# For the full stack:
+# For the everything-and-the-kitchen-sink stack (adds minio + kong):
 #   docker compose -f infrastructure/docker/docker-compose.yml up -d
 
 name: provenance-ec2
@@ -33,6 +33,7 @@ volumes:
   neo4j_plugins:
   redpanda_data:
   opensearch_data:
+  temporal_data:
   caddy_data:
   caddy_config:
 
@@ -263,6 +264,64 @@ services:
       start_period: 10s
 
   # ---------------------------------------------------------------------------
+  # Temporal — workflow engine for access approval and Domain 12 timers
+  #
+  # Single auto-setup container: runs the schema migration on first boot and
+  # then runs the server in the same process. Browse the UI at :8088.
+  # ---------------------------------------------------------------------------
+  temporal:
+    image: temporalio/auto-setup:1.23.0
+    container_name: provenance-ec2-temporal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: provenance
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development.yaml
+    volumes:
+      - ./config/temporal:/etc/temporal/config/dynamicconfig:ro
+    ports:
+      - "7233:7233"   # gRPC frontend (host access for `temporal` CLI debugging)
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 2>&1 | grep -q 'SERVING' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: provenance-ec2-temporal-ui
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: "http://localhost:3000,https://dev.provenancelogic.com"
+    ports:
+      - "8088:8080"
+    networks:
+      - provenance
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
   # Neo4j Community — lineage graph (memory-constrained for EC2 dev)
   # ---------------------------------------------------------------------------
   neo4j:
@@ -469,6 +528,10 @@ services:
       OPENSEARCH_ENABLED: "true"
       # Anthropic API (Claude) — NL query translation
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
+      # Temporal — workflow engine (access approval, Domain 12 timers)
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_ENABLED: "true"
       # Port connection-details encryption (Domain 10 Workstream B — F10.6).
       # Prod reads a 32-byte AES key from Secrets Manager via the ARN; the
       # dev stack falls back to CONNECTION_DETAILS_DEV_KEY so the service
@@ -481,8 +544,6 @@ services:
       # @provenance/seed package's runner. Production must NEVER set this true.
       SEED_ENABLED: ${SEED_ENABLED:-true}
       SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
-      # Disabled services — connections fail gracefully
-      TEMPORAL_ENABLED: "false"
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached
@@ -506,6 +567,8 @@ services:
       redpanda:
         condition: service_healthy
       opensearch:
+        condition: service_healthy
+      temporal:
         condition: service_healthy
       mailhog:
         condition: service_started

@@ -25,6 +25,10 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     const config = getConfig();
+    if (!config.TEMPORAL_ENABLED) {
+      this.logger.log('TEMPORAL_ENABLED=false — approval worker not started');
+      return;
+    }
     try {
       // Dynamic import defers loading the native Rust addon until runtime so that
       // a missing or incompatible binary (e.g. glibc vs musl on Alpine) does not

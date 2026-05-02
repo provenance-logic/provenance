@@ -8,8 +8,7 @@
 #   minio              (no deps)
 #   keycloak           → postgres (healthy)
 #   opa                → (config volume ready)
-#   temporal-init      → postgres (healthy)
-#   temporal           → postgres (healthy), temporal-init (completed)
+#   temporal           → postgres (healthy)  [auto-setup: schema + server in one]
 #   temporal-ui        → temporal (healthy)
 #   api                → postgres, neo4j, redpanda, opensearch, keycloak, opa, temporal (all healthy)
 #   agent-query        → api (healthy), opa (healthy), neo4j (healthy), opensearch (healthy)  [Phase 4 — disabled]
@@ -292,35 +291,16 @@ services:
   # ---------------------------------------------------------------------------
   # Temporal — workflow engine for governance processes
   #
-  # Startup sequence:
-  #   1. temporal-init  — runs auto-setup (creates temporal DB schema), then exits
-  #   2. temporal       — starts server once schema is ready
-  #   3. temporal-ui    — starts once server is healthy
+  # Single auto-setup container: runs the schema migration on first boot and
+  # then runs the server in the same process. The earlier two-container split
+  # (temporal-init + temporal) was broken: temporalio/auto-setup keeps the
+  # server running after setup, so the init container never exits and the
+  # depending temporal server can never start.
   # ---------------------------------------------------------------------------
-  temporal-init:
-    image: temporalio/auto-setup:1.23.0
-    container_name: provenance-temporal-init
-    environment:
-      DB: postgres12
-      DB_PORT: 5432
-      POSTGRES_USER: provenance
-      POSTGRES_PWD: ${POSTGRES_PASSWORD:-provenance_dev_password}
-      POSTGRES_SEEDS: postgres
-      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development.yaml
-    volumes:
-      - ./config/temporal:/etc/temporal/config/dynamicconfig:ro
-    networks:
-      - provenance
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # This container runs schema migrations and exits — it is not a long-lived service.
-    restart: "no"
-
   temporal:
-    image: temporalio/server:1.23.0
+    image: temporalio/auto-setup:1.23.0
     container_name: provenance-temporal
-    restart: "no"
+    restart: unless-stopped
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -328,12 +308,6 @@ services:
       POSTGRES_PWD: ${POSTGRES_PASSWORD:-provenance_dev_password}
       POSTGRES_SEEDS: postgres
       DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development.yaml
-      TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
-      TEMPORAL_HISTORY_MEMBERSHIP_HOST: temporal
-      TEMPORAL_MATCHING_MEMBERSHIP_HOST: temporal
-      TEMPORAL_FRONTEND_MEMBERSHIP_HOST: temporal
-      TEMPORAL_WORKER_MEMBERSHIP_HOST: temporal
     volumes:
       - ./config/temporal:/etc/temporal/config/dynamicconfig:ro
     ports:
@@ -343,8 +317,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      temporal-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 2>&1 | grep -q 'SERVING' || exit 1"]
       interval: 15s

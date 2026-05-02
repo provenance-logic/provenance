@@ -8,7 +8,7 @@
 # Disabled features when running this stack:
 #   - Event publishing (REDPANDA_ENABLED=false — Kafka producer/consumer fail gracefully)
 #   - Product search/indexing (OPENSEARCH_ENABLED=false — ProductIndexService warns and continues)
-#   - Access workflows (TEMPORAL_ENABLED=false — Temporal client uses lazy connection)
+#   - Access workflows (TEMPORAL_ENABLED=false — client returns null, worker skipped)
 #   - Lineage graph (NEO4J_ENABLED=false — not wired in Phase 1)
 #
 # Usage:

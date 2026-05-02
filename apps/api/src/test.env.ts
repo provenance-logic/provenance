@@ -13,3 +13,6 @@ process.env['EMAIL_PROVIDER'] = 'noop';
 process.env['APP_BASE_URL'] = 'http://localhost:3000';
 process.env['CONNECTION_DETAILS_DEV_KEY'] =
   '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
+// Temporal disabled for unit tests — workflows are exercised in integration
+// tests against a real temporal container, not via mocks.
+process.env['TEMPORAL_ENABLED'] = 'false';

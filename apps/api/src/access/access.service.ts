@@ -51,7 +51,7 @@ export class AccessService {
     @InjectRepository(DataProductEntity)
     private readonly productRepo: Repository<DataProductEntity>,
     @Inject(TEMPORAL_CLIENT)
-    private readonly temporalClient: Client,
+    private readonly temporalClient: Client | null,
     private readonly connectionPackageService: ConnectionPackageService,
     private readonly consentService: ConsentService,
     private readonly notificationsService: NotificationsService,
@@ -400,28 +400,32 @@ export class AccessService {
     // Record the submitted event.
     await this.recordEvent(orgId, saved.id, 'submitted', requesterPrincipalId, null);
 
-    // Start the Temporal approval workflow (best-effort).
-    const workflowId = `approval-${saved.id}`;
-    try {
-      const config = getConfig();
-      await this.temporalClient.workflow.start(approvalWorkflow, {
-        args: [
-          {
-            requestId: saved.id,
-            orgId,
-            firstTimeoutMs: config.APPROVAL_TIMEOUT_HOURS * 60 * 60 * 1000,
-            escalationTimeoutMs:
-              config.APPROVAL_ESCALATION_TIMEOUT_HOURS * 60 * 60 * 1000,
-          },
-        ],
-        taskQueue: APPROVAL_TASK_QUEUE,
-        workflowId,
-      });
-      saved.temporalWorkflowId = workflowId;
-      await this.requestRepo.save(saved);
-    } catch (err) {
-      this.logger.error(`Failed to start approval workflow for request ${saved.id}`, err);
-      // The request is still created — Temporal is best-effort for now.
+    // Start the Temporal approval workflow. The workflow drives the SLA timer
+    // and escalation behavior; without it the request is still actionable
+    // through the API but no auto-escalation fires. We treat the workflow start
+    // as best-effort: a Temporal hiccup must not lose an access request.
+    if (this.temporalClient) {
+      const workflowId = `approval-${saved.id}`;
+      try {
+        const config = getConfig();
+        await this.temporalClient.workflow.start(approvalWorkflow, {
+          args: [
+            {
+              requestId: saved.id,
+              orgId,
+              firstTimeoutMs: config.APPROVAL_TIMEOUT_HOURS * 60 * 60 * 1000,
+              escalationTimeoutMs:
+                config.APPROVAL_ESCALATION_TIMEOUT_HOURS * 60 * 60 * 1000,
+            },
+          ],
+          taskQueue: APPROVAL_TASK_QUEUE,
+          workflowId,
+        });
+        saved.temporalWorkflowId = workflowId;
+        await this.requestRepo.save(saved);
+      } catch (err) {
+        this.logger.error(`Failed to start approval workflow for request ${saved.id}`, err);
+      }
     }
 
     // F11.6 — notify the product owner of the new access request.
@@ -635,7 +639,7 @@ export class AccessService {
   }
 
   private async signalWorkflowResolved(workflowId: string | null): Promise<void> {
-    if (!workflowId) return;
+    if (!workflowId || !this.temporalClient) return;
     try {
       const handle = this.temporalClient.workflow.getHandle(workflowId);
       await handle.signal(resolveSignal);
