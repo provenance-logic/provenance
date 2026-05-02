@@ -10,6 +10,7 @@ import { seedAgents } from './agents/index.js';
 import { seedLineageEdges } from './lineage/index.js';
 import { seedSlos } from './slos/index.js';
 import { seedAccessRequests, seedAccessGrants } from './access/index.js';
+import { seedNotifications } from './notifications/index.js';
 
 interface RunContext {
   config: SeedConfig;
@@ -273,6 +274,33 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       grantedByPrincipalId: grantedById,
       grantedAt: daysAgoIso(grant.grantedDaysAgo),
       expiresAt: grant.expiresInDays !== undefined ? daysAgoIso(-grant.expiresInDays) : undefined,
+    });
+  }
+
+  logger.info('seed: notifications');
+  // Resolve each recipient email back to (orgId, principalId).
+  // The seed user list and the principal map were both built earlier,
+  // so this is just lookups.
+  const orgIdByUserEmail = new Map<string, string>();
+  for (const user of seedUsers) {
+    const orgId = orgIdBySlug.get(user.orgSlug);
+    if (orgId) orgIdByUserEmail.set(user.email, orgId);
+  }
+  for (const notif of seedNotifications) {
+    const recipientId = principalIdByEmail.get(notif.recipientEmail);
+    const orgId = orgIdByUserEmail.get(notif.recipientEmail);
+    if (!recipientId || !orgId) {
+      throw new Error(`notification references unknown recipient: ${notif.recipientEmail}`);
+    }
+    await ctx.api.post('/seed/notifications', {
+      orgId,
+      recipientPrincipalId: recipientId,
+      category: notif.category,
+      payload: notif.payload,
+      deepLink: notif.deepLink,
+      dedupKey: `seed:notif:${notif.seedKey}`,
+      createdAt: daysAgoIso(notif.createdDaysAgo),
+      readAt: notif.readDaysAgo !== undefined ? daysAgoIso(notif.readDaysAgo) : undefined,
     });
   }
 

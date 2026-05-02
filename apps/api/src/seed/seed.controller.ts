@@ -26,7 +26,8 @@ import { EffectivePolicyEntity } from '../governance/entities/effective-policy.e
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
-import type { AccessRequestStatus } from '@provenance/types';
+import { NotificationEntity } from '../notifications/entities/notification.entity.js';
+import type { AccessRequestStatus, NotificationCategory } from '@provenance/types';
 import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
@@ -170,6 +171,17 @@ interface SeedAccessGrantDto {
   expiresAt?: string;
 }
 
+interface SeedNotificationDto {
+  orgId: string;
+  recipientPrincipalId: string;
+  category: NotificationCategory;
+  payload: Record<string, unknown>;
+  deepLink: string;
+  dedupKey: string;
+  createdAt: string;
+  readAt?: string;
+}
+
 @UseGuards(SeedGuard)
 @Controller('seed')
 export class SeedController {
@@ -195,6 +207,8 @@ export class SeedController {
     private readonly accessGrantRepo: Repository<AccessGrantEntity>,
     @InjectRepository(AccessRequestEntity)
     private readonly accessRequestRepo: Repository<AccessRequestEntity>,
+    @InjectRepository(NotificationEntity)
+    private readonly notificationRepo: Repository<NotificationEntity>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly trustScoreService: TrustScoreService,
     private readonly lineageService: LineageService,
@@ -785,7 +799,49 @@ export class SeedController {
   }
 
   // ---------------------------------------------------------------------------
-  // 11. Trust score recompute
+  // 11. Notifications
+  // ---------------------------------------------------------------------------
+
+  @Public()
+  @Post('notifications')
+  @HttpCode(HttpStatus.OK)
+  async notification(@Body() dto: SeedNotificationDto): Promise<{ id: string }> {
+    // Idempotent on (org, recipient, dedup_key). The seed authors a
+    // stable dedup_key for every notification, so re-running the seed
+    // never creates duplicates.
+    const existing = await this.notificationRepo.findOne({
+      where: {
+        orgId: dto.orgId,
+        recipientPrincipalId: dto.recipientPrincipalId,
+        dedupKey: dto.dedupKey,
+      },
+    });
+    if (existing) return { id: existing.id };
+
+    const createdAt = new Date(dto.createdAt);
+    const readAt = dto.readAt ? new Date(dto.readAt) : null;
+    const saved = await this.notificationRepo.save(
+      this.notificationRepo.create({
+        orgId: dto.orgId,
+        recipientPrincipalId: dto.recipientPrincipalId,
+        category: dto.category,
+        payload: dto.payload,
+        deepLink: dto.deepLink,
+        dedupKey: dto.dedupKey,
+        dedupCount: 1,
+        readAt,
+        dismissedAt: null,
+      }),
+    );
+    // created_at is on a CreateDateColumn; updated_at is on
+    // UpdateDateColumn and gets bumped by the trigger on every UPDATE.
+    // Force-set both so the seed produces realistic timestamps.
+    await this.notificationRepo.update(saved.id, { createdAt });
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 12. Trust score recompute
   // ---------------------------------------------------------------------------
 
   @Public()
