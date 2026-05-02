@@ -24,6 +24,7 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { NotificationEntity } from '../notifications/entities/notification.entity.js';
@@ -182,6 +183,16 @@ interface SeedNotificationDto {
   readAt?: string;
 }
 
+interface SeedSloEvaluationDto {
+  sloId: string;
+  orgId: string;
+  measuredValue: number;
+  passed: boolean;
+  evaluatedAt: string;
+  evaluatedBy: string;
+  details?: Record<string, unknown>;
+}
+
 @UseGuards(SeedGuard)
 @Controller('seed')
 export class SeedController {
@@ -203,6 +214,8 @@ export class SeedController {
     private readonly effectivePolicyRepo: Repository<EffectivePolicyEntity>,
     @InjectRepository(SloDeclarationEntity)
     private readonly sloDeclRepo: Repository<SloDeclarationEntity>,
+    @InjectRepository(SloEvaluationEntity)
+    private readonly sloEvalRepo: Repository<SloEvaluationEntity>,
     @InjectRepository(AccessGrantEntity)
     private readonly accessGrantRepo: Repository<AccessGrantEntity>,
     @InjectRepository(AccessRequestEntity)
@@ -688,6 +701,47 @@ export class SeedController {
         thresholdUnit: dto.thresholdUnit ?? null,
         evaluationWindowHours: dto.evaluationWindowHours ?? 24,
         active: true,
+      }),
+    );
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 8b. SLO evaluations
+  // ---------------------------------------------------------------------------
+
+  @Public()
+  @Post('slo-evaluations')
+  @HttpCode(HttpStatus.OK)
+  async sloEvaluation(@Body() dto: SeedSloEvaluationDto): Promise<{ id: string }> {
+    const decl = await this.sloDeclRepo.findOne({ where: { id: dto.sloId } });
+    if (!decl) {
+      throw new NotFoundException(`SLO declaration ${dto.sloId} not found`);
+    }
+    if (decl.orgId !== dto.orgId) {
+      throw new NotFoundException(
+        `SLO declaration ${dto.sloId} does not belong to org ${dto.orgId}`,
+      );
+    }
+
+    // Idempotent on (slo_id, evaluated_at) — re-running the seed
+    // returns whatever evaluation was already recorded for that
+    // timestamp instead of inserting a duplicate row.
+    const evaluatedAt = new Date(dto.evaluatedAt);
+    const existing = await this.sloEvalRepo.findOne({
+      where: { sloId: dto.sloId, evaluatedAt },
+    });
+    if (existing) return { id: existing.id };
+
+    const saved = await this.sloEvalRepo.save(
+      this.sloEvalRepo.create({
+        sloId: dto.sloId,
+        orgId: dto.orgId,
+        measuredValue: dto.measuredValue,
+        passed: dto.passed,
+        evaluatedAt,
+        evaluatedBy: dto.evaluatedBy,
+        details: dto.details ?? null,
       }),
     );
     return { id: saved.id };

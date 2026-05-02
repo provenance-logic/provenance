@@ -439,13 +439,13 @@ Shipped:
 
 Remaining:
 - Local-setup-time measurement (clone → working stack on a fresh machine; needs a fresh contributor, not a simulation from inside the dev env)
-- Sample SLO evaluations as a follow-up to SLO seeding (so the SLO health summary panel renders green/yellow/red instead of "no data")
 
 Newly shipped (2026-05-02):
 - **Lineage emit idempotency** — `EmitLineageEventRequest.idempotency_key` plus a unique partial index on `(org_id, idempotency_key)` lets re-runs (seed, pipeline retries) skip the insert and the Neo4j edge merge. Verified locally: three back-to-back `pnpm seed` runs hold `emission_log` at 102 rows and Neo4j `LINEAGE_EDGE` at 100. Migration V27. SDKs can opt in for at-least-once dedup.
 - **SLO declaration seeding** — new `POST /api/v1/seed/slos` endpoint (idempotent on `(org_id, product_id, name)`) plus a 20-declaration seed list (2 per published seed product, mix of freshness / completeness / latency). Two back-to-back seed runs hold `observability.slo_declarations` stable at 28. Each seed product now renders meaningful SLO cards on the observability dashboard out of the box. Sample evaluations not seeded yet — separate follow-up.
 - **Access requests + grants seeding** — new `POST /api/v1/seed/access-requests` and `POST /api/v1/seed/access-grants` endpoints (idempotent on the natural keys) plus 5 cross-domain access requests (4 pending / 1 denied / 1 approved) and 7 active grants across both seed orgs, with two grants intentionally landing in the F11.11 expiring-soon window (≤14 days). The access page, governance review queue, and grant-expiring notification flow all have meaningful state on first seed.
 - **Notification inbox seeding** — new `POST /api/v1/seed/notifications` endpoint (idempotent on `(org_id, recipient_principal_id, dedup_key)`) plus 15 notifications across both seed orgs and 9 distinct recipients, covering 9 categories (access, SLO violation, trust-score change, compliance drift, classification change, product published, connection reference, grant expiring). Mix of read and unread states with realistic recency. Two back-to-back seed runs hold `notifications.notifications` stable at 22. Closes the seed-data-richness leftover.
+- **SLO evaluation seeding** — new `POST /api/v1/seed/slo-evaluations` endpoint (idempotent on `(slo_id, evaluated_at)` with midnight-UTC-rounded timestamps so re-runs are stable) plus a runner-side generator that emits 7 daily evaluations per seeded SLO declaration. Pattern: 6 passing days, 1 failing day 2 days ago (85.7% pass rate). Story per product: "one bad day, recovered." Two back-to-back seed runs hold `observability.slo_evaluations` stable at 533. Trust-score recompute runs at the end of seed pick up the new evaluations, so trust scores are now realistic on first seed instead of all-zero.
 
 ### Post-Launch (important but not blocking)
 
