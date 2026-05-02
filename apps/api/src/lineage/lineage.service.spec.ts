@@ -39,7 +39,7 @@ describe('LineageService idempotency', () => {
     repo = {
       findOne: jest.fn(),
       create: jest.fn().mockImplementation((data) => data),
-      save: jest.fn().mockImplementation(async (entity) => ({
+      save: jest.fn().mockImplementation((entity) => ({
         id: 'new-emission-id',
         ...entity,
       })),
