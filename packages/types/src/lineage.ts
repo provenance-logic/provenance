@@ -32,6 +32,11 @@ export interface EmitLineageEventRequest {
   emitted_by?: string;
   transformation_logic?: string;
   confidence?: number;
+  // Optional client-supplied key. When set, re-emitting with the same
+  // (org_id, idempotency_key) returns the existing emission instead of
+  // creating a new row or Neo4j edge. Useful for SDK retries and
+  // deterministic seed runs.
+  idempotency_key?: string;
 }
 
 // ---------------------------------------------------------------------------

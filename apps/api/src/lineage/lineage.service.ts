@@ -71,6 +71,22 @@ export class LineageService {
   // ---------------------------------------------------------------------------
 
   async emitEvent(orgId: string, request: EmitLineageEventRequest): Promise<EmissionLogEntity> {
+    // Idempotency: if the caller supplied a key and we've already emitted
+    // for (orgId, key), return the prior row without re-inserting or
+    // re-syncing Neo4j. This keeps re-runs (seed, pipeline retries) from
+    // creating duplicate edges.
+    if (request.idempotency_key) {
+      const existing = await this.emissionLogRepo.findOne({
+        where: { orgId, idempotencyKey: request.idempotency_key },
+      });
+      if (existing) {
+        this.logger.log(
+          `Emission idempotent hit: ${existing.id} (key=${request.idempotency_key})`,
+        );
+        return existing;
+      }
+    }
+
     // Build target_node — if not provided, create a minimal self-referencing node
     const targetNode = request.target_node ?? {
       node_type: 'DataProduct',
@@ -88,6 +104,7 @@ export class LineageService {
       confidence: request.confidence ?? 1.0,
       emittedBy: request.emitted_by ?? null,
       emittedAt: new Date(request.emitted_at ?? new Date().toISOString()),
+      idempotencyKey: request.idempotency_key ?? null,
     });
 
     const saved = await this.emissionLogRepo.save(entity);

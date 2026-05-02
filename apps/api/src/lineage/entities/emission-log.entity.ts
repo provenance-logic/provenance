@@ -37,6 +37,9 @@ export class EmissionLogEntity {
   @Column({ name: 'neo4j_written_at', type: 'timestamptz', nullable: true })
   neo4jWrittenAt!: Date | null;
 
+  @Column({ name: 'idempotency_key', type: 'varchar', length: 255, nullable: true })
+  idempotencyKey!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

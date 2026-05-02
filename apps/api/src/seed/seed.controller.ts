@@ -586,6 +586,7 @@ export class SeedController {
       edge_type: dto.edgeType,
       transformation_logic: dto.description,
       emitted_by: 'seed-runner',
+      idempotency_key: `seed:lineage:${fromProduct.id}:${toProduct.id}:${dto.edgeType}`,
     });
 
     return { id: entry.id };
