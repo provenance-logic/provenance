@@ -101,3 +101,18 @@ export interface SeedLineageEdge {
   edgeType: 'derives_from' | 'transforms' | 'consumes' | 'depends_on';
   description: string;
 }
+
+export type SeedSloType = 'freshness' | 'null_rate' | 'latency' | 'completeness' | 'custom';
+export type SeedSloOperator = 'lt' | 'lte' | 'gt' | 'gte' | 'eq';
+
+export interface SeedSlo {
+  productSlug: string;
+  name: string;
+  description: string;
+  sloType: SeedSloType;
+  metricName: string;
+  thresholdOperator: SeedSloOperator;
+  thresholdValue: number;
+  thresholdUnit?: string;
+  evaluationWindowHours?: number;
+}

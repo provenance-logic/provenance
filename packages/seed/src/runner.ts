@@ -8,6 +8,7 @@ import { seedPolicies } from './policies/index.js';
 import { seedProducts } from './products/index.js';
 import { seedAgents } from './agents/index.js';
 import { seedLineageEdges } from './lineage/index.js';
+import { seedSlos } from './slos/index.js';
 
 interface RunContext {
   config: SeedConfig;
@@ -178,6 +179,36 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       toProductId: toId,
       edgeType: edge.edgeType,
       description: edge.description,
+    });
+  }
+
+  logger.info('seed: slos');
+  // Slug → orgId map so SLOs can resolve their product's org without
+  // re-fetching. Walks the product seed list in order to avoid a second
+  // map.
+  const orgIdByProductSlug = new Map<string, string>();
+  for (const product of seedProducts) {
+    const orgId = orgIdBySlug.get(product.orgSlug);
+    if (!orgId) continue;
+    orgIdByProductSlug.set(product.slug, orgId);
+  }
+  for (const slo of seedSlos) {
+    const productId = productIdBySlug.get(slo.productSlug);
+    const orgId = orgIdByProductSlug.get(slo.productSlug);
+    if (!productId || !orgId) {
+      throw new Error(`slo references unknown product: ${slo.productSlug}`);
+    }
+    await ctx.api.post('/seed/slos', {
+      orgId,
+      productId,
+      name: slo.name,
+      description: slo.description,
+      sloType: slo.sloType,
+      metricName: slo.metricName,
+      thresholdOperator: slo.thresholdOperator,
+      thresholdValue: slo.thresholdValue,
+      thresholdUnit: slo.thresholdUnit,
+      evaluationWindowHours: slo.evaluationWindowHours,
     });
   }
 

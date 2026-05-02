@@ -23,6 +23,7 @@ import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js
 import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-classification.entity.js';
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
+import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
 import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
@@ -132,6 +133,19 @@ interface SeedLineageEdgeDto {
   description: string;
 }
 
+interface SeedSloDto {
+  orgId: string;
+  productId: string;
+  name: string;
+  description: string;
+  sloType: 'freshness' | 'null_rate' | 'latency' | 'completeness' | 'custom';
+  metricName: string;
+  thresholdOperator: 'lt' | 'lte' | 'gt' | 'gte' | 'eq';
+  thresholdValue: number;
+  thresholdUnit?: string;
+  evaluationWindowHours?: number;
+}
+
 @UseGuards(SeedGuard)
 @Controller('seed')
 export class SeedController {
@@ -151,6 +165,8 @@ export class SeedController {
     private readonly policyVersionRepo: Repository<PolicyVersionEntity>,
     @InjectRepository(EffectivePolicyEntity)
     private readonly effectivePolicyRepo: Repository<EffectivePolicyEntity>,
+    @InjectRepository(SloDeclarationEntity)
+    private readonly sloDeclRepo: Repository<SloDeclarationEntity>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly trustScoreService: TrustScoreService,
     private readonly lineageService: LineageService,
@@ -593,7 +609,50 @@ export class SeedController {
   }
 
   // ---------------------------------------------------------------------------
-  // 8. Trust score recompute
+  // 8. SLO declarations
+  // ---------------------------------------------------------------------------
+
+  @Public()
+  @Post('slos')
+  @HttpCode(HttpStatus.OK)
+  async slo(@Body() dto: SeedSloDto): Promise<{ id: string }> {
+    const product = await this.productRepo.findOne({ where: { id: dto.productId } });
+    if (!product) {
+      throw new NotFoundException(`SLO product ${dto.productId} not found`);
+    }
+    if (product.orgId !== dto.orgId) {
+      throw new NotFoundException(
+        `SLO product ${dto.productId} does not belong to org ${dto.orgId}`,
+      );
+    }
+
+    // Idempotent on (org_id, product_id, name) — re-running the seed
+    // returns the existing declaration without inserting a duplicate.
+    const existing = await this.sloDeclRepo.findOne({
+      where: { orgId: dto.orgId, productId: dto.productId, name: dto.name },
+    });
+    if (existing) return { id: existing.id };
+
+    const saved = await this.sloDeclRepo.save(
+      this.sloDeclRepo.create({
+        orgId: dto.orgId,
+        productId: dto.productId,
+        name: dto.name,
+        description: dto.description,
+        sloType: dto.sloType,
+        metricName: dto.metricName,
+        thresholdOperator: dto.thresholdOperator,
+        thresholdValue: dto.thresholdValue,
+        thresholdUnit: dto.thresholdUnit ?? null,
+        evaluationWindowHours: dto.evaluationWindowHours ?? 24,
+        active: true,
+      }),
+    );
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 9. Trust score recompute
   // ---------------------------------------------------------------------------
 
   @Public()
