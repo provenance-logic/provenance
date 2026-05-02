@@ -25,6 +25,51 @@ function daysAgoIso(days: number): string {
   return new Date(ms).toISOString();
 }
 
+// Like daysAgoIso, but rounded to midnight UTC of that day.
+// Used for rows where the seed's idempotency check matches on
+// `evaluated_at` (or equivalent) — re-runs must produce the same
+// timestamp or the lookup misses and a duplicate row is inserted.
+function daysAgoMidnightIso(days: number): string {
+  const now = new Date();
+  const utcMidnight = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  return new Date(utcMidnight - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// Generate a measurement that satisfies (or violates) the SLO's
+// threshold, depending on `shouldPass`. Used to produce realistic
+// historical evaluation rows during seeding without authoring each
+// row by hand.
+function computeSeedSloMeasurement(
+  operator: 'lt' | 'lte' | 'gt' | 'gte' | 'eq',
+  threshold: number,
+  shouldPass: boolean,
+): number {
+  // Multiplier choice keeps the measurement clearly on the
+  // intended side of the threshold, but never absurdly far away.
+  // Ratios above 1.0 are clamped at the call site if needed.
+  if (operator === 'gte' || operator === 'gt') {
+    const multiplier = shouldPass ? 1.02 : 0.93;
+    const value = threshold * multiplier;
+    // Ratios (where threshold is between 0 and 1) clamp to 1.0.
+    return threshold <= 1 ? Math.min(value, 1.0) : round2(value);
+  }
+  if (operator === 'lt' || operator === 'lte') {
+    const multiplier = shouldPass ? 0.85 : 1.15;
+    return round2(threshold * multiplier);
+  }
+  // 'eq' is unusual; return the threshold itself for a "pass"
+  // evaluation, or threshold * 1.05 for a "fail."
+  return shouldPass ? threshold : round2(threshold * 1.05);
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 export async function runSeed(ctx: RunContext): Promise<void> {
   const { logger } = ctx;
 
@@ -208,7 +253,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
     if (!productId || !orgId) {
       throw new Error(`slo references unknown product: ${slo.productSlug}`);
     }
-    await ctx.api.post('/seed/slos', {
+    const decl = await ctx.api.post<{ id: string }>('/seed/slos', {
       orgId,
       productId,
       name: slo.name,
@@ -220,6 +265,32 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       thresholdUnit: slo.thresholdUnit,
       evaluationWindowHours: slo.evaluationWindowHours,
     });
+
+    // Generate 7 daily evaluations: 6 passing + 1 failing 2 days ago.
+    // Story per SLO: "one bad day mid-week, recovered." The summary
+    // endpoint reports pass_rate_7d ≈ 85.7% for every product on
+    // first seed.
+    for (let i = 0; i < 7; i++) {
+      const daysAgo = 7 - i;
+      const isFailingSlot = daysAgo === 2;
+      const measuredValue = computeSeedSloMeasurement(
+        slo.thresholdOperator,
+        slo.thresholdValue,
+        !isFailingSlot,
+      );
+      await ctx.api.post('/seed/slo-evaluations', {
+        sloId: decl.id,
+        orgId,
+        measuredValue,
+        passed: !isFailingSlot,
+        evaluatedAt: daysAgoMidnightIso(daysAgo),
+        evaluatedBy: 'seed-runner',
+        details: {
+          source: 'seed',
+          metricName: slo.metricName,
+        },
+      });
+    }
   }
 
   logger.info('seed: access requests');

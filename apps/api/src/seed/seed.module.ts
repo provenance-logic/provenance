@@ -11,6 +11,7 @@ import { AgentTrustClassificationEntity } from '../agents/entities/agent-trust-c
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
+import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { NotificationEntity } from '../notifications/entities/notification.entity.js';
@@ -35,6 +36,7 @@ import { SeedGuard } from './seed.guard.js';
       PolicyVersionEntity,
       EffectivePolicyEntity,
       SloDeclarationEntity,
+      SloEvaluationEntity,
       AccessGrantEntity,
       AccessRequestEntity,
       NotificationEntity,
