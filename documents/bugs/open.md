@@ -9,28 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-013 — `packages/types/dist/` not pre-built; workspace package resolution falls through to broken path mapping
-
-- **Severity:** Blocker
-- **Status:** Open
-- **Area:** Build / monorepo
-
-**Symptom.** On a fresh clone, after `pnpm install`, `apps/api/node_modules/@provenance/types/dist/` does not exist. The package's `package.json` declares `"main": "./dist/index.js"`, so any consumer doing `require('@provenance/types')` gets a missing-module error from Node's package resolver. Combined with B-012, this surfaces as a confusing `.ts` path in the require.
-
-**Root cause.** `pnpm install` from the repo root does not run a recursive `build` — it only installs and links workspace packages. `packages/types` has its own `build` script (`tsc`) that generates `dist/`, but nothing invokes it before the API tries to consume the package. The README does not mention building shared packages either.
-
-**Proposed fix.** Two paths, not mutually exclusive:
-
-1. **Add a postinstall (or prepare) script at the repo root** that runs `pnpm --filter '@provenance/types' build`. Subtle: postinstall on a workspace install can be brittle; `prepare` runs only when installed as a package. A simpler approach is a `prebuild` / `predev` in each consumer (`apps/api/package.json`'s `dev` script becomes `pnpm --filter @provenance/types build && nest start --watch`).
-
-2. **Add a startup script** referenced from the README — `infrastructure/scripts/dev-bootstrap.sh` — that does `pnpm install && pnpm --filter @provenance/types build && cd infrastructure/docker && docker compose up -d` in sequence. The README directs users to this script rather than to the raw `docker compose up -d`.
-
-Option 2 also gives us a place to slot in the missing `flyway-migrate` step (see B-014) and the Keycloak post-import config (B-016, B-018).
-
-**Related.** B-012 (tsconfig `.ts` extension) — fixing B-012 alone makes the require path clean, but B-013 still leaves the resolution to find a missing `dist/`. Both must be fixed for a fresh-clone start to work.
-
----
-
 ## B-014 — Default `docker-compose.yml` has no migration service; fresh DB has no schema
 
 - **Severity:** Blocker
