@@ -49,7 +49,7 @@ export type PortInterfaceType =
   | 'graphql'
   | 'streaming_topic'
   | 'file_object_export'
-  | 'semantic_query';
+  | 'semantic_query_endpoint';
 
 export interface SeedPortContract {
   fields: SeedPortField[];

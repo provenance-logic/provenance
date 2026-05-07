@@ -42,7 +42,7 @@ export const acmeCorpProducts: SeedProduct[] = [
       {
         slug: 'customer-360-semantic',
         type: 'output',
-        interfaceType: 'semantic_query',
+        interfaceType: 'semantic_query_endpoint',
         description: 'Agent-facing semantic query endpoint over customer 360.',
         contract: {
           fields: [
@@ -51,7 +51,7 @@ export const acmeCorpProducts: SeedProduct[] = [
             { name: 'signals', type: 'jsonb', description: 'Typed behavioural signals' },
           ],
           connectionDetails: {
-            interfaceType: 'semantic_query',
+            interfaceType: 'semantic_query_endpoint',
             endpoint: 'https://dev.provenancelogic.com/mcp/sse',
             protocol: 'MCP over SSE',
             authMethod: 'keycloak_oidc',
