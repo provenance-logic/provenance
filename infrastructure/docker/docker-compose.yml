@@ -282,11 +282,15 @@ services:
     networks:
       - provenance
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8181/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
+      # OPA's image is distroless — no shell, no wget, no busybox. CMD-SHELL or
+      # any wget/curl-based check fails on every platform. Use the OPA binary
+      # itself, which is always present, to evaluate a trivial Rego expression.
+      # Matches the working healthcheck in docker-compose.ec2-dev.yml.
+      test: ["CMD", "/opa", "eval", "true"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # ---------------------------------------------------------------------------
   # Temporal — workflow engine for governance processes
