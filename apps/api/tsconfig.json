@@ -7,7 +7,7 @@
     "rootDir": "../../",
     "baseUrl": "./",
     "paths": {
-      "@provenance/types": ["../../packages/types/src/index.ts"]
+      "@provenance/types": ["../../packages/types/src/index"]
     },
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
