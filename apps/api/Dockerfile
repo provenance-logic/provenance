@@ -20,7 +20,10 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/types/package.json ./packages/types/
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: the root postinstall builds packages/types, but its source
+# is not COPY'd into this stage. Skip lifecycle scripts here; the build stage
+# (and the host's pnpm install before docker compose up) handle the types build.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ---------------------------------------------------------------------------
 # Development stage — mounts source via volume, runs nest start --watch

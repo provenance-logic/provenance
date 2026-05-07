@@ -12,7 +12,8 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json ./apps/web/
 COPY packages/types/package.json ./packages/types/
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: see apps/api/Dockerfile for rationale.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ---------------------------------------------------------------------------
 # Development stage — mounts source via volume, runs Vite dev server

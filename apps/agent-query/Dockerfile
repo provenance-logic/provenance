@@ -12,7 +12,8 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/agent-query/package.json ./apps/agent-query/
 COPY packages/types/package.json ./packages/types/
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: see apps/api/Dockerfile for rationale.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ---------------------------------------------------------------------------
 # Development stage — builds TS then runs with node --watch
