@@ -71,6 +71,35 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Flyway — applies platform schema migrations against postgres on first boot.
+  # One-shot service: runs `flyway migrate` once and exits 0. No `baseline`
+  # command — `baselineVersion` was removed from flyway.conf in PR #66, and on
+  # a fresh DB `flyway baseline` would stamp schema_history at v1 by default
+  # and cause migrate to skip V1. `migrate` alone is correct for both fresh
+  # DBs (applies V1–V27) and already-populated DBs (no-op).
+  # ---------------------------------------------------------------------------
+  flyway-migrate:
+    image: flyway/flyway:10-alpine
+    container_name: provenance-flyway-migrate
+    restart: "no"
+    command:
+      - "-configFiles=/flyway/conf/flyway.conf"
+      - "-locations=filesystem:/flyway/sql"
+      - "migrate"
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/provenance
+      FLYWAY_USER: provenance
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+    volumes:
+      - ../../apps/api/flyway.conf:/flyway/conf/flyway.conf:ro
+      - ../../apps/api/migrations:/flyway/sql:ro
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
   # Neo4j Community — lineage graph
   # ---------------------------------------------------------------------------
   neo4j:
@@ -471,6 +500,8 @@ services:
     networks:
       - provenance
     depends_on:
+      flyway-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       neo4j:

@@ -57,6 +57,31 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Flyway — applies platform schema migrations against postgres on first boot.
+  # See docker-compose.yml for the full rationale (no baseline, migrate-only).
+  # ---------------------------------------------------------------------------
+  flyway-migrate:
+    image: flyway/flyway:10-alpine
+    container_name: provenance-dev-flyway-migrate
+    restart: "no"
+    command:
+      - "-configFiles=/flyway/conf/flyway.conf"
+      - "-locations=filesystem:/flyway/sql"
+      - "migrate"
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/provenance
+      FLYWAY_USER: provenance
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
+    volumes:
+      - ../../apps/api/flyway.conf:/flyway/conf/flyway.conf:ro
+      - ../../apps/api/migrations:/flyway/sql:ro
+    networks:
+      - provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
   # Keycloak — OIDC identity provider
   # ---------------------------------------------------------------------------
   keycloak:
@@ -177,6 +202,8 @@ services:
     networks:
       - provenance
     depends_on:
+      flyway-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       keycloak:
@@ -184,7 +211,7 @@ services:
       opa:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/v1/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

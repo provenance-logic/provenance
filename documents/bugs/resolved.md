@@ -6,6 +6,28 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-014 — Default `docker-compose.yml` had no migration service; fresh DB had no schema
+
+- **Fixed:** 2026-05-07 — commit `<pending>`
+- **Severity:** was Blocker
+- **Area:** Infrastructure / database
+
+**Symptom.** A user following the README ("clone → `cd infrastructure/docker && docker compose up -d` → run seed") hit an opaque 500 from the seed CLI on the very first call: API logs revealed `relation "organizations.orgs" does not exist`. The Postgres container was healthy and accepting connections, but no platform schema had ever been applied.
+
+**Root cause.** `infrastructure/docker/docker-compose.yml` (the file the README directs users to) declared no migration service. `infrastructure/docker/docker-compose.ec2-dev.yml` did have a `flyway-migrate` service, but the EC2 file is not what the README points to. The default compose was authored on the assumption that schema would be in place "somehow," and on the EC2 dev box it always was.
+
+**Fix.** Added a one-shot `flyway-migrate` service to both `infrastructure/docker/docker-compose.yml` and `infrastructure/docker/docker-compose.dev.yml`. The service uses `flyway/flyway:10-alpine`, `restart: "no"`, depends on `postgres: service_healthy`, and runs `flyway migrate` (only — no `baseline` step) against the same `flyway.conf` and `migrations/` directory the API uses. The `api` service in both files now depends on `flyway-migrate: condition: service_completed_successfully` in addition to its existing healthchecks, so the API container does not start until V1–V27 have applied to the empty DB.
+
+**Why no `baseline` command.** The EC2 compose's command was `flyway baseline && flyway migrate`. After PR #66 dropped `baselineVersion` and `baselineOnMigrate` from `flyway.conf` (B-015 fix), running `flyway baseline` on a fresh DB would stamp `flyway_schema_history` at version 1 by default, causing the subsequent `migrate` to skip V1 — V2 would then fail because V1's tables don't exist. `flyway migrate` alone is correct on a fresh DB (applies V1–V27 in order) and idempotent on a populated DB (no-op).
+
+**Bonus scope: docker-compose.dev.yml API healthcheck.** Found that the dev (lite) compose still had the broken `/health` healthcheck path that PR #66 fixed in `docker-compose.yml`. Patched in this PR alongside the migration service since the file was already being edited; same root cause (B-021 item 4) but a separate file the original PR did not touch.
+
+**Verified.** YAML structure parsed and validated for both files: `flyway-migrate` service defined correctly, `api.depends_on` includes the new condition, dev healthcheck path now reads `/api/v1/health`. End-to-end migration run (drop volumes → up → V1–V27 apply → api comes up only after) is part of the cumulative fresh-clone simulation across PRs A+B+C.
+
+**Pattern.** A default compose file is the contract with first-time contributors. If the EC2 / production compose has a service that the default doesn't, that's a bug — not "an EC2 thing." Audit pairs of compose files (default vs. EC2 vs. demo) for divergence whenever schema initialization, post-import config, or other "first boot" steps live in only one of them.
+
+---
+
 ## B-013 — `packages/types/dist/` not pre-built; workspace package resolution falls through to broken path mapping
 
 - **Fixed:** 2026-05-07 — commit `<pending>`

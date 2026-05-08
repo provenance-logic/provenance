@@ -9,28 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-014 — Default `docker-compose.yml` has no migration service; fresh DB has no schema
-
-- **Severity:** Blocker
-- **Status:** Open
-- **Area:** Infrastructure / database
-
-**Symptom.** A user following the README ("clone → `cd infrastructure/docker && docker compose up -d` → run seed") hits an opaque 500 from the seed CLI on the very first call:
-
-```
-[ERROR] POST /seed/organizations -> 500: {"statusCode":500,"message":"Internal server error"}
-```
-
-API logs reveal `relation "organizations.orgs" does not exist`. The Postgres container is healthy and accepting connections, but no platform schema has ever been applied.
-
-**Root cause.** `infrastructure/docker/docker-compose.yml` (the file the README directs users to) declares no migration service. `infrastructure/docker/docker-compose.ec2-dev.yml` does have a `flyway-migrate` service (`flyway/flyway:10-alpine`, `restart: "no"`, runs `flyway baseline && flyway migrate` on startup) — but the EC2 file is not what the README points to. The default compose was authored on the assumption that schema would be in place "somehow," and on the EC2 dev box it always was.
-
-**Proposed fix.** Port the `flyway-migrate` service from `docker-compose.ec2-dev.yml` into `docker-compose.yml`. Strip the EC2-specific naming/logging options. Wire `api` and `web` to depend on `flyway-migrate: condition: service_completed_successfully`. Verify the same change in `docker-compose.dev.yml` (the lite stack), which also currently has no migration step.
-
-**Related.** B-015 (flyway baselineVersion=8 problem). The migrate service alone is not enough — even with the service present, a fresh DB will fail at V9 because of B-015. Both must be fixed together.
-
----
-
 ## B-021 — README onboarding paper cuts: stale Node version, npm/pnpm mismatch, wrong frontend port, broken healthcheck path, sparse seed instructions
 
 - **Severity:** Medium (cumulative impact on first-time developer experience)
