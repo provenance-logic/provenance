@@ -21,7 +21,7 @@ The plan proposes a precursor PR (commit to the scope shape) plus a six-PR seque
 2. an active connection reference exists for the agent-product pair;
 3. the action falls within the connection reference's approved scope.
 
-Denials must return one of four (or five — see decision 3) distinct error codes, write an audit entry, and fan out a notification on scope violation. The arc includes the in-memory cache, the Redpanda consumer for `connection_reference.state`, and a control-plane fallback endpoint for cache miss and cold load.
+Denials must return one of five distinct error codes (see decision 3), write an audit entry, and fan out a notification on scope violation. The arc includes the in-memory cache, the Redpanda consumer for `connection_reference.state`, and a control-plane fallback endpoint for cache miss and cold load.
 
 **Out of scope.** These are separable Domain 12 follow-ups, tracked in `documents/prd/implementation-status.md`:
 
@@ -34,63 +34,89 @@ Denials must return one of four (or five — see decision 3) distinct error code
 - Per-reference scope filtering on the package (ADR-008 scope inheritance)
 - OPA policy bundle work for activation-time governance rules
 
-## 2. Decisions required before implementation
+## 2. Decisions (locked 2026-05-08)
 
-### Decision 1: Connection reference scope payload schema
+All four decisions below were walked and locked together in a review session on 2026-05-08. Implementation may proceed.
 
-**Today:** `ConnectionReferenceScope` is typed as `Record<string, unknown>` in `packages/types/src/consent.ts`. The data layer accepts arbitrary shapes; the runtime-match function has nothing concrete to match against.
+### Decision 1: Connection reference scope payload schema — LOCKED
 
-**Proposed:**
+**Locked shape:**
 
 ```typescript
 type ConnectionReferenceScope = {
-  ports: string[];                  // port names (or '*' for all output ports)
-  data_categories: string[];        // PII, financial, operational, etc. (or '*')
-  use_case_category: string;        // one of the 8 governance taxonomy categories
+  ports: string[];   // port names; '*' = all output ports of the product
+};
+
+type DataCategoryConstraints = {
+  allowed_categories?: string[];  // absent = no narrowing
 };
 ```
 
-**Why this matters:** scope-match is meaningless without a committed shape. This blocks every PR in the sequence.
+**Rationale.** The migration (V18) already separates scope into two columns: `intended_scope` / `approved_scope` (which output ports) and `data_category_constraints` / `approved_data_category_constraints` (which data categories within those ports). The architect's first-pass shape conflated these; the locked types respect the existing schema.
 
-**Action:** lands as a precursor PR before the six-PR sequence. May warrant an ADR-006 amendment depending on review.
+`ConnectionReferenceScope` is just about ports. Wildcard `'*'` is supported for "all output ports" — the approval UI must render it visibly as "all ports" so the principal sees what they're consenting to. Ports are referenced by name (not UUID) because F12.6 requires the use-case declaration to be preserved verbatim and immutably; names are what humans read in approval flows and audit logs.
 
-### Decision 2: Where access-grant enforcement lives
+**Considered but rejected:**
 
-**Today:** there is no access-grant check in the Agent Query Layer. Every MCP tool delegates to a control-plane endpoint that already enforces row-level security and grant checks. ADR-005 mandates AND-not-OR composition; CLAUDE.md echoes that.
+- Including `data_categories` inside `ConnectionReferenceScope`. Rejected: the migration already separates them into their own column, and conflating them in the type would create migration friction. They stay in the sibling type `DataCategoryConstraints`.
+- Including `use_case_category` inside the scope. Rejected: it is already a separate `VARCHAR(128)` column on `ConnectionReference` itself.
+- Including `actions: ('read' | 'subscribe')[]` for action-verb gating. Rejected for MVP: all 9 current MCP tools are read-only and write tools are not in Phase 5. Adding actions now is future-proofing complexity we don't need; add when write tools land in Phase 6+.
+- Referencing ports by UUID. Rejected: F12.6 mandates verbatim immutable preservation of the use-case declaration. Names are what the human approver saw; the audit record must show the original name even if the port is later renamed. Cache resolves names to current ports at runtime.
 
-**Option (a) — recommended.** Both access grant AND connection reference checked at the AQL guard. Adds a second cache (`access-grant-cache`). Lets us return four distinct denial codes (`ACCESS_GRANT_NOT_FOUND`, `CONNECTION_REFERENCE_NOT_FOUND`, `CONNECTION_REFERENCE_EXPIRED`, `CONNECTION_REFERENCE_SCOPE_VIOLATION`) — which is what CLAUDE.md says we promise.
+**Action:** P0 (precursor PR) types both `ConnectionReferenceScope` and `DataCategoryConstraints`, adds Zod validators at request time, and amends ADR-006 to record the shape.
 
-**Option (b).** AQL checks only the connection reference; access-grant enforcement remains the control plane's job. Simpler, single enforcement seam, but the AQL alone cannot distinguish "no grant" from "no reference" in its denial code.
+### Decision 2: Where access-grant enforcement lives — LOCKED at option (a)
 
-**Recommendation:** option (a). The four-distinct-codes promise in CLAUDE.md is load-bearing for agent-developer experience.
+**Locked:** the AQL guard checks both access grant AND connection reference. Two caches at the AQL — `access-grant-cache` and `connection-reference-cache`. Each has its own population and invalidation strategy (see Section 5).
 
-### Decision 3: Should `Suspended` be a distinct denial code?
+**Rationale.** CLAUDE.md's "four distinct denial codes, not a generic unauthorized" rule is load-bearing for agent-developer experience. An agent that gets denied needs to know whether to give up (no grant), submit a new request (no reference), wait (suspended), or refine the action (scope violation). Lumping these together makes agent code worse. Option (a) is the only way to satisfy that rule from inside the AQL.
 
-**Today's plan:** roll `Suspended` / `Expired` / `Revoked` into one code (`CONNECTION_REFERENCE_EXPIRED` — interpreted broadly as "no longer active").
+**Considered but rejected:**
 
-**Alternative:** split out `CONNECTION_REFERENCE_SUSPENDED`, giving five denial codes total.
+- Option (b) — AQL only checks the connection reference; access-grant enforcement remains the control plane's job. Rejected: violates the four-distinct-denial-codes rule. The AQL alone cannot distinguish "no grant" from "no reference" because the control plane returns the same generic 403 (or worse, a 404 from RLS hiding rows the agent can't see) for both.
+- A Redpanda topic for access-grant state changes (mirroring the connection-reference topic at ADR-007). Rejected for MVP: TTL + cache-miss fallback is enough. Grant revocations become visible within the TTL window (default 24h), or instantly on the next request after revocation if the cache happens to evict. If grant-revocation latency becomes a real complaint, add a topic post-MVP. The connection-reference topic stays — it is load-bearing for the 10-second NF12.3 budget.
 
-**Why split:** `Suspended` means "come back after the MAJOR-version re-consent lands." `Expired` and `Revoked` mean "you're done — submit a new request." These are different signals to an agent developer.
+### Decision 3: `Suspended` as distinct denial code — LOCKED at split
 
-**Recommendation:** split. Cheap to add, much clearer for downstream agent code.
+**Locked:** five denial codes total at the AQL guard:
 
-### Decision 4: Action-to-scope mapping for the 9 MCP tools
+1. `ACCESS_GRANT_NOT_FOUND`
+2. `CONNECTION_REFERENCE_NOT_FOUND`
+3. `CONNECTION_REFERENCE_SUSPENDED` — distinct, signals "wait, the product had a MAJOR version bump and the owning principal needs to re-approve. Don't resubmit."
+4. `CONNECTION_REFERENCE_EXPIRED` — umbrella for both `expired` and `revoked` states. Both share the same agent-developer action path: submit fresh.
+5. `CONNECTION_REFERENCE_SCOPE_VIOLATION`
 
-Each MCP tool needs a declared `actionScope` shape so the guard knows what to compare against. This is platform-defined.
+**Rationale.** `Suspended` is a different signal to an agent developer than `Expired` or `Revoked`. Suspended says "wait." Expired and Revoked say "start over." Different action paths, different code.
 
-| MCP tool | Bound to product? | Required scope |
+**Considered but rejected:**
+
+- Lumping `Suspended` with `Expired/Revoked`. Rejected: confuses agent developers who would have to inspect the cause-marker on top of the denial code to decide what to do.
+- Splitting `Revoked` from `Expired` for the same reason. Rejected for MVP: both share the same agent-developer action path (submit fresh), and the audit log already records the cause distinctly. Splitting would cost a code constant for a signal the agent does not differently act on. Revisit if agent developers report it as a real problem.
+
+**CLAUDE.md note.** CLAUDE.md currently says "four distinct error codes." This will be amended to "five distinct error codes" as part of PR #5 (the guard wiring), not in P0 — the codes do not exist as constants until the guard exists.
+
+### Decision 4: Action-to-scope mapping for the 9 MCP tools — LOCKED
+
+| MCP tool | Connection-ref check? | Required port |
 |---|---|---|
-| `list_products` | no (org-scoped discovery) | exempt |
-| `get_product` | yes | `{port: discovery, action: read}` |
-| `get_trust_score` | yes | `{port: observability, action: read}` |
-| `get_lineage` | yes | `{port: discovery, action: read}` |
-| `get_slo_summary` | yes | `{port: observability, action: read}` |
-| `search_products` | no | exempt |
-| `semantic_search` | no | exempt |
-| `register_agent` | no (agent-self) | exempt |
-| `get_agent_status` | no (agent-self) | exempt |
+| `list_products` | exempt | — |
+| `search_products` | exempt | — |
+| `semantic_search` | exempt | — |
+| `register_agent` | exempt (agent-self) | — |
+| `get_agent_status` | exempt (agent-self) | — |
+| `get_product` | yes | `discovery` |
+| `get_lineage` | yes | `discovery` |
+| `get_trust_score` | yes | `observability` |
+| `get_slo_summary` | yes | `observability` |
 
-**Action:** review this table with Matt before PR #5 (the guard wiring) lands. Tweaks are cheap; the structure is what matters.
+**Rationale.** The split mirrors port-type semantics in CLAUDE.md: `Discovery` = "what does this product look like" (metadata, lineage), `Observability` = "how is this product doing" (trust, SLOs). The five exempt tools are not bound to a specific product — they are global discovery (`list_products`, `search_products`, `semantic_search`) or agent-self operations (`register_agent`, `get_agent_status`). Existing access-grant + RLS already filters list/search results to what the agent can see.
+
+**Considered but rejected:**
+
+- Making `get_product` exempt because it returns "basic metadata." Rejected: the response is richer than `list_products` (full description, tag list, port list with interface types) and the principle of "every port access is consented to" means an observability-only monitoring agent should not see deep product metadata for free. Agents that need both metadata and observability should request both ports — that is the whole point of explicit per-port consent.
+- Allowing `get_product` with EITHER `discovery` OR `observability` (lenient OR). Rejected: complexity without much payoff, and it leaks discovery information to observability-only agents.
+
+**Forward note.** When write tools land in Phase 6+, they will get their own port mappings — likely `input` for write paths, `control` for state-change paths. This table is the MVP version and is meant to grow. The mapping itself lives in `apps/agent-query/src/auth/tool-scope-map.ts` and is reviewable by Matt as new tools are added.
 
 ## 3. Components to add
 
@@ -182,6 +208,6 @@ These are not blockers for the precursor or the sequence to start, but should su
 
 ## 9. Hard prerequisites and external dependencies
 
-- **Decisions 1–4 locked** before P0 lands.
+- **Decisions 1–4 locked** (see Section 2; locked 2026-05-08).
 - **F12.25 (legacy-agent migration)** is a hard prerequisite for PR 6 (the flag flip). Without it, flipping the flag breaks every existing agent that has not yet been migrated to the connection-reference model. F12.25 is a separate arc tracked in `implementation-status.md`.
 - **Redpanda topic** `connection_reference.state` must be configured before PR 1 publishes. Topic configuration lands as part of PR 1 itself.
