@@ -5,7 +5,7 @@
   "description": "Provenance — open source cloud-native data mesh platform",
   "packageManager": "pnpm@9.1.0",
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.13.0",
     "pnpm": ">=9.0.0"
   },
   "scripts": {

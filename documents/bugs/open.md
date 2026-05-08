@@ -9,38 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-021 — README onboarding paper cuts: stale Node version, npm/pnpm mismatch, wrong frontend port, broken healthcheck path, sparse seed instructions
-
-- **Severity:** Medium (cumulative impact on first-time developer experience)
-- **Status:** Open — items 1, 2, 3, 5 below remain.
-- **Area:** Documentation / developer experience
-
-**Note (2026-05-06):** Item 4 (broken API healthcheck path) shipped in commit `d8f73c4` (PR #66). The compose healthcheck now probes `/api/v1/health`. Items 1, 2, 3, and 5 remain open and will be addressed together in the README rewrite PR.
-
-**Symptom.** Several small, independent inaccuracies in the README "Getting Started" section that, together, make the first ten minutes of contribution materially harder than they should be. None on its own is a blocker; collectively they are a thousand paper cuts:
-
-1. **Stale Node version.** README line 221 says "Node.js 20+ and pnpm." Homebrew's current `pnpm` formula requires Node 22.13+ as of early 2026. A developer following the prereqs and installing `pnpm` via `brew` cannot run anything until they upgrade Node.
-
-2. **npm vs pnpm mismatch.** README steps 3 and 4 instruct the user to run `cd apps/api && npm install && npm run start:dev` and `cd apps/web && npm install && npm run dev`. Two problems: (a) the repo is a `pnpm` workspace (`pnpm-workspace.yaml` at root, `workspace:*` deps), and `npm install` inside an app directory creates a divergent tree that ignores the workspace lockfile; (b) the same `docker compose up -d` from step 2 already runs `provenance-api` and `provenance-web` containers — running `npm run start:dev` in step 3 attempts to bind to port 3001 on top of the running container.
-
-3. **Wrong frontend port.** README line 278 says the frontend is at `http://localhost:5173` (Vite default). The containerized Vite dev server in the compose stack is bound to `:3000` (which is what the Keycloak `provenance-web` client lists in its redirect URIs). A user following the README opens `:5173`, gets connection-refused, gives up.
-
-4. **Broken healthcheck path.** `infrastructure/docker/docker-compose.yml:489` declares the API healthcheck as `wget -qO- http://localhost:3001/health` — but the actual health route is `/api/v1/health`. The container is functionally healthy after ~30s but Compose marks it as `(health: starting)` indefinitely, then `(unhealthy)`. Misleading for anyone debugging.
-
-5. **Sparse seed instructions.** README step 6 is an 8-line `ENV=value … pnpm --filter @provenance/seed seed` block with no surrounding explanation. The dev credentials it expects (`KEYCLOAK_ADMIN_CLIENT_SECRET=provenance-admin-dev-secret`, the seed-token, etc.) are derived from defaults baked into the compose file but never explained. A user who doesn't already understand the architecture cannot tell which of the eight env vars are required vs. derivable.
-
-**Proposed fix.** All in one README rewrite:
-
-1. Bump prereq to "Node.js 22.13+ (matches Homebrew `pnpm`'s minimum)." Optionally pin a specific minor in `package.json#engines` and link to it.
-2. Delete README steps 3 and 4 entirely. The compose stack already runs the API and web. Add a separate "Hot-reload outside Docker" section for contributors who specifically want that, and use `pnpm` (not `npm`) commands there.
-3. Change "Frontend: `http://localhost:5173`" to "Frontend: `http://localhost:3000`."
-4. Fix the API healthcheck in the compose to probe `http://localhost:3001/api/v1/health`. (This is a one-line fix in the compose, not in the README — fold into the same PR.)
-5. Rewrite the seed instructions as: `pnpm --filter @provenance/seed seed` (one line) with a note that the env vars are read from `.env.example` defaults if not set. Add the missing defaults to `.env.example` — currently most are baked into the compose only.
-
-None of these is hard individually. They have stayed broken because the team's daily workflow is the EC2 dev box, which never exercises the README path.
-
----
-
 ## B-022 — `api` and `minio` healthchecks call HTTP tools the container images do not ship; both report "unhealthy" forever
 
 - **Severity:** Medium
