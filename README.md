@@ -218,7 +218,7 @@ provenance/
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- Node.js 20+ and pnpm
+- Node.js 22.13+ and pnpm 9+ (the version of `pnpm` shipped by current Homebrew requires Node 22.13 or later — installing pnpm via `brew` on Node 20 will fail at first invocation)
 - Git
 
 ### Hardware Requirements
@@ -244,7 +244,13 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    cd provenance
    ```
 
-2. **Start the infrastructure stack:**
+2. **Install host JS dependencies:**
+   ```bash
+   pnpm install
+   ```
+   Populates `node_modules` for host-side commands (the seed CLI in step 5, plus lint / test / typecheck for contributors) and builds shared workspace packages via the root `postinstall`. Run this before `docker compose up` so that the api container's `nest start --watch` doesn't observe a mid-flight rebuild and reload.
+
+3. **Start the infrastructure stack:**
 
    For the **full stack** (recommended, requires 16 GB RAM):
    ```bash
@@ -260,39 +266,28 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    ```
    Starts only Postgres + Keycloak + OPA + API + web. Lineage, search, agent features, access workflows, and notifications are disabled.
 
-3. **Install dependencies and start the API:**
-   ```bash
-   cd apps/api
-   npm install
-   npm run start:dev
-   ```
-
-4. **Start the frontend:**
-   ```bash
-   cd apps/web
-   npm install
-   npm run dev
-   ```
-
-5. **Access the application:**
-   - Frontend: `http://localhost:5173`
+4. **Access the application:**
+   - Frontend: `http://localhost:3000`
    - API: `http://localhost:3001`
    - **API reference (rendered OpenAPI):** `http://localhost:3001/api/v1/docs`
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
 
-6. **(Optional) Seed sample data:**
+   The Compose stack already runs the API and frontend in dev mode with hot-reload — source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate "install dependencies and run dev server" step on the host.
+
+5. **(Optional) Seed sample data:**
+
+   The seed CLI populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, lineage, SLOs, and access grants. Idempotent — safe to re-run.
+
+   It reads three required env vars from the shell — `SEED_API_KEY`, `DATABASE_URL`, and `KEYCLOAK_ADMIN_CLIENT_SECRET` — plus several with sensible defaults. Working dev values for all of them live in `infrastructure/docker/.env.example`. Copy it to `.env`, source it, then run the seed:
+
    ```bash
-   API_BASE_URL=http://localhost:3001 \
-   SEED_API_KEY=dev-seed-token-change-me \
-   DATABASE_URL=postgres://provenance:provenance_dev_password@localhost:5432/provenance \
-   KEYCLOAK_URL=http://localhost:8080 \
-   KEYCLOAK_REALM=provenance \
-   KEYCLOAK_ADMIN_CLIENT_ID=provenance-admin \
-   KEYCLOAK_ADMIN_CLIENT_SECRET=provenance-admin-dev-secret \
+   cp infrastructure/docker/.env.example infrastructure/docker/.env
+   set -a; source infrastructure/docker/.env; set +a
    pnpm --filter @provenance/seed seed
    ```
-   Populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, and lineage. Idempotent — safe to re-run. Login as `admin@acme.example.com` (password `DemoPass123!`) to explore.
+
+   Log in at `http://localhost:3000` as `admin@acme.example.com` (password `DemoPass123!`) to explore.
 
 ### EC2 Deployment
 

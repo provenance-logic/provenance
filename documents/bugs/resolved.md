@@ -6,6 +6,41 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-021 — README onboarding paper cuts: stale Node version, npm/pnpm mismatch, wrong frontend port, broken healthcheck path, sparse seed instructions
+
+- **Fixed:** 2026-05-07 — items 4 and (dev compose healthcheck) shipped in `d8f73c4` (PR #66) and `<pending>` (PR B); items 1, 2, 3, 5 shipped in commit `<pending>` (this PR).
+- **Severity:** was Medium (cumulative impact on first-time developer experience)
+- **Area:** Documentation / developer experience
+
+**Symptom.** Several small, independent inaccuracies in the README "Getting Started" section that, together, made the first ten minutes of contribution materially harder than they should have been. None on its own was a blocker; collectively they were a thousand paper cuts:
+
+1. **Stale Node version.** README said "Node.js 20+ and pnpm." Homebrew's current `pnpm` formula requires Node 22.13+ as of early 2026 — installing `pnpm` via `brew` on Node 20 fails at first invocation.
+2. **npm vs pnpm mismatch.** README steps 3 and 4 instructed the user to run `cd apps/api && npm install && npm run start:dev` and `cd apps/web && npm install && npm run dev`. Two problems: (a) the repo is a `pnpm` workspace, and `npm install` inside an app directory created a divergent tree that ignored the workspace lockfile; (b) the same `docker compose up -d` from step 2 already ran `provenance-api` and `provenance-web` containers — `npm run start:dev` in step 3 then tried to bind to port 3001 on top of the running container.
+3. **Wrong frontend port.** README pointed users at `http://localhost:5173` (Vite default). The containerized Vite dev server is bound to `:3000` (which is what the Keycloak `provenance-web` client lists in its redirect URIs).
+4. **Broken healthcheck path** in `docker-compose.yml` (and `docker-compose.dev.yml`) — `wget -qO- http://localhost:3001/health` versus the actual `/api/v1/health` route.
+5. **Sparse seed instructions** — an 8-line `ENV=value … pnpm --filter @provenance/seed seed` block with no surrounding explanation. The dev credentials it expected were baked into the compose but never explained, and a user couldn't tell which of the eight env vars were required vs. derivable.
+
+**Fix.** Shipped across three PRs:
+
+- **PR #66 (`d8f73c4`):** item 4 in `docker-compose.yml`.
+- **PR B (`<pending>`):** item 4 in the sibling `docker-compose.dev.yml` (folded into the B-014 fix as bonus scope).
+- **PR C (this PR):** items 1, 2, 3, 5 — README rewrite plus `infrastructure/docker/.env.example` and `package.json#engines`.
+
+This-PR-specific changes:
+
+1. **Node version** — README prereqs now read "Node.js 22.13+ and pnpm 9+" with a one-line explanation tying the floor to Homebrew's `pnpm` formula. `package.json#engines.node` bumped from `>=20.0.0` to `>=22.13.0` so `pnpm` itself rejects out-of-range Node versions at install time (`engine-strict=true` is set in `.npmrc`).
+2. **npm/pnpm mismatch** — deleted README steps 3 (`apps/api && npm install && npm run start:dev`) and 4 (`apps/web && npm install && npm run dev`) entirely, and added a proper `pnpm install` step at the workspace root between clone and `docker compose up`. Replaced the deleted blocks with one inline note in the (renumbered) Access step: "The Compose stack already runs the API and frontend in dev mode with hot-reload — source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate 'install dependencies and run dev server' step on the host." Did not add a separate "Hot-reload outside Docker" section — it was optional in the writeup, and adding it now without a verified workflow would shift the paper-cut elsewhere. Defer to a follow-up if anyone actually wants that path.
+
+   **Note on `pnpm install` placement.** The cumulative fresh-clone simulation (see Verified, below) caught that the seed step in step 5 fails on a fresh clone with `sh: tsx: command not found` — because the seed CLI runs from the host and needs host `node_modules`. The first revision of this PR forgot the install step entirely (the deleted `npm install` blocks were inadvertently providing it via wrong-package-manager invocations). The install also has to land *before* `docker compose up` so that the host postinstall's `packages/types/dist` build doesn't trigger an `nest start --watch` hot-reload mid-seed (observed during testing).
+3. **Frontend port** — `http://localhost:5173` → `http://localhost:3000` everywhere.
+5. **Seed instructions** — rewritten as a `cp .env.example .env && set -a; source .env; set +a` flow followed by `pnpm --filter @provenance/seed seed`. The two missing defaults (`DATABASE_URL` and `KEYCLOAK_ADMIN_CLIENT_SECRET`) added to `infrastructure/docker/.env.example` with comments explaining what each is and warning they are throwaway dev values. The seed CLI's `min(1)` requirements on `SEED_API_KEY`, `DATABASE_URL`, and `KEYCLOAK_ADMIN_CLIENT_SECRET` were intentionally **not** softened to `.default()` — that would be a code change to `packages/seed/src/config.ts` outside B-021's documentation/dev-experience scope, and it would remove the safety net that surfaces misconfiguration when the CLI is pointed at the wrong stack.
+
+**Verified (cumulative fresh-clone).** Cloned `fix/osr-readme-rewrite` (= main + this PR) into an isolated tmp dir, ran the full README literally with `COMPOSE_PROJECT_NAME=provenance-osr-test` for volume isolation. Findings: every URL in step 4 responds (frontend 200, api 200, api/v1/docs 200, Keycloak 302, Neo4j 200); flyway-migrate applied V1–V27 against the fresh DB and exited cleanly; the seed step ran end-to-end (orgs → trust score, 13 phases) and the password-grant token for `admin@acme.example.com` correctly carries `provenance_org_id`. The only paper cut found was the missing `pnpm install` step described under item 2 above — fixed in this PR before merge. Two pre-existing healthcheck-tool bugs surfaced (api uses `wget` not present in `node:20-slim`; minio uses `curl` not present in its image) — out of B-021's scope, filed separately.
+
+**Pattern.** Daily-workflow drift is the largest source of README rot. The team that ships features never re-reads the onboarding doc because their daily workflow is somewhere else (here: the EC2 dev box). The fix is procedural, not documentary: walk the README on a fresh laptop on a regular cadence and log every paper cut as a bug, even one-line ones. Items 1, 3, and 4 of B-021 each cost a contributor 5–15 minutes; item 2 cost ~30; item 5 cost ~45 to derive the right env values from compose. Cumulatively the first 90 minutes of contribution turned mostly into yak-shaving.
+
+---
+
 ## B-014 — Default `docker-compose.yml` had no migration service; fresh DB had no schema
 
 - **Fixed:** 2026-05-07 — commit `<pending>`
