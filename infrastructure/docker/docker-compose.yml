@@ -233,6 +233,11 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-provenance}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-provenance_dev_password}
+      # Pre-configure an `mc` alias `local` so the healthcheck can call
+      # `mc ready local` directly. The minio image ships `mc` but not
+      # curl/wget/nc, so `mc ready` is the only viable in-image probe.
+      # `MC_HOST_<alias>` is MinIO's documented env-var alias pattern.
+      MC_HOST_local: http://${MINIO_ROOT_USER:-provenance}:${MINIO_ROOT_PASSWORD:-provenance_dev_password}@localhost:9000
     volumes:
       - minio_data:/data
     ports:
@@ -241,7 +246,7 @@ services:
     networks:
       - provenance
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -515,7 +520,10 @@ services:
       opa:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/v1/health || exit 1"]
+      # `node:20-slim` ships node but not wget/curl/nc. Use Node's built-in
+      # `fetch` (stable since Node 21, available in Node 20) — node is by
+      # definition the api container's primary binary.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 10
