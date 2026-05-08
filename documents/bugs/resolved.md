@@ -6,6 +6,69 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-022 — `api` and `minio` healthchecks called HTTP tools the container images do not ship; both reported "unhealthy" forever
+
+- **Fixed:** 2026-05-08 — commit `<pending>`
+- **Severity:** was Medium
+- **Area:** Infrastructure / developer experience
+
+**Symptom.** After `docker compose up -d` from a fresh clone, both `provenance-api` and `provenance-minio` showed `(unhealthy)` indefinitely while their endpoints responded normally to host-side `curl`. Functionally harmless today (nothing in the running stack `depends_on` either of them with `condition: service_healthy`), but it alarmed first-time contributors reading `docker compose ps`, and any future health-gated dependent (agent-query, kong-routes-bootstrap, smoke-test sidecar) would never have started.
+
+**Root cause.** Each healthcheck invoked a tool not in the container image:
+
+- `api` (development stage = `node:20-slim`): `wget -qO- http://localhost:3001/api/v1/health`. Debian-slim does not ship `wget`. Probe logs read `/bin/sh: 1: wget: not found`.
+- `minio` (`quay.io/minio/minio:RELEASE.2024-04-06T05-26-02Z`): `curl -sf http://localhost:9000/minio/health/live`. The minio image ships only `mc` (no curl/wget/nc).
+
+Same class of bug as B-010 (OPA distroless image had no `wget`). Both PR #66 (which fixed the *path* of the api healthcheck) and the original authors missed that the *tool* was wrong for the chosen base image.
+
+**Fix.** Two healthcheck changes, no Dockerfile changes.
+
+1. **`api` healthcheck** (three compose files): replaced the `wget` test with `["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`. Node 20 ships a stable global `fetch`; `node` is by definition the api container's primary binary. CMD-array form, no shell required, no extra install. Existing `interval`/`timeout`/`retries`/`start_period` left unchanged — diff is one line per file.
+
+2. **`minio` healthcheck** (`docker-compose.yml` only): added `MC_HOST_local: http://${MINIO_ROOT_USER:-provenance}:${MINIO_ROOT_PASSWORD:-provenance_dev_password}@localhost:9000` to the `minio` service's environment, and replaced the `curl` healthcheck with `["CMD", "mc", "ready", "local"]`. The `MC_HOST_<alias>` env var is MinIO's documented alias-via-environment pattern — `mc` reads it on every invocation, so the alias is effectively pre-configured at container start. The env-var names and defaults align with the existing `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` so no parallel credential pair is introduced.
+
+**Bonus scope: `docker-compose.ec2-dev.yml` api healthcheck.** The bug entry's proposed-fix patch named only `docker-compose.yml` and `docker-compose.dev.yml`, but `docker-compose.ec2-dev.yml` had the same broken `wget` test against the same `node:20-slim` image. Same logical change, sibling file. Patched in this PR alongside the other two; flagging here because the bug entry missed it. The pattern in B-014 (B-021-item-4 fix in PR #66 missed `docker-compose.dev.yml`) just repeated itself one compose file deeper.
+
+**Considered but rejected.**
+
+- **CMD-SHELL `mc alias set local ... ; mc ready local`** as the minio healthcheck (the bug entry's hedged fallback). Three downsides: (a) re-runs `mc alias set` on every probe (~4× per minute), (b) embeds the password literally in the healthcheck command line on every probe, (c) requires `/bin/sh` to be present in the minio image — variable across releases and not something the compose should depend on. The `MC_HOST_<alias>` env-var approach has none of these downsides.
+- **Adding `curl` / `wget` to the api or minio image via Dockerfile** to preserve the existing test commands. Rejected: the OSR target is "function properly without weird workarounds" — bloating an image to fit a probe command is the wrong direction. Use a binary the image already ships.
+- **Preemptive audit / rewrite of every other healthcheck in the compose files** (the bug entry suggested auditing neo4j / opensearch / kong / etc.). Rejected as speculation. The empirical audit IS the strict fresh-clone simulation: anything else silently broken would surface as `(unhealthy)` in `docker compose ps` during validation. Passive scan confirmed every other service uses a binary shipped by its image (postgres `pg_isready`, redpanda `rpk`, kong `kong health`, opa `/opa eval`, keycloak `/dev/tcp` bash builtin, temporal `temporal` CLI, web busybox `wget` from `node:20-alpine`). Fresh-clone validation found no further `(unhealthy)` services, so none were touched.
+
+**Verified.** Strict fresh-clone simulation on macOS (Darwin 25.4.0, Docker 29.4.0). Cloned the branch into `/tmp/provenance-b022-test`, ran `pnpm install` (which produced `packages/types/dist/` via the postinstall hook), then `docker compose -f docker-compose.yml up -d` with `COMPOSE_PROJECT_NAME=provenance-b022-test` for volume isolation against the existing live `provenance` stack on the same host.
+
+Two test-only modifications were made to the cloned compose to allow it to run *side-by-side* with the existing live stack on the same host (not committed, not part of the PR): (a) `container_name:` directives stripped from each service (the compose pins fixed names like `provenance-api` that conflict across projects), (b) host-side port bindings replaced with ephemeral mappings (e.g. `"5432:5432"` → `"5432"`). Neither modification affects healthcheck behavior — every probe runs on container-internal `localhost`. The bug-fix portion (the new `test:` commands and the new `MC_HOST_local` env var) was tested verbatim.
+
+After full convergence, `docker compose ps` showed every service `(healthy)`, with the two B-022 services specifically:
+
+```
+api      Up 18 seconds (healthy)
+minio    Up 34 seconds (healthy)
+```
+
+Direct before/after on the same machine: the existing live `provenance` stack (running unmodified `main` compose) continues to show `provenance-api (unhealthy)` and `provenance-minio (unhealthy)` after 42+ minutes uptime, confirming the change is what makes the difference.
+
+Direct probe verification inside the test containers (orthogonal to Compose's own healthcheck loop):
+
+- `docker exec ... node -e "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"` → exits 0.
+- `docker exec ... mc ready local` → prints `The cluster is ready`, exits 0.
+
+Every other service in the stack also reported `(healthy)` — empirical confirmation that no other healthcheck in `docker-compose.yml` is silently broken (the basis for rejecting the preemptive-audit alternative). Test stack torn down with `docker compose down -v`; tmp clone retained for reference.
+
+Validation focused on `docker-compose.yml` (the OSR fresh-clone target). The same one-line `test:` change in `docker-compose.dev.yml` and `docker-compose.ec2-dev.yml` is mechanically identical (same probe command, same `node:20-slim` image, same in-container `localhost` semantics) and was not re-booted separately under fresh volumes — call out explicitly in case anyone wants belt-and-braces coverage of those compose targets in a follow-up.
+
+**Pattern.** Healthcheck commands must use a tool that is provably present in the container image. Distroless and `-slim` base images strip standard utilities; minio, postgres, redpanda, and similar images ship purpose-specific binaries (`mc`, `pg_isready`, `rpk`) that should be preferred over generic curl/wget. When adding a healthcheck:
+
+1. Identify the image's base layer (alpine, debian-slim, distroless, custom).
+2. Confirm the chosen tool is present — run the probe command inside a fresh container before trusting it in compose.
+3. Prefer the image's primary binary over generic shell utilities; it will never be missing.
+
+Multi-compose corollary: when a service has multiple compose targets (default / dev / ec2-dev / demo), audit *all* of them when fixing the healthcheck. B-022's entry missing the ec2-dev file (and B-014 missing `docker-compose.dev.yml`'s healthcheck path before it) are the in-tree examples of this trap. Grep all `docker-compose*.yml` files for the service name when fixing infrastructure paper cuts.
+
+**Related (resolved).** B-010 — OPA distroless image had no shell or `wget`. Same class of bug; fixed by switching to `["CMD", "/opa", "eval", "true"]`.
+
+---
+
 ## B-021 — README onboarding paper cuts: stale Node version, npm/pnpm mismatch, wrong frontend port, broken healthcheck path, sparse seed instructions
 
 - **Fixed:** 2026-05-07 — items 4 and (dev compose healthcheck) shipped in `d8f73c4` (PR #66) and `<pending>` (PR B); items 1, 2, 3, 5 shipped in commit `<pending>` (this PR).
