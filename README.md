@@ -244,7 +244,13 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    cd provenance
    ```
 
-2. **Start the infrastructure stack:**
+2. **Install host JS dependencies:**
+   ```bash
+   pnpm install
+   ```
+   Populates `node_modules` for host-side commands (the seed CLI in step 5, plus lint / test / typecheck for contributors) and builds shared workspace packages via the root `postinstall`. Run this before `docker compose up` so that the api container's `nest start --watch` doesn't observe a mid-flight rebuild and reload.
+
+3. **Start the infrastructure stack:**
 
    For the **full stack** (recommended, requires 16 GB RAM):
    ```bash
@@ -260,7 +266,7 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    ```
    Starts only Postgres + Keycloak + OPA + API + web. Lineage, search, agent features, access workflows, and notifications are disabled.
 
-3. **Access the application:**
+4. **Access the application:**
    - Frontend: `http://localhost:3000`
    - API: `http://localhost:3001`
    - **API reference (rendered OpenAPI):** `http://localhost:3001/api/v1/docs`
@@ -269,7 +275,7 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
 
    The Compose stack already runs the API and frontend in dev mode with hot-reload — source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate "install dependencies and run dev server" step on the host.
 
-4. **(Optional) Seed sample data:**
+5. **(Optional) Seed sample data:**
 
    The seed CLI populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, lineage, SLOs, and access grants. Idempotent — safe to re-run.
 
