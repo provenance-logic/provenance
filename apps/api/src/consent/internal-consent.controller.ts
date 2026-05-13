@@ -1,7 +1,11 @@
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
+  Post,
   Query,
   BadRequestException,
   UseGuards,
@@ -10,6 +14,22 @@ import { Public } from '../auth/public.decorator.js';
 import { InternalServiceGuard } from '../auth/internal-service.guard.js';
 import { ConsentService } from './consent.service.js';
 import type { ConnectionReference } from '@provenance/types';
+
+/**
+ * Wire shape the Agent Query Layer posts when its connection-reference
+ * guard denies a request with CONNECTION_REFERENCE_SCOPE_VIOLATION.
+ * The API does the recipient resolution and enqueue; the AQL is
+ * fire-and-forget.
+ */
+export interface ScopeViolationNotificationRequest {
+  referenceId: string;
+  agentId: string;
+  productId: string;
+  actionScope: { port: string; dataCategories?: string[] };
+  approvedScope: { ports: string[] };
+  denyReason: string;
+  enforcementMode: 'shadow' | 'enforced';
+}
 
 // Domain 12 — internal endpoints the Agent Query Layer calls for
 // connection-reference cache cold-load (`/active`) and cache-miss
@@ -75,5 +95,57 @@ export class InternalConsentController {
       );
     }
     return result;
+  }
+
+  /**
+   * Domain 12 PR #5c — scope-violation notification fan-out endpoint.
+   * The AQL calls this after the connection-reference guard denies a
+   * request with `CONNECTION_REFERENCE_SCOPE_VIOLATION`. Recipients
+   * (owning principal + governance role) and channel resolution
+   * happen in the api; the AQL just hands over the violation context.
+   *
+   * 204 No Content on success — fire-and-forget from the AQL's
+   * perspective. The audit-log entry the AQL already wrote is the
+   * durable record; this notification is the operator wake-up call.
+   */
+  @Post('scope-violations')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async notifyScopeViolation(
+    @Query('orgId') orgId: string | undefined,
+    @Body() dto: ScopeViolationNotificationRequest,
+  ): Promise<void> {
+    if (!orgId || orgId.trim().length === 0) {
+      throw new BadRequestException('orgId query parameter is required');
+    }
+    if (!dto.referenceId || dto.referenceId.trim().length === 0) {
+      throw new BadRequestException('referenceId is required');
+    }
+    if (!dto.agentId || dto.agentId.trim().length === 0) {
+      throw new BadRequestException('agentId is required');
+    }
+    if (!dto.productId || dto.productId.trim().length === 0) {
+      throw new BadRequestException('productId is required');
+    }
+    if (!dto.actionScope || !dto.actionScope.port) {
+      throw new BadRequestException('actionScope.port is required');
+    }
+    if (!dto.approvedScope || !Array.isArray(dto.approvedScope.ports)) {
+      throw new BadRequestException('approvedScope.ports must be an array');
+    }
+    if (dto.enforcementMode !== 'shadow' && dto.enforcementMode !== 'enforced') {
+      throw new BadRequestException(
+        "enforcementMode must be 'shadow' or 'enforced'",
+      );
+    }
+    await this.consentService.notifyScopeViolation({
+      orgId,
+      referenceId: dto.referenceId,
+      agentId: dto.agentId,
+      productId: dto.productId,
+      actionScope: dto.actionScope,
+      approvedScope: dto.approvedScope,
+      denyReason: dto.denyReason ?? '',
+      enforcementMode: dto.enforcementMode,
+    });
   }
 }

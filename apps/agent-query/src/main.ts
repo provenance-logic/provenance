@@ -77,6 +77,7 @@ async function bootstrap() {
   initMcpServer({
     guard,
     enforcementEnabled: config.CONNECTION_REFERENCE_ENFORCEMENT_ENABLED,
+    internalClient: internalControlPlane,
   });
 
   // ADR-002 Phase 5b: JWT auth middleware for MCP endpoints

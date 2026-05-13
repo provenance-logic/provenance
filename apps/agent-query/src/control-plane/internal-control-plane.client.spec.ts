@@ -10,10 +10,22 @@ import { InternalControlPlaneClient } from './internal-control-plane.client.js';
 // ESM jest also drops the implicit `jest` global — the `jest` factory
 // needs an explicit `@jest/globals` import for jest.fn() etc.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function makeFakeAxios(getImpl: any): AxiosInstance {
+interface FakeAxios {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { get: getImpl } as any;
+  get?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  post?: any;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeFakeAxios(impl: FakeAxios | any): AxiosInstance {
+  if (typeof impl === 'function') {
+    // Back-compat for existing call sites that pass just a get mock.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { get: impl } as any;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return impl as any;
 }
 
 describe('InternalControlPlaneClient', () => {
@@ -115,6 +127,48 @@ describe('InternalControlPlaneClient', () => {
       await expect(
         client.lookupActiveAccessGrant('org-test', 'agent-1', 'product-1'),
       ).rejects.toThrow('ECONNREFUSED');
+    });
+  });
+
+  describe('notifyScopeViolation', () => {
+    const violationInput = {
+      orgId: 'org-test',
+      referenceId: 'ref-1',
+      agentId: 'agent-1',
+      productId: 'product-1',
+      actionScope: { port: 'observability' },
+      approvedScope: { ports: ['discovery'] },
+      denyReason: 'not covered',
+      enforcementMode: 'shadow' as const,
+    };
+
+    it('POSTs the violation payload to /consent/scope-violations with orgId as a query param', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const postMock = (jest.fn() as any).mockResolvedValue({ status: 204, data: '' });
+      const client = new InternalControlPlaneClient(makeFakeAxios({ post: postMock }));
+
+      await client.notifyScopeViolation(violationInput);
+
+      expect(postMock).toHaveBeenCalledTimes(1);
+      const [url, body, opts] = postMock.mock.calls[0];
+      expect(url).toBe('/consent/scope-violations');
+      expect(body).toMatchObject({
+        referenceId: 'ref-1',
+        agentId: 'agent-1',
+        productId: 'product-1',
+        actionScope: { port: 'observability' },
+        approvedScope: { ports: ['discovery'] },
+        enforcementMode: 'shadow',
+      });
+      expect(opts).toEqual({ params: { orgId: 'org-test' } });
+    });
+
+    it('swallows errors — audit row is the durable record, not this call', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const postMock = (jest.fn() as any).mockRejectedValue(new Error('api down'));
+      const client = new InternalControlPlaneClient(makeFakeAxios({ post: postMock }));
+
+      await expect(client.notifyScopeViolation(violationInput)).resolves.toBeUndefined();
     });
   });
 });

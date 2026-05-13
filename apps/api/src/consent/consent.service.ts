@@ -35,6 +35,7 @@ import { ConnectionReferenceOutboxEntity } from './entities/connection-reference
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 
 // Trust classifications are stored capitalized on the agent record
 // (see AgentsService.formatAgentResponse). Platform defaults to 'Observed'
@@ -54,6 +55,8 @@ export class ConsentService {
     private readonly agentRepo: Repository<AgentIdentityEntity>,
     @InjectRepository(AccessGrantEntity)
     private readonly grantRepo: Repository<AccessGrantEntity>,
+    @InjectRepository(RoleAssignmentEntity)
+    private readonly roleRepo: Repository<RoleAssignmentEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => ConnectionPackageService))
@@ -162,6 +165,89 @@ export class ConsentService {
       order: { createdAt: 'ASC' },
     });
     return rows.map((row) => this.toDto(row));
+  }
+
+  /**
+   * Domain 12 PR #5c — scope-violation notification fan-out.
+   *
+   * Called by the Agent Query Layer when the connection-reference guard
+   * denies a request with `CONNECTION_REFERENCE_SCOPE_VIOLATION`. Fans
+   * out a notification to the reference's owning principal AND every
+   * principal carrying the `governance_member` role in the org.
+   *
+   * CLAUDE.md "scope violations are never silent" — the audit row at
+   * the AQL is the durable record; this notification is the operator's
+   * wake-up call. We fire-and-forget on internal lookup failures
+   * (logged) so the AQL's call returns 204 even when the recipient
+   * resolution partially fails — the audit trail is what guarantees
+   * completeness.
+   *
+   * Runs regardless of CONNECTION_REFERENCE_ENFORCEMENT_ENABLED on the
+   * AQL side: shadow-mode violations are still operator-visible signals
+   * about agent overreach.
+   */
+  async notifyScopeViolation(input: {
+    orgId: string;
+    referenceId: string;
+    agentId: string;
+    productId: string;
+    actionScope: { port: string; dataCategories?: string[] };
+    approvedScope: { ports: string[] };
+    denyReason: string;
+    enforcementMode: 'shadow' | 'enforced';
+  }): Promise<void> {
+    const reference = await this.referenceRepo.findOne({
+      where: { id: input.referenceId, orgId: input.orgId },
+    });
+    // Per the fan-out recipient list: the reference's owning principal,
+    // plus every governance_member principal in the org. We do not bail
+    // when the reference is missing — even an absent reference is a
+    // signal worth surfacing to governance.
+    const recipients = new Set<string>();
+    if (reference?.owningPrincipalId) {
+      recipients.add(reference.owningPrincipalId);
+    }
+    const governance = await this.roleRepo.find({
+      where: { orgId: input.orgId, role: 'governance_member' },
+    });
+    for (const row of governance) {
+      recipients.add(row.principalId);
+    }
+
+    if (recipients.size === 0) {
+      // No-op rather than throw — the caller (AQL) is not in a position
+      // to handle this; logging is the right signal.
+      this.logger.warn(
+        `Scope violation for ${input.referenceId} has no recipients to notify (no owner, no governance members)`,
+      );
+      return;
+    }
+
+    try {
+      await this.notificationsService.enqueue({
+        orgId: input.orgId,
+        category: 'connection_reference_scope_violation',
+        recipients: Array.from(recipients),
+        payload: {
+          referenceId: input.referenceId,
+          agentId: input.agentId,
+          productId: input.productId,
+          actionScope: input.actionScope,
+          approvedScope: input.approvedScope,
+          denyReason: input.denyReason,
+          enforcementMode: input.enforcementMode,
+        },
+        deepLink: `/governance/connection-references/${input.referenceId}`,
+        // Dedup window collapses repeated violations from the same
+        // agent on the same reference within the default window (15 min)
+        // — operators should not be drowned by a misbehaving agent.
+        dedupKey: `connection_reference_scope_violation:${input.referenceId}:${input.actionScope.port}`,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Scope-violation notification enqueue failed for ${input.referenceId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
