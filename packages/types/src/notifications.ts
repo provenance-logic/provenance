@@ -47,7 +47,8 @@ export type NotificationCategory =
   | 'frozen_operation_disposition'
   // Connection package + Domain 12 fan-out
   | 'connection_package_refreshed'
-  | 'connection_reference_request';
+  | 'connection_reference_request'
+  | 'connection_reference_scope_violation';
 
 export interface Notification {
   id: Uuid;
@@ -196,6 +197,9 @@ export const CATEGORY_DEFAULT_CHANNELS: Readonly<
   // Connection package + Domain 12 fan-out
   connection_package_refreshed: ['in_platform'],
   connection_reference_request: ['in_platform', 'email'],
+  // Scope violations are compliance-signal events — owners and
+  // governance need them out-of-band, not buried in an in-platform list.
+  connection_reference_scope_violation: ['in_platform', 'email'],
 };
 
 /**
@@ -318,4 +322,8 @@ export const GOVERNANCE_MANDATORY_CATEGORIES: ReadonlySet<NotificationCategory> 
     'classification_changed',
     'compliance_drift_detected',
     'access_request_sla_breach',
+    // Domain 12 PR #5c: every agent action that exceeds its consented
+    // scope is a compliance signal governance must see — they cannot
+    // opt out at the preference layer.
+    'connection_reference_scope_violation',
   ]);

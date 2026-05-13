@@ -55,12 +55,14 @@ describe('InternalConsentController', () => {
   let consentService: {
     listActiveConnectionReferencesForOrg: jest.Mock;
     findActiveConnectionReference: jest.Mock;
+    notifyScopeViolation: jest.Mock;
   };
 
   beforeEach(async () => {
     consentService = {
       listActiveConnectionReferencesForOrg: jest.fn(),
       findActiveConnectionReference: jest.fn(),
+      notifyScopeViolation: jest.fn().mockResolvedValue(undefined),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -150,6 +152,73 @@ describe('InternalConsentController', () => {
         BadRequestException,
       );
       await expect(controller.lookupActive(ORG_ID, '  ', PRODUCT_ID)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('POST /scope-violations', () => {
+    const validDto = {
+      referenceId: 'ref-1',
+      agentId: AGENT_ID,
+      productId: PRODUCT_ID,
+      actionScope: { port: 'observability' },
+      approvedScope: { ports: ['discovery'] },
+      denyReason: 'not covered by approved scope',
+      enforcementMode: 'shadow' as const,
+    };
+
+    it('returns 204 (void) and delegates to the service on a valid payload', async () => {
+      await expect(controller.notifyScopeViolation(ORG_ID, validDto)).resolves.toBeUndefined();
+      expect(consentService.notifyScopeViolation).toHaveBeenCalledTimes(1);
+      const arg = consentService.notifyScopeViolation.mock.calls[0][0];
+      expect(arg.orgId).toBe(ORG_ID);
+      expect(arg.referenceId).toBe('ref-1');
+      expect(arg.enforcementMode).toBe('shadow');
+    });
+
+    it('rejects when orgId is missing or blank', async () => {
+      await expect(controller.notifyScopeViolation(undefined, validDto)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(controller.notifyScopeViolation('  ', validDto)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it.each(['referenceId', 'agentId', 'productId'] as const)(
+      'rejects when %s is missing or blank',
+      async (field) => {
+        const bad = { ...validDto, [field]: '' };
+        await expect(controller.notifyScopeViolation(ORG_ID, bad)).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+      },
+    );
+
+    it('rejects when actionScope.port is missing', async () => {
+      const bad = { ...validDto, actionScope: {} as { port: string } };
+      await expect(controller.notifyScopeViolation(ORG_ID, bad)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('rejects when approvedScope.ports is not an array', async () => {
+      const bad = {
+        ...validDto,
+        approvedScope: { ports: 'discovery' } as unknown as { ports: string[] },
+      };
+      await expect(controller.notifyScopeViolation(ORG_ID, bad)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects when enforcementMode is not 'shadow' or 'enforced'", async () => {
+      const bad = {
+        ...validDto,
+        enforcementMode: 'maybe' as unknown as 'shadow' | 'enforced',
+      };
+      await expect(controller.notifyScopeViolation(ORG_ID, bad)).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });

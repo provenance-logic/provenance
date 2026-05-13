@@ -114,4 +114,43 @@ export class InternalControlPlaneClient {
       throw err;
     }
   }
+
+  /**
+   * Fan out a scope-violation notification (Domain 12 PR #5c). Called
+   * by the guard wrapper on every CONNECTION_REFERENCE_SCOPE_VIOLATION
+   * deny. The api resolves recipients (owning principal + governance
+   * role) and enqueues — this client is fire-and-forget. Errors are
+   * logged here, not thrown, because the audit-log entry written
+   * locally is the durable record of the violation.
+   */
+  async notifyScopeViolation(input: {
+    orgId: string;
+    referenceId: string;
+    agentId: string;
+    productId: string;
+    actionScope: { port: string; dataCategories?: string[] };
+    approvedScope: { ports: string[] };
+    denyReason: string;
+    enforcementMode: 'shadow' | 'enforced';
+  }): Promise<void> {
+    try {
+      await this.http.post(
+        '/consent/scope-violations',
+        {
+          referenceId: input.referenceId,
+          agentId: input.agentId,
+          productId: input.productId,
+          actionScope: input.actionScope,
+          approvedScope: input.approvedScope,
+          denyReason: input.denyReason,
+          enforcementMode: input.enforcementMode,
+        },
+        { params: { orgId: input.orgId } },
+      );
+    } catch (err) {
+      console.error(
+        `[AQL] scope-violation notification failed (audit row still written): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }

@@ -15,6 +15,7 @@ import { ConnectionReferenceOutboxEntity } from '../entities/connection-referenc
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { AgentIdentityEntity } from '../../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
+import { RoleAssignmentEntity } from '../../organizations/entities/role-assignment.entity.js';
 import { ConnectionPackageService } from '../../access/connection-package.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 
@@ -99,6 +100,7 @@ describe('ConsentService', () => {
   let productRepo: { findOne: jest.Mock };
   let agentRepo: { findOne: jest.Mock };
   let grantRepo: { findOne: jest.Mock };
+  let roleRepo: { find: jest.Mock };
   let referenceRepo: { findOne: jest.Mock; find: jest.Mock; createQueryBuilder: jest.Mock };
   let connectionPackageService: { generateForProduct: jest.Mock };
   let notificationsService: { enqueue: jest.Mock };
@@ -111,6 +113,7 @@ describe('ConsentService', () => {
     productRepo = { findOne: jest.fn() };
     agentRepo = { findOne: jest.fn() };
     grantRepo = { findOne: jest.fn() };
+    roleRepo = { find: jest.fn().mockResolvedValue([]) };
     referenceRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
@@ -170,6 +173,7 @@ describe('ConsentService', () => {
         { provide: getRepositoryToken(DataProductEntity), useValue: productRepo },
         { provide: getRepositoryToken(AgentIdentityEntity), useValue: agentRepo },
         { provide: getRepositoryToken(AccessGrantEntity), useValue: grantRepo },
+        { provide: getRepositoryToken(RoleAssignmentEntity), useValue: roleRepo },
         { provide: getDataSourceToken(), useValue: dataSource },
         { provide: ConnectionPackageService, useValue: connectionPackageService },
         { provide: NotificationsService, useValue: notificationsService },
@@ -954,6 +958,105 @@ describe('ConsentService', () => {
       referenceRepo.find.mockResolvedValue([]);
       const result = await service.listActiveConnectionReferencesForOrg(ORG_ID);
       expect(result).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Domain 12 PR #5c — scope-violation notification fan-out
+  // -------------------------------------------------------------------------
+
+  describe('notifyScopeViolation', () => {
+    const violationInput = {
+      orgId: ORG_ID,
+      referenceId: 'ref-1',
+      agentId: AGENT_ID,
+      productId: PRODUCT_ID,
+      actionScope: { port: 'observability' },
+      approvedScope: { ports: ['discovery'] },
+      denyReason: 'Action requires port observability; not covered',
+      enforcementMode: 'shadow' as const,
+    };
+
+    it('enqueues a notification to the owning principal AND every governance member', async () => {
+      referenceRepo.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+      roleRepo.find.mockResolvedValue([
+        { principalId: 'gov-1' } as { principalId: string },
+        { principalId: 'gov-2' } as { principalId: string },
+      ]);
+
+      await service.notifyScopeViolation(violationInput);
+
+      expect(notificationsService.enqueue).toHaveBeenCalledTimes(1);
+      const arg = notificationsService.enqueue.mock.calls[0][0] as {
+        category: string;
+        recipients: string[];
+        payload: Record<string, unknown>;
+        dedupKey: string;
+      };
+      expect(arg.category).toBe('connection_reference_scope_violation');
+      // Owner + both governance members; order via Set may vary, so
+      // compare as a set.
+      expect([...arg.recipients].sort()).toEqual([OWNER_ID, 'gov-1', 'gov-2'].sort());
+      expect(arg.payload).toMatchObject({
+        referenceId: 'ref-1',
+        agentId: AGENT_ID,
+        productId: PRODUCT_ID,
+        actionScope: { port: 'observability' },
+        approvedScope: { ports: ['discovery'] },
+        enforcementMode: 'shadow',
+      });
+      expect(arg.dedupKey).toContain('ref-1');
+      expect(arg.dedupKey).toContain('observability');
+    });
+
+    it('deduplicates the owner if they also happen to be a governance member', async () => {
+      referenceRepo.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+      roleRepo.find.mockResolvedValue([
+        { principalId: OWNER_ID } as { principalId: string },
+        { principalId: 'gov-2' } as { principalId: string },
+      ]);
+
+      await service.notifyScopeViolation(violationInput);
+
+      const arg = notificationsService.enqueue.mock.calls[0][0] as {
+        recipients: string[];
+      };
+      // Owner appears once even though they hit both branches.
+      expect(arg.recipients.filter((r) => r === OWNER_ID)).toHaveLength(1);
+    });
+
+    it('still notifies governance when the reference is missing (defensive — absent reference is still a signal)', async () => {
+      referenceRepo.findOne.mockResolvedValue(null);
+      roleRepo.find.mockResolvedValue([
+        { principalId: 'gov-1' } as { principalId: string },
+      ]);
+
+      await service.notifyScopeViolation(violationInput);
+
+      expect(notificationsService.enqueue).toHaveBeenCalledTimes(1);
+      const arg = notificationsService.enqueue.mock.calls[0][0] as {
+        recipients: string[];
+      };
+      expect(arg.recipients).toEqual(['gov-1']);
+    });
+
+    it('no-ops when there are no recipients (no owner row, no governance members) — logs only', async () => {
+      referenceRepo.findOne.mockResolvedValue(null);
+      roleRepo.find.mockResolvedValue([]);
+
+      await service.notifyScopeViolation(violationInput);
+
+      expect(notificationsService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('swallows enqueue errors — audit log is the durable record, not the notification', async () => {
+      referenceRepo.findOne.mockResolvedValue(makePendingReference({ state: 'active' }));
+      roleRepo.find.mockResolvedValue([
+        { principalId: 'gov-1' } as { principalId: string },
+      ]);
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('notif boom'));
+
+      await expect(service.notifyScopeViolation(violationInput)).resolves.toBeUndefined();
     });
   });
 });

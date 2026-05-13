@@ -271,6 +271,81 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /internal/consent/scope-violations:
+    post:
+      operationId: internalNotifyScopeViolation
+      summary: Fan out a scope-violation notification (owning principal + governance)
+      tags: [ConnectionReferencesInternal]
+      description: |
+        Called by the Agent Query Layer when the connection-reference
+        guard denies a request with
+        `CONNECTION_REFERENCE_SCOPE_VIOLATION`. The API resolves
+        recipients (the reference's owning principal + every principal
+        carrying the `governance_member` role in the org) and enqueues
+        a `connection_reference_scope_violation` notification.
+
+        Fire-and-forget from the AQL's perspective — the audit-log
+        entry the AQL already wrote is the durable record; this
+        notification is the operator wake-up call. Runs regardless of
+        whether enforcement is on (shadow-mode violations are still
+        operator-visible per the "never silent" rule).
+
+        Authentication is via the `x-internal-service-token` header.
+      security:
+        - internalServiceToken: []
+      parameters:
+        - name: orgId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - referenceId
+                - agentId
+                - productId
+                - actionScope
+                - approvedScope
+                - enforcementMode
+              properties:
+                referenceId:
+                  type: string
+                  format: uuid
+                agentId:
+                  type: string
+                  format: uuid
+                productId:
+                  type: string
+                  format: uuid
+                actionScope:
+                  type: object
+                  required: [port]
+                  properties:
+                    port:
+                      type: string
+                    dataCategories:
+                      type: array
+                      items:
+                        type: string
+                approvedScope:
+                  $ref: '#/components/schemas/ConnectionReferenceScope'
+                denyReason:
+                  type: string
+                enforcementMode:
+                  type: string
+                  enum: [shadow, enforced]
+      responses:
+        '204':
+          description: Notification enqueued (or no-op when no recipients)
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /internal/consent/connection-references/active/lookup:
     get:
       operationId: internalLookupActiveConnectionReference

@@ -51,9 +51,27 @@ export type GuardDenyCode =
   | 'CONNECTION_REFERENCE_SCOPE_VIOLATION'
   | 'UNKNOWN_TOOL';
 
+/**
+ * Context the guard surfaces on CONNECTION_REFERENCE_SCOPE_VIOLATION
+ * denials so the tool wrapper has everything it needs for the
+ * scope-violation notification fan-out (PR #5c) without re-fetching
+ * the reference. Undefined on every other denial code — only scope
+ * violations carry a reference + approved-scope identity.
+ */
+export interface ScopeViolationContext {
+  referenceId: string;
+  approvedScope: { ports: string[] };
+  actionScope: { port: string; dataCategories?: string[] };
+}
+
 export type GuardDecision =
   | { allowed: true; exempt: boolean }
-  | { allowed: false; code: GuardDenyCode; reason: string };
+  | {
+      allowed: false;
+      code: GuardDenyCode;
+      reason: string;
+      violation?: ScopeViolationContext;
+    };
 
 export class ConnectionReferenceGuard {
   constructor(
@@ -157,6 +175,11 @@ export class ConnectionReferenceGuard {
         allowed: false,
         code: 'CONNECTION_REFERENCE_SCOPE_VIOLATION',
         reason: `Action requires port '${tool.actionScope.port}'; not covered by approved scope (${match.reason})`,
+        violation: {
+          referenceId: reference.id,
+          approvedScope: reference.approvedScope,
+          actionScope: tool.actionScope,
+        },
       };
     }
 

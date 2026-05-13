@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ControlPlaneClient } from '../control-plane/control-plane.client.js';
 import type { ConnectionReferenceGuard } from '../auth/connection-reference.guard.js';
+import type { InternalControlPlaneClient } from '../control-plane/internal-control-plane.client.js';
 import { registerTools, SessionIdentity } from './tools.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -19,6 +20,7 @@ const sessions = new Map<string, SessionEntry>();
 // lands.
 let _guard: ConnectionReferenceGuard | null = null;
 let _enforcementEnabled = false;
+let _internalClient: InternalControlPlaneClient | null = null;
 
 function createMcpServer(identity: SessionIdentity): McpServer {
   const server = new McpServer(
@@ -31,6 +33,7 @@ function createMcpServer(identity: SessionIdentity): McpServer {
   registerTools(server, client, identity, {
     guard: _guard,
     enforcementEnabled: _enforcementEnabled,
+    internalClient: _internalClient,
   });
   return server;
 }
@@ -38,9 +41,11 @@ function createMcpServer(identity: SessionIdentity): McpServer {
 export function initMcpServer(options: {
   guard?: ConnectionReferenceGuard | null;
   enforcementEnabled?: boolean;
+  internalClient?: InternalControlPlaneClient | null;
 } = {}): void {
   _guard = options.guard ?? null;
   _enforcementEnabled = options.enforcementEnabled ?? false;
+  _internalClient = options.internalClient ?? null;
 
   // Validate that a server can be created (tools register without error)
   createMcpServer({ agentId: '__init__', orgId: '__init__' });

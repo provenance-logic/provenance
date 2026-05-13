@@ -5,6 +5,7 @@ import { ConnectionReferenceOutboxEntity } from './entities/connection-reference
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
+import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { AccessModule } from '../access/access.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConsentService } from './consent.service.js';
@@ -32,6 +33,7 @@ import { KafkaModule } from '../kafka/kafka.module.js';
       DataProductEntity,
       AgentIdentityEntity,
       AccessGrantEntity,
+      RoleAssignmentEntity,
     ]),
     // forwardRef breaks the circular module dependency introduced by
     // AccessModule needing ConsentService (for F12.21 grant-revoke cascade)

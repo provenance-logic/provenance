@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResult, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ControlPlaneClient, ProductSummary, LineageNode } from '../control-plane/control-plane.client.js';
 import type { ConnectionReferenceGuard, GuardDecision } from '../auth/connection-reference.guard.js';
+import type { InternalControlPlaneClient } from '../control-plane/internal-control-plane.client.js';
 import { getConfig } from '../config.js';
 
 export interface SessionIdentity {
@@ -367,6 +368,16 @@ export interface RegisterToolsOptions {
    * not enforcing.
    */
   enforcementEnabled?: boolean;
+
+  /**
+   * Internal control-plane client (PR #5c). Used to fan out
+   * scope-violation notifications to the owning principal and
+   * governance role on `CONNECTION_REFERENCE_SCOPE_VIOLATION` denials.
+   * Fan-out runs regardless of `enforcementEnabled` per CLAUDE.md's
+   * "scope violations are never silent" rule. Omit when the
+   * notification path is not yet wired in dev.
+   */
+  internalClient?: InternalControlPlaneClient | null;
 }
 
 export function registerTools(
@@ -378,6 +389,7 @@ export function registerTools(
   const tools = makeTools(client, session);
   const guard = options.guard ?? null;
   const enforcementEnabled = options.enforcementEnabled ?? false;
+  const internalClient = options.internalClient ?? null;
 
   const underlying = server.server;
 
@@ -466,8 +478,8 @@ export function registerTools(
         if (!decision.allowed) {
           // Audit the denial regardless of enforcement mode. CLAUDE.md:
           // "scope violations are never silent" — the audit row is the
-          // permanent record. Scope-violation notification fan-out
-          // lands in PR #5c.
+          // permanent record; the notification fan-out below is the
+          // operator wake-up call.
           try {
             await client.writeAuditEntry({
               org_id: orgId,
@@ -484,6 +496,30 @@ export function registerTools(
             });
           } catch (err) {
             console.error('[Audit] Denial audit failed (non-blocking):', err);
+          }
+
+          // PR #5c — scope-violation notification fan-out. Only fires
+          // on CONNECTION_REFERENCE_SCOPE_VIOLATION, and only when the
+          // guard surfaced the violation context. Runs regardless of
+          // enforcement mode: shadow-mode violations are still
+          // operator-visible signals about agent overreach. The
+          // internal client is fire-and-forget — it logs on failure
+          // and does not throw, so denial handling proceeds either way.
+          if (
+            decision.code === 'CONNECTION_REFERENCE_SCOPE_VIOLATION' &&
+            decision.violation &&
+            internalClient
+          ) {
+            await internalClient.notifyScopeViolation({
+              orgId,
+              referenceId: decision.violation.referenceId,
+              agentId: session.agentId,
+              productId: args.product_id ?? '',
+              actionScope: decision.violation.actionScope,
+              approvedScope: decision.violation.approvedScope,
+              denyReason: decision.reason,
+              enforcementMode: enforcementEnabled ? 'enforced' : 'shadow',
+            });
           }
 
           if (enforcementEnabled) {
