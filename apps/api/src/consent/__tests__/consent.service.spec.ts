@@ -99,7 +99,7 @@ describe('ConsentService', () => {
   let productRepo: { findOne: jest.Mock };
   let agentRepo: { findOne: jest.Mock };
   let grantRepo: { findOne: jest.Mock };
-  let referenceRepo: { findOne: jest.Mock; createQueryBuilder: jest.Mock };
+  let referenceRepo: { findOne: jest.Mock; find: jest.Mock; createQueryBuilder: jest.Mock };
   let connectionPackageService: { generateForProduct: jest.Mock };
   let notificationsService: { enqueue: jest.Mock };
   let referenceRepoInTxn: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
@@ -113,6 +113,7 @@ describe('ConsentService', () => {
     grantRepo = { findOne: jest.fn() };
     referenceRepo = {
       findOne: jest.fn(),
+      find: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue({
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
@@ -871,6 +872,88 @@ describe('ConsentService', () => {
 
       // One andWhere call per filter.
       expect(andWhere).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Internal-endpoint queries used by the Agent Query Layer cache (ADR-006).
+  // The hot path uses these via /api/v1/internal/consent/connection-references
+  // for cache cold-load and cache-miss fallback.
+  // -------------------------------------------------------------------------
+
+  describe('findActiveConnectionReference', () => {
+    it('returns the DTO when an active reference exists for the triple', async () => {
+      referenceRepo.findOne.mockResolvedValue(
+        makePendingReference({ state: 'active' }),
+      );
+
+      const result = await service.findActiveConnectionReference(
+        ORG_ID,
+        AGENT_ID,
+        PRODUCT_ID,
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.state).toBe('active');
+      expect(referenceRepo.findOne).toHaveBeenCalledWith({
+        where: { orgId: ORG_ID, agentId: AGENT_ID, productId: PRODUCT_ID, state: 'active' },
+      });
+    });
+
+    it('returns null when there is no active reference for the triple', async () => {
+      referenceRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.findActiveConnectionReference(
+        ORG_ID,
+        AGENT_ID,
+        PRODUCT_ID,
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('filters by state=active so a pending or suspended reference is treated as absent', async () => {
+      // The repository receives state: 'active' in the where clause, so a
+      // pending row would not match. We verify the where clause shape rather
+      // than synthesising the negative case at the repo layer.
+      referenceRepo.findOne.mockResolvedValue(null);
+
+      await service.findActiveConnectionReference(ORG_ID, AGENT_ID, PRODUCT_ID);
+
+      const where = referenceRepo.findOne.mock.calls[0][0].where;
+      expect(where.state).toBe('active');
+    });
+  });
+
+  describe('listActiveConnectionReferencesForOrg', () => {
+    it('returns every active reference for the org', async () => {
+      referenceRepo.find.mockResolvedValue([
+        makePendingReference({ id: 'ref-a', state: 'active' }),
+        makePendingReference({ id: 'ref-b', state: 'active' }),
+      ]);
+
+      const result = await service.listActiveConnectionReferencesForOrg(ORG_ID);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('ref-a');
+      expect(result[1].id).toBe('ref-b');
+    });
+
+    it('queries with state=active and ordered by createdAt ASC for deterministic cold-load', async () => {
+      referenceRepo.find.mockResolvedValue([]);
+
+      await service.listActiveConnectionReferencesForOrg(ORG_ID);
+
+      expect(referenceRepo.find).toHaveBeenCalledWith({
+        where: { orgId: ORG_ID, state: 'active' },
+        order: { createdAt: 'ASC' },
+      });
+    });
+
+    it('returns an empty list when the org has no active references', async () => {
+      referenceRepo.find.mockResolvedValue([]);
+      const result = await service.listActiveConnectionReferencesForOrg(ORG_ID);
+      expect(result).toEqual([]);
     });
   });
 });

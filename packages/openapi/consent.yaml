@@ -17,6 +17,11 @@ servers:
 tags:
   - name: ConnectionReferences
     description: Per-use-case consent for agent consumption of data products
+  - name: ConnectionReferencesInternal
+    description: |
+      Internal endpoints the Agent Query Layer calls for connection-reference
+      cache cold-load and cache-miss fallback (ADR-006). Service-token
+      authenticated, NOT user-JWT authenticated. Not for end-user consumption.
 
 paths:
   /organizations/{orgId}/consent/connection-references:
@@ -226,6 +231,95 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /internal/consent/connection-references/active:
+    get:
+      operationId: internalListActiveConnectionReferences
+      summary: Cache cold-load — every active connection reference for an org
+      tags: [ConnectionReferencesInternal]
+      description: |
+        Returns every connection reference in the `active` state for the
+        given organization. Called by the Agent Query Layer at startup to
+        populate its in-memory cache (ADR-006 § "Data Source"). Pending,
+        suspended, expired, and revoked references are filtered out — only
+        rows currently usable on the hot path are returned.
+
+        Authentication is via the `x-internal-service-token` header,
+        constant-time-compared to the API's `AQL_INTERNAL_TOKEN` config.
+        User JWTs are not accepted on this endpoint.
+      security:
+        - internalServiceToken: []
+      parameters:
+        - name: orgId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Items array of currently-active references
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /internal/consent/connection-references/active/lookup:
+    get:
+      operationId: internalLookupActiveConnectionReference
+      summary: Cache-miss fallback — one active reference by (org, agent, product)
+      tags: [ConnectionReferencesInternal]
+      description: |
+        Returns the active connection reference for a single
+        (orgId, agentId, productId) triple, or 404 when none exists.
+        Called by the Agent Query Layer's connection-reference guard
+        when the in-memory cache misses for that triple (request landed
+        before cold-load completed, or the entry was evicted).
+
+        Only `active` references are returned. Pending, suspended,
+        expired, and revoked references produce a 404 — they are not
+        usable on the hot path.
+
+        Authentication is via the `x-internal-service-token` header.
+      security:
+        - internalServiceToken: []
+      parameters:
+        - name: orgId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: agentId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The active connection reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionReference'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     orgId:
@@ -260,6 +354,18 @@ components:
         type: integer
         minimum: 0
         default: 0
+
+  securitySchemes:
+    internalServiceToken:
+      type: apiKey
+      in: header
+      name: x-internal-service-token
+      description: |
+        Shared secret between the API and internal callers (Agent Query
+        Layer for Domain 12; future internal workers). Constant-time-
+        compared to the API's `AQL_INTERNAL_TOKEN` config. Not for
+        end-user use — the value is rotated by operators and never
+        leaves trusted infrastructure.
 
   responses:
     BadRequest:

@@ -9,6 +9,8 @@ import { AccessModule } from '../access/access.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConsentService } from './consent.service.js';
 import { ConsentController } from './consent.controller.js';
+import { InternalConsentController } from './internal-consent.controller.js';
+import { InternalServiceGuard } from '../auth/internal-service.guard.js';
 
 // Domain 12 — Connection References and Per-Use-Case Consent (ADR-005 through ADR-008).
 //
@@ -37,8 +39,8 @@ import { ConsentController } from './consent.controller.js';
     forwardRef(() => AccessModule),
     NotificationsModule,
   ],
-  providers: [ConsentService],
-  controllers: [ConsentController],
+  providers: [ConsentService, InternalServiceGuard],
+  controllers: [ConsentController, InternalConsentController],
   exports: [ConsentService, TypeOrmModule],
 })
 export class ConsentModule {}

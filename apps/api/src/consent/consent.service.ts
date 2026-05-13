@@ -119,6 +119,52 @@ export class ConsentService {
   }
 
   /**
+   * Look up the active connection reference for a specific
+   * (org, agent, product) triple. Returns null when no active reference
+   * exists for that triple — callers (the Agent Query Layer's cache-miss
+   * fallback per ADR-006) distinguish "no reference" from other terminal
+   * states themselves.
+   *
+   * Only references in `active` state are returned. Pending, suspended,
+   * expired, and revoked references are filtered out — they are not
+   * usable on the hot path and treating them as cache-warm would cause
+   * the AQL to deny legitimate requests against the still-pending row.
+   */
+  async findActiveConnectionReference(
+    orgId: string,
+    agentId: string,
+    productId: string,
+  ): Promise<ConnectionReference | null> {
+    const reference = await this.referenceRepo.findOne({
+      where: { orgId, agentId, productId, state: 'active' },
+    });
+    return reference ? this.toDto(reference) : null;
+  }
+
+  /**
+   * Return every active connection reference for an organization. Called
+   * by the Agent Query Layer at startup to cold-load its in-memory cache
+   * (ADR-006 § "Data Source"). At MVP scale this is bounded by the
+   * org's active-reference count — well under 10k per the ADR's sizing
+   * assumption.
+   *
+   * Returned in creation order, oldest first, so a future paginated
+   * cold-load can split the result deterministically. Pagination is not
+   * yet wired through — the contract is that the caller gets the full
+   * set, and the response shape will gain page metadata when scale
+   * demands it.
+   */
+  async listActiveConnectionReferencesForOrg(
+    orgId: string,
+  ): Promise<ConnectionReference[]> {
+    const rows = await this.referenceRepo.find({
+      where: { orgId, state: 'active' },
+      order: { createdAt: 'ASC' },
+    });
+    return rows.map((row) => this.toDto(row));
+  }
+
+  /**
    * Submit a connection reference request (F12.9).
    *
    * The caller is `actingPrincipalId`. For Observed agents, the acting

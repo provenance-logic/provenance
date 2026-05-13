@@ -105,6 +105,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v.toLowerCase() === 'true'),
   SEED_API_KEY: z.string().optional(),
+
+  // Domain 12 — internal control-plane endpoints (ADR-006 cold load + cache
+  // miss fallback). The Agent Query Layer calls /api/v1/internal/consent/*
+  // with this token in the `x-internal-service-token` header. Constant-time
+  // compared on the API side by InternalServiceGuard. Required because the
+  // endpoints are permanent infrastructure (not dev-only like the seed
+  // surface); a missing token would silently break runtime scope
+  // enforcement when PR #5 of the Domain 12 arc lands.
+  AQL_INTERNAL_TOKEN: z.string().min(16, 'AQL_INTERNAL_TOKEN must be at least 16 characters'),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
