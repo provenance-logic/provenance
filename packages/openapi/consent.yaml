@@ -271,6 +271,51 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /internal/consent/legacy-agent-migration:
+    post:
+      operationId: internalRunLegacyAgentMigration
+      summary: F12.25 legacy-agent migration (run once before flipping enforcement)
+      tags: [ConnectionReferencesInternal]
+      description: |
+        Operator-invoked one-time migration. Provisions a
+        legacy-compatibility connection reference for every existing
+        active agent-product access grant pair that does not already
+        have an active reference. Without this step, flipping
+        `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` on the AQL
+        would deny every existing agent on the next request.
+
+        Provisioned references carry useCaseCategory
+        "Legacy - Migration Required", scope `{ ports: ['*'] }`, a
+        30-day expiry, and `causedBy: 'legacy_migration'`. The owning
+        principal of each affected product is notified via the
+        `connection_reference_legacy_provisioned` category.
+
+        Idempotent: re-running provisions zero rows on the second
+        pass. Per-grant failures are logged and the migration
+        continues — the response reflects partial completion.
+
+        Authentication is via the `x-internal-service-token` header.
+      security:
+        - internalServiceToken: []
+      responses:
+        '200':
+          description: Migration complete
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [provisioned, skipped]
+                properties:
+                  provisioned:
+                    type: integer
+                    description: Number of legacy references created on this run.
+                  skipped:
+                    type: integer
+                    description: |
+                      Number of eligible grants that already had an
+                      active reference and did not need provisioning.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /internal/consent/scope-violations:
     post:
       operationId: internalNotifyScopeViolation
@@ -520,6 +565,7 @@ components:
         - grant_revocation_cascade
         - product_lifecycle_cascade
         - principal_lifecycle_cascade
+        - legacy_migration
 
     ConnectionReferenceScope:
       type: object

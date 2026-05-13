@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InternalConsentController } from '../internal-consent.controller.js';
 import { ConsentService } from '../consent.service.js';
+import { LegacyAgentMigrationService } from '../legacy-agent-migration.service.js';
 import { InternalServiceGuard } from '../../auth/internal-service.guard.js';
 import type { ConnectionReference } from '@provenance/types';
 
@@ -57,6 +58,7 @@ describe('InternalConsentController', () => {
     findActiveConnectionReference: jest.Mock;
     notifyScopeViolation: jest.Mock;
   };
+  let legacyMigrationService: { runMigration: jest.Mock };
 
   beforeEach(async () => {
     consentService = {
@@ -64,11 +66,13 @@ describe('InternalConsentController', () => {
       findActiveConnectionReference: jest.fn(),
       notifyScopeViolation: jest.fn().mockResolvedValue(undefined),
     };
+    legacyMigrationService = { runMigration: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       controllers: [InternalConsentController],
       providers: [
         { provide: ConsentService, useValue: consentService },
+        { provide: LegacyAgentMigrationService, useValue: legacyMigrationService },
         // The real guard reads config at request time and we don't want to
         // exercise it here — that's the guard spec's job. Always-allow
         // shim keeps the controller tests isolated.
@@ -221,6 +225,31 @@ describe('InternalConsentController', () => {
       await expect(controller.notifyScopeViolation(ORG_ID, bad)).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+  });
+
+  describe('POST /legacy-agent-migration', () => {
+    it('returns the service result on a successful migration run', async () => {
+      legacyMigrationService.runMigration.mockResolvedValue({
+        provisioned: 5,
+        skipped: 2,
+      });
+
+      const result = await controller.runLegacyAgentMigration();
+
+      expect(result).toEqual({ provisioned: 5, skipped: 2 });
+      expect(legacyMigrationService.runMigration).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports zero provisioned on an idempotent re-run', async () => {
+      legacyMigrationService.runMigration.mockResolvedValue({
+        provisioned: 0,
+        skipped: 7,
+      });
+
+      const result = await controller.runLegacyAgentMigration();
+
+      expect(result).toEqual({ provisioned: 0, skipped: 7 });
     });
   });
 });

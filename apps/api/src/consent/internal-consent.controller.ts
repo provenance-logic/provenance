@@ -13,6 +13,7 @@ import {
 import { Public } from '../auth/public.decorator.js';
 import { InternalServiceGuard } from '../auth/internal-service.guard.js';
 import { ConsentService } from './consent.service.js';
+import { LegacyAgentMigrationService } from './legacy-agent-migration.service.js';
 import type { ConnectionReference } from '@provenance/types';
 
 /**
@@ -45,7 +46,10 @@ export interface ScopeViolationNotificationRequest {
 @Controller('internal/consent/connection-references')
 @Public()
 export class InternalConsentController {
-  constructor(private readonly consentService: ConsentService) {}
+  constructor(
+    private readonly consentService: ConsentService,
+    private readonly legacyMigrationService: LegacyAgentMigrationService,
+  ) {}
 
   /**
    * Cache cold-load. Returns every currently-active connection
@@ -147,5 +151,25 @@ export class InternalConsentController {
       denyReason: dto.denyReason ?? '',
       enforcementMode: dto.enforcementMode,
     });
+  }
+
+  /**
+   * F12.25 — Legacy Agent Migration on Enforcement Activation.
+   *
+   * Operator-invoked endpoint. Provisions a legacy-compatibility
+   * connection reference for every agent-product access grant that
+   * does not already have an active reference. Run as step 2 of the
+   * three-step Domain 12 rollout (after shadow-mode soak, before
+   * flipping CONNECTION_REFERENCE_ENFORCEMENT_ENABLED on the AQL).
+   *
+   * Idempotent: re-running provisions zero rows on the second pass.
+   * The response carries counts so the operator can see what
+   * happened. Per-grant failures are logged and the migration
+   * continues — the response reflects the partial completion.
+   */
+  @Post('legacy-agent-migration')
+  @HttpCode(HttpStatus.OK)
+  async runLegacyAgentMigration(): Promise<{ provisioned: number; skipped: number }> {
+    return this.legacyMigrationService.runMigration();
   }
 }
