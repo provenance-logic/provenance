@@ -11,6 +11,8 @@ import { ConsentService } from './consent.service.js';
 import { ConsentController } from './consent.controller.js';
 import { InternalConsentController } from './internal-consent.controller.js';
 import { InternalServiceGuard } from '../auth/internal-service.guard.js';
+import { ConnectionReferenceOutboxPublisher } from './connection-reference-outbox.publisher.js';
+import { KafkaModule } from '../kafka/kafka.module.js';
 
 // Domain 12 — Connection References and Per-Use-Case Consent (ADR-005 through ADR-008).
 //
@@ -38,8 +40,9 @@ import { InternalServiceGuard } from '../auth/internal-service.guard.js';
     // NestJS resolves the cycle at DI time.
     forwardRef(() => AccessModule),
     NotificationsModule,
+    KafkaModule,
   ],
-  providers: [ConsentService, InternalServiceGuard],
+  providers: [ConsentService, InternalServiceGuard, ConnectionReferenceOutboxPublisher],
   controllers: [ConsentController, InternalConsentController],
   exports: [ConsentService, TypeOrmModule],
 })

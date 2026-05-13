@@ -39,4 +39,18 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
   }
+
+  /**
+   * Strict publish — throws on every failure including broker
+   * unavailability. For callers that need confirmed delivery rather
+   * than fire-and-forget (the Domain 12 outbox publisher uses this so
+   * a broker outage leaves outbox rows unpublished for the next-tick
+   * retry rather than silently marking them as delivered).
+   */
+  async publishStrict(topic: string, key: string, value: unknown): Promise<void> {
+    await this.producer.send({
+      topic,
+      messages: [{ key, value: JSON.stringify(value) }],
+    });
+  }
 }
