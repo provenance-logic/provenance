@@ -86,7 +86,7 @@ export class ConnectionReferenceOutboxPublisher {
    */
   async drain(): Promise<number> {
     return this.dataSource.transaction(async (em) => {
-      const rows = (await em.query(
+      const rows: OutboxRow[] = await em.query(
         `SELECT id::text, org_id, event_type, payload
            FROM consent.connection_reference_outbox
           WHERE published_at IS NULL
@@ -94,7 +94,7 @@ export class ConnectionReferenceOutboxPublisher {
           LIMIT $1
           FOR UPDATE SKIP LOCKED`,
         [BATCH_SIZE],
-      )) as OutboxRow[];
+      );
 
       if (rows.length === 0) {
         return 0;
