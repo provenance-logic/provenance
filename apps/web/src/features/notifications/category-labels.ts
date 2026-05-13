@@ -33,6 +33,7 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   frozen_operation_disposition: 'Frozen Operation Requires Disposition',
   connection_package_refreshed: 'Connection Package Refreshed',
   connection_reference_request: 'Connection Reference Request',
+  connection_reference_scope_violation: 'Connection Reference Scope Violation',
 };
 
 /**
