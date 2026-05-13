@@ -32,22 +32,28 @@ const envSchema = z.object({
   // env var byte-for-byte. Minimum 16 characters.
   AQL_INTERNAL_TOKEN: z.string().min(16, 'AQL_INTERNAL_TOKEN must be at least 16 characters'),
 
-  // Domain 12 PR #5b — connection-reference enforcement feature flag.
+  // Domain 12 connection-reference enforcement feature flag.
   //
-  // false (default): SHADOW MODE. The guard runs on every product-bound
-  //   MCP tool call, writes audit-log entries on what it would deny,
-  //   and logs the decision to stdout — but does not actually block the
-  //   request. Used to observe how enforcement would behave before
-  //   flipping on.
+  // true (default, PR #6 — Domain 12 arc closeout): ENFORCEMENT MODE.
+  //   The guard denies any product-bound MCP tool call that fails its
+  //   checks (no grant, no reference, suspended/expired/revoked, scope
+  //   violation). Denied responses are MCP isError results carrying the
+  //   distinct denial code.
   //
-  // true: ENFORCEMENT MODE. The guard denies any request that fails its
-  //   checks. Denied responses are MCP isError results carrying the
-  //   distinct denial code. Flipping this on is gated on F12.25
-  //   (legacy-agent migration) — without it, every existing agent loses
-  //   access on the next request.
+  // false: SHADOW MODE. The guard still runs and writes audit-log
+  //   entries for what it would deny, but does not block. Useful for
+  //   observing how enforcement would behave on a long-running
+  //   installation before committing to the flip.
+  //
+  // Upgrade runbook (for existing installations that ran prior versions
+  // in shadow mode): run F12.25's legacy-agent migration endpoint
+  // (POST /api/v1/internal/consent/legacy-agent-migration on the api)
+  // before deploying this version. Without it, existing agents lose
+  // access on the next request after deploy. The migration is
+  // idempotent and safe to re-run.
   CONNECTION_REFERENCE_ENFORCEMENT_ENABLED: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((v) => v === 'true'),
 });
 
