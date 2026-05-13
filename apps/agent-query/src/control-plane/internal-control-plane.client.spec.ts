@@ -68,12 +68,52 @@ describe('InternalControlPlaneClient', () => {
     });
 
     it('re-throws on network / 401 / 500 — caller must distinguish unreachable from absent', async () => {
-      const getMock = // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(jest.fn() as any).mockRejectedValue(new Error('ECONNREFUSED'));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getMock = (jest.fn() as any).mockRejectedValue(new Error('ECONNREFUSED'));
       const client = new InternalControlPlaneClient(makeFakeAxios(getMock));
 
       await expect(
         client.lookupActiveReference('org-test', 'agent-1', 'product-1'),
+      ).rejects.toThrow('ECONNREFUSED');
+    });
+  });
+
+  describe('lookupActiveAccessGrant', () => {
+    it('GETs /access/grants/active/lookup with the triple params and returns the grant on 200', async () => {
+      const grant = { id: 'grant-1', orgId: 'org-test', productId: 'product-1' };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getMock = (jest.fn() as any).mockResolvedValue({ status: 200, data: grant });
+      const client = new InternalControlPlaneClient(makeFakeAxios(getMock));
+
+      const result = await client.lookupActiveAccessGrant('org-test', 'agent-1', 'product-1');
+
+      expect(getMock).toHaveBeenCalledWith(
+        '/access/grants/active/lookup',
+        { params: { orgId: 'org-test', agentId: 'agent-1', productId: 'product-1' } },
+      );
+      expect(result).toEqual(grant);
+    });
+
+    it('returns null on 404 (the API says no active grant for the triple)', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getMock = (jest.fn() as any).mockResolvedValue({
+        status: 404,
+        data: { message: 'not found' },
+      });
+      const client = new InternalControlPlaneClient(makeFakeAxios(getMock));
+
+      const result = await client.lookupActiveAccessGrant('org-test', 'agent-1', 'product-1');
+
+      expect(result).toBeNull();
+    });
+
+    it('re-throws on network / 401 / 500', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getMock = (jest.fn() as any).mockRejectedValue(new Error('ECONNREFUSED'));
+      const client = new InternalControlPlaneClient(makeFakeAxios(getMock));
+
+      await expect(
+        client.lookupActiveAccessGrant('org-test', 'agent-1', 'product-1'),
       ).rejects.toThrow('ECONNREFUSED');
     });
   });

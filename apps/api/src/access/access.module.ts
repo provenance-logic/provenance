@@ -10,6 +10,8 @@ import { temporalClientProvider } from './temporal/temporal-client.provider.js';
 import { TemporalWorkerService } from './temporal/temporal-worker.service.js';
 import { AccessService } from './access.service.js';
 import { AccessController } from './access.controller.js';
+import { InternalAccessController } from './internal-access.controller.js';
+import { InternalServiceGuard } from '../auth/internal-service.guard.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentModule } from '../consent/consent.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
@@ -35,7 +37,8 @@ import { AccessNotificationsTriggerWorker } from './access-notifications-trigger
     AccessService,
     ConnectionPackageService,
     AccessNotificationsTriggerWorker,
+    InternalServiceGuard,
   ],
-  controllers: [AccessController],
+  controllers: [AccessController, InternalAccessController],
 })
 export class AccessModule {}

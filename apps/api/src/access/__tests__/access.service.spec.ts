@@ -228,6 +228,49 @@ describe('AccessService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // findActiveGrant() — Domain 12 PR #5a internal cache-miss fallback
+  // -------------------------------------------------------------------------
+
+  describe('findActiveGrant()', () => {
+    it('returns the grant when an active (non-revoked, non-expired) row exists', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant());
+      const result = await service.findActiveGrant('org-1', 'principal-2', 'product-1');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('grant-1');
+    });
+
+    it('filters the repo query to non-revoked rows so a revoked grant looks absent at the boundary', async () => {
+      grantRepo.findOne.mockResolvedValue(null);
+      await service.findActiveGrant('org-1', 'principal-2', 'product-1');
+      const where = grantRepo.findOne.mock.calls[0][0].where;
+      expect(where.revokedAt).toBeDefined();
+      expect(where.orgId).toBe('org-1');
+      expect(where.granteePrincipalId).toBe('principal-2');
+      expect(where.productId).toBe('product-1');
+    });
+
+    it('returns null when the repo returns no row', async () => {
+      grantRepo.findOne.mockResolvedValue(null);
+      const result = await service.findActiveGrant('org-1', 'principal-2', 'product-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the row has an expiresAt in the past', async () => {
+      const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      grantRepo.findOne.mockResolvedValue(makeGrant({ expiresAt: past }));
+      const result = await service.findActiveGrant('org-1', 'principal-2', 'product-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns the grant when expiresAt is in the future', async () => {
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      grantRepo.findOne.mockResolvedValue(makeGrant({ expiresAt: future }));
+      const result = await service.findActiveGrant('org-1', 'principal-2', 'product-1');
+      expect(result).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // revokeGrant()
   // -------------------------------------------------------------------------
 
