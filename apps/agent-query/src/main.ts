@@ -3,10 +3,57 @@ import express from 'express';
 import { loadConfig } from './config.js';
 import { createAgentAuthMiddleware } from './auth/auth.middleware.js';
 import { initMcpServer, handleSseConnection, handleSseMessage } from './mcp/mcp.server.js';
+import { ConnectionReferenceCache } from './cache/connection-reference-cache.js';
+import { AccessGrantCache } from './cache/access-grant-cache.js';
+import { ConnectionReferenceConsumer } from './cache/connection-reference-consumer.js';
+import { InternalControlPlaneClient } from './control-plane/internal-control-plane.client.js';
 
 async function bootstrap() {
   const config = loadConfig();
   const app = express();
+
+  // Domain 12 runtime-enforcement plumbing (ADR-006 / ADR-007).
+  //
+  // No request path reads these caches yet — the connection-reference
+  // guard wires up in PR #5 of the runtime-enforcement arc and is
+  // behind a feature flag. PR #3 only populates and invalidates so
+  // operators can observe the data flow in the logs before enforcement
+  // activates.
+  const connectionReferenceCache = new ConnectionReferenceCache();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const accessGrantCache = new AccessGrantCache();
+  const internalControlPlane = new InternalControlPlaneClient();
+  const connectionReferenceConsumer = new ConnectionReferenceConsumer(
+    config.KAFKA_BROKERS.split(','),
+    connectionReferenceCache,
+    internalControlPlane,
+  );
+
+  // Cold-load the default org's active references before the consumer
+  // starts so the cache is warm by the time the consumer's first event
+  // arrives. Per ADR-006 § "Cold-cache MCP request" the request path
+  // tolerates a cold cache via fallback (PR #5), so a slow cold-load
+  // is not a request-availability issue at MVP.
+  try {
+    const refs = await internalControlPlane.listActiveReferencesForOrg(
+      config.DEFAULT_ORG_ID,
+    );
+    const loaded = connectionReferenceCache.loadFromArray(
+      config.DEFAULT_ORG_ID,
+      refs,
+    );
+    console.log(
+      `[AQL] Cold-loaded ${loaded} active connection references for org ${config.DEFAULT_ORG_ID}`,
+    );
+  } catch (err) {
+    // Cold-load failure leaves the cache empty; the cache-miss path
+    // in PR #5 will repopulate per-triple as agent requests come in.
+    console.warn(
+      `[AQL] Cold-load skipped — control plane unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  await connectionReferenceConsumer.start();
 
   // Parse JSON bodies for MCP message POST
   app.use(express.json());
@@ -60,11 +107,28 @@ async function bootstrap() {
     }
   });
 
-  app.listen(config.PORT, '0.0.0.0', () => {
+  const server = app.listen(config.PORT, '0.0.0.0', () => {
     console.log(`[Agent Query] MCP server listening on port ${config.PORT}`);
     console.log(`[Agent Query] Health: http://localhost:${config.PORT}/health`);
     console.log(`[Agent Query] SSE:    http://localhost:${config.PORT}/mcp/sse`);
   });
+
+  // Graceful shutdown — close the consumer first so kafkajs commits
+  // outstanding offsets cleanly, then the HTTP server.
+  const shutdown = async (signal: string): Promise<void> => {
+    console.log(`[Agent Query] ${signal} received, shutting down`);
+    try {
+      await connectionReferenceConsumer.stop();
+    } catch (err) {
+      console.error(
+        `[Agent Query] Consumer stop error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 5_000).unref();
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
 bootstrap().catch((err) => {
