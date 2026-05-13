@@ -16,3 +16,7 @@ process.env['CONNECTION_DETAILS_DEV_KEY'] =
 // Temporal disabled for unit tests — workflows are exercised in integration
 // tests against a real temporal container, not via mocks.
 process.env['TEMPORAL_ENABLED'] = 'false';
+// Domain 12 internal-endpoint token. Any string ≥16 chars satisfies the
+// Zod check at config load; tests that exercise the guard override this
+// via configModule.getConfig mocks.
+process.env['AQL_INTERNAL_TOKEN'] = 'test-aql-internal-token-1234567890';

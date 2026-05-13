@@ -495,6 +495,13 @@ services:
       # SEED_API_KEY. Production must NEVER set SEED_ENABLED=true.
       SEED_ENABLED: ${SEED_ENABLED:-true}
       SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
+      # Domain 12 — internal control-plane endpoints called by the Agent
+      # Query Layer for connection-reference cache cold-load and
+      # cache-miss fallback. Constant-time-compared by
+      # InternalServiceGuard against the x-internal-service-token header.
+      # The dev default is a throwaway value — override in any shared
+      # environment.
+      AQL_INTERNAL_TOKEN: ${AQL_INTERNAL_TOKEN:-dev-aql-internal-token-change-me}
     volumes:
       - ../../apps/api:/app/apps/api:cached
       - ../../packages/types:/app/packages/types:cached

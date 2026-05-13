@@ -187,6 +187,9 @@ services:
       # @provenance/seed package's runner. Production must NEVER set this true.
       SEED_ENABLED: ${SEED_ENABLED:-true}
       SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
+      # Domain 12 — Agent Query Layer internal-endpoint token. Throwaway
+      # default for local dev; constant-time-compared by InternalServiceGuard.
+      AQL_INTERNAL_TOKEN: ${AQL_INTERNAL_TOKEN:-dev-aql-internal-token-change-me}
       # Disabled services — connections fail gracefully (see comments above)
       REDPANDA_ENABLED: "false"
       OPENSEARCH_ENABLED: "false"
