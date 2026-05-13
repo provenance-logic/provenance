@@ -35,7 +35,13 @@ export type ConnectionReferenceCause =
   | 'major_version_suspension'
   | 'grant_revocation_cascade'
   | 'product_lifecycle_cascade'
-  | 'principal_lifecycle_cascade';
+  | 'principal_lifecycle_cascade'
+  /**
+   * F12.25 legacy-compatibility reference auto-provisioned at Domain 12
+   * enforcement activation. Non-renewable; on expiry the agent must
+   * submit a proper request.
+   */
+  | 'legacy_migration';
 
 /**
  * Scope of an agent's intended or approved consumption of a product.

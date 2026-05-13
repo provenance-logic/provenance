@@ -48,7 +48,8 @@ export type NotificationCategory =
   // Connection package + Domain 12 fan-out
   | 'connection_package_refreshed'
   | 'connection_reference_request'
-  | 'connection_reference_scope_violation';
+  | 'connection_reference_scope_violation'
+  | 'connection_reference_legacy_provisioned';
 
 export interface Notification {
   id: Uuid;
@@ -200,6 +201,10 @@ export const CATEGORY_DEFAULT_CHANNELS: Readonly<
   // Scope violations are compliance-signal events — owners and
   // governance need them out-of-band, not buried in an in-platform list.
   connection_reference_scope_violation: ['in_platform', 'email'],
+  // F12.25 legacy-compatibility provisioning. Owners are notified once at
+  // migration time; out-of-band so they cannot miss it during the 30-day
+  // grace window in which they must replace the auto-provisioned ref.
+  connection_reference_legacy_provisioned: ['in_platform', 'email'],
 };
 
 /**

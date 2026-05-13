@@ -34,6 +34,7 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   connection_package_refreshed: 'Connection Package Refreshed',
   connection_reference_request: 'Connection Reference Request',
   connection_reference_scope_violation: 'Connection Reference Scope Violation',
+  connection_reference_legacy_provisioned: 'Legacy Connection Reference Provisioned',
 };
 
 /**
