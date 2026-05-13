@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ControlPlaneClient } from '../control-plane/control-plane.client.js';
+import type { ConnectionReferenceGuard } from '../auth/connection-reference.guard.js';
 import { registerTools, SessionIdentity } from './tools.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -11,6 +12,14 @@ interface SessionEntry {
 
 const sessions = new Map<string, SessionEntry>();
 
+// Domain 12 enforcement state (PR #5b). Shared across sessions so a
+// single cache instance backs every per-session McpServer. main.ts
+// passes both into initMcpServer() at bootstrap; createMcpServer
+// closes over the captured references each time a new SSE session
+// lands.
+let _guard: ConnectionReferenceGuard | null = null;
+let _enforcementEnabled = false;
+
 function createMcpServer(identity: SessionIdentity): McpServer {
   const server = new McpServer(
     { name: 'provenance', version: '0.1.0' },
@@ -19,14 +28,28 @@ function createMcpServer(identity: SessionIdentity): McpServer {
   // Each session gets its own ControlPlaneClient that forwards
   // the authenticated agent's identity headers (ADR-002 Phase 5b-7).
   const client = new ControlPlaneClient(identity);
-  registerTools(server, client, identity);
+  registerTools(server, client, identity, {
+    guard: _guard,
+    enforcementEnabled: _enforcementEnabled,
+  });
   return server;
 }
 
-export function initMcpServer(): void {
+export function initMcpServer(options: {
+  guard?: ConnectionReferenceGuard | null;
+  enforcementEnabled?: boolean;
+} = {}): void {
+  _guard = options.guard ?? null;
+  _enforcementEnabled = options.enforcementEnabled ?? false;
+
   // Validate that a server can be created (tools register without error)
   createMcpServer({ agentId: '__init__', orgId: '__init__' });
-  console.log('[MCP] Server initialized with 9 tools');
+  const mode = _guard
+    ? _enforcementEnabled
+      ? 'ENFORCING'
+      : 'SHADOW'
+    : 'DISABLED';
+  console.log(`[MCP] Server initialized with 9 tools (Domain 12 enforcement: ${mode})`);
 }
 
 export async function handleSseConnection(

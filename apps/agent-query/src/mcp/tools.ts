@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResult, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ControlPlaneClient, ProductSummary, LineageNode } from '../control-plane/control-plane.client.js';
+import type { ConnectionReferenceGuard, GuardDecision } from '../auth/connection-reference.guard.js';
 import { getConfig } from '../config.js';
 
 export interface SessionIdentity {
@@ -347,8 +348,36 @@ export function makeTools(client: ControlPlaneClient, session: SessionIdentity):
   ];
 }
 
-export function registerTools(server: McpServer, client: ControlPlaneClient, session: SessionIdentity): void {
+export interface RegisterToolsOptions {
+  /**
+   * Domain 12 connection-reference guard. When provided, every
+   * product-bound tool call is checked against the agent's access
+   * grant + active connection reference + approved scope before
+   * dispatch. When omitted (or null), no enforcement runs — useful
+   * for dev environments where Domain 12 is disabled entirely.
+   */
+  guard?: ConnectionReferenceGuard | null;
+
+  /**
+   * CONNECTION_REFERENCE_ENFORCEMENT_ENABLED. When false (default,
+   * SHADOW MODE), the guard runs and audit-logs would-be denials but
+   * does not block the request. When true, denied requests come back
+   * as MCP isError results carrying the distinct denial code.
+   * Independent of `guard` presence — the guard may be present but
+   * not enforcing.
+   */
+  enforcementEnabled?: boolean;
+}
+
+export function registerTools(
+  server: McpServer,
+  client: ControlPlaneClient,
+  session: SessionIdentity,
+  options: RegisterToolsOptions = {},
+): void {
   const tools = makeTools(client, session);
+  const guard = options.guard ?? null;
+  const enforcementEnabled = options.enforcementEnabled ?? false;
 
   const underlying = server.server;
 
@@ -403,6 +432,75 @@ export function registerTools(server: McpServer, client: ControlPlaneClient, ses
         await client.writeAuditEntry(auditEntry);
       } catch (err) {
         console.error('[Audit] Tool call audit failed (non-blocking):', err);
+      }
+
+      // Domain 12 enforcement (PR #5b). The guard runs after the
+      // existing mcp_tool_call audit so the audit trail captures the
+      // call attempt regardless of enforcement outcome. On a denial
+      // we additionally write a `connection_reference_denied` entry
+      // with the deny code and decision context.
+      if (guard) {
+        const orgId = session.orgId || args.org_id || getConfig().DEFAULT_ORG_ID;
+        let decision: GuardDecision;
+        try {
+          decision = await guard.check(orgId, session.agentId, request.params.name, args);
+        } catch (err) {
+          // A guard failure (control plane unreachable on cache miss)
+          // is a fail-closed event in enforcement mode and a logged
+          // pass-through in shadow mode. The guard cannot let traffic
+          // through on its own error path when enforcement is on.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[Guard] check failed for ${request.params.name}: ${msg}`);
+          if (enforcementEnabled) {
+            return {
+              content: [{
+                type: 'text',
+                text: `GUARD_UNAVAILABLE: enforcement is on and the connection-reference guard could not reach the control plane (${msg}). Retry shortly.`,
+              }],
+              isError: true,
+            };
+          }
+          decision = { allowed: true, exempt: false };
+        }
+
+        if (!decision.allowed) {
+          // Audit the denial regardless of enforcement mode. CLAUDE.md:
+          // "scope violations are never silent" — the audit row is the
+          // permanent record. Scope-violation notification fan-out
+          // lands in PR #5c.
+          try {
+            await client.writeAuditEntry({
+              org_id: orgId,
+              principal_id: session.agentId,
+              principal_type: 'ai_agent',
+              action: 'connection_reference_denied',
+              resource_type: 'mcp_tool',
+              resource_id: null,
+              tool_name: request.params.name,
+              agent_id: session.agentId,
+              deny_code: decision.code,
+              deny_reason: decision.reason,
+              enforcement_mode: enforcementEnabled ? 'enforced' : 'shadow',
+            });
+          } catch (err) {
+            console.error('[Audit] Denial audit failed (non-blocking):', err);
+          }
+
+          if (enforcementEnabled) {
+            console.log(
+              `[Guard ENFORCE] Denied ${request.params.name} for agent=${session.agentId}: ${decision.code} — ${decision.reason}`,
+            );
+            return {
+              content: [{ type: 'text', text: `${decision.code}: ${decision.reason}` }],
+              isError: true,
+            };
+          }
+          // Shadow mode: log the would-be denial, then fall through to
+          // dispatch the handler as if the guard had not run.
+          console.log(
+            `[Guard SHADOW] Would deny ${request.params.name} for agent=${session.agentId}: ${decision.code} — ${decision.reason}`,
+          );
+        }
       }
 
       try {
