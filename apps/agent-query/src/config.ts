@@ -18,6 +18,19 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+
+  // Domain 12 runtime-enforcement plumbing (ADR-006 / ADR-007).
+  //
+  // KAFKA_BROKERS: comma-separated brokers for the
+  // `connection_reference.state` consumer. Matches the API side default
+  // (single-broker Redpanda on :19092 in dev).
+  KAFKA_BROKERS: z.string().min(1).default('localhost:19092'),
+
+  // Shared secret with the API's InternalServiceGuard. The AQL passes
+  // this in the x-internal-service-token header on every call to
+  // /api/v1/internal/consent/*. Must match the API's AQL_INTERNAL_TOKEN
+  // env var byte-for-byte. Minimum 16 characters.
+  AQL_INTERNAL_TOKEN: z.string().min(16, 'AQL_INTERNAL_TOKEN must be at least 16 characters'),
 });
 
 export type AgentQueryConfig = z.infer<typeof envSchema>;
