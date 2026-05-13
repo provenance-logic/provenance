@@ -3,6 +3,7 @@
 **Date:** April 21, 2026
 **Status:** Proposed
 **Author:** Provenance Platform Team
+**Amended:** May 13, 2026 — locked the connection-reference scope payload shape (see Amendment section at the bottom of this ADR)
 
 ---
 
@@ -196,3 +197,30 @@ Write the scope match function in Rego but run it in an embedded OPA evaluator i
 - ADR-007 (state propagation, the source of cache invalidation events)
 - OPA policy evaluation documentation: `documents/architecture/Provenance_Architecture_v1.5.md` Section 3 (MVP Governance Architecture)
 - Transactional outbox pattern: Chris Richardson, *Microservices Patterns*, Chapter 3
+
+---
+
+## Amendment — May 13, 2026: Connection-Reference Scope Payload Shape Locked
+
+The original ADR text describes the scope match function in conceptual terms ("port identifiers authorized, data category identifiers authorized, approved use-case category") without committing to a payload schema. The Domain 12 runtime-enforcement implementation plan (`documents/architecture/plans/domain-12-runtime-enforcement.md`, Decision 1, locked 2026-05-08) commits to the following concrete shape for MVP:
+
+```typescript
+type ConnectionReferenceScope = {
+  ports: string[];   // port names; '*' = all output ports of the product
+};
+
+type DataCategoryConstraints = {
+  allowed_categories?: string[];  // absent = no narrowing
+};
+```
+
+The migration that landed with the data layer (V18) already separates scope into two columns — `intended_scope` / `approved_scope` (which output ports) and `data_category_constraints` / `approved_data_category_constraints` (which data categories within those ports). This amendment formalises the in-application shape that matches those columns.
+
+**Key bindings introduced by the lock:**
+
+- **Ports are named, not UUIDs.** F12.6 requires the use-case declaration to be preserved verbatim and immutably. Names are what humans read in approval flows and audit logs; the runtime cache resolves names to current ports at enforcement time.
+- **Wildcard `'*'` is supported on `ports`.** Approval UIs must render the wildcard visibly as "all ports" so the principal sees what they are consenting to.
+- **Action verbs (`'read'`, `'subscribe'`, etc.) are deliberately out of scope for MVP.** All nine current MCP tools are read-only and write tools are not in Phase 5. Action gating is future-proofing complexity that lands when write tools arrive in Phase 6+.
+- **Field-level narrowing is not part of `ConnectionReferenceScope`.** Within-port narrowing happens in `DataCategoryConstraints.allowed_categories`. Earlier prototypes that placed a `fields` key on the scope itself are rejected by the locked shape.
+
+The shape is implemented in `packages/types/src/consent.ts` (TypeScript types), in `apps/api/src/consent/scope.schemas.ts` (Zod runtime validators), and in `packages/openapi/consent.yaml` (REST request validation). The scope-match function described in this ADR's "Scope Match Function" section will be implemented against these types when the Agent Query Layer guard lands (PR #5 of the implementation plan's six-PR sequence). The plan also locks four other decisions (cache placement, denial codes, MCP tool-to-port mapping); those are recorded in the implementation plan rather than mirrored here, since they do not change the architectural posture described in this ADR.

@@ -344,16 +344,42 @@ components:
       type: object
       description: |
         Scope of an agent's intended or approved consumption of a product.
-        Opaque JSON shape at this layer; structure is defined by F12.6 and
-        runtime enforcement lands in ADR-006 / F12.16.
-      additionalProperties: true
+        MVP shape (locked 2026-05-08, see Domain 12 implementation plan
+        Decision 1): names output ports only. Action-verb gating and
+        field-level narrowing are deliberate future work — write tools
+        land in Phase 6+, and category-level narrowing lives in
+        DataCategoryConstraints. F12.16 enforcement matches against
+        this shape.
+      required:
+        - ports
+      properties:
+        ports:
+          type: array
+          description: |
+            List of output port names (not UUIDs). The wildcard `'*'`
+            stands for all output ports of the product; approval UIs
+            must render it as "all ports" so the principal sees what
+            they consent to.
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
 
     DataCategoryConstraints:
       type: object
       description: |
         Optional restriction to specific data categories within a product
         that carries fields of multiple sensitivity levels (F12.6).
-      additionalProperties: true
+        Absent `allowed_categories` means no category-level narrowing
+        beyond the port list in ConnectionReferenceScope.
+      properties:
+        allowed_categories:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
 
     ConnectionReference:
       type: object
