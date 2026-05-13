@@ -24,7 +24,12 @@ import type {
   RevokeConnectionReferenceRequest,
 } from '@provenance/types';
 import { DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH } from '@provenance/types';
+import { ZodError } from 'zod';
 import type { EntityManager } from 'typeorm';
+import {
+  parseConnectionReferenceScope,
+  parseDataCategoryConstraints,
+} from './scope.schemas.js';
 import { ConnectionReferenceEntity } from './entities/connection-reference.entity.js';
 import { ConnectionReferenceOutboxEntity } from './entities/connection-reference-outbox.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
@@ -690,6 +695,22 @@ export class ConsentService {
         'approvedDurationDays may not exceed the originally requested duration',
       );
     }
+    if (options.approvedScope !== undefined) {
+      try {
+        parseConnectionReferenceScope(options.approvedScope);
+      } catch (err) {
+        throw new BadRequestException(this.formatScopeError('approvedScope', err));
+      }
+    }
+    if (options.approvedDataCategoryConstraints !== undefined) {
+      try {
+        parseDataCategoryConstraints(options.approvedDataCategoryConstraints);
+      } catch (err) {
+        throw new BadRequestException(
+          this.formatScopeError('approvedDataCategoryConstraints', err),
+        );
+      }
+    }
   }
 
   private diffApprovalFromIntended(
@@ -785,12 +806,31 @@ export class ConsentService {
         `purposeElaboration must be at least ${DEFAULT_PURPOSE_ELABORATION_MIN_LENGTH} characters`,
       );
     }
-    if (!dto.intendedScope || typeof dto.intendedScope !== 'object') {
-      throw new BadRequestException('intendedScope is required');
-    }
     if (!Number.isInteger(dto.requestedDurationDays) || dto.requestedDurationDays <= 0) {
       throw new BadRequestException('requestedDurationDays must be a positive integer');
     }
+    try {
+      parseConnectionReferenceScope(dto.intendedScope);
+    } catch (err) {
+      throw new BadRequestException(this.formatScopeError('intendedScope', err));
+    }
+    if (dto.dataCategoryConstraints !== undefined) {
+      try {
+        parseDataCategoryConstraints(dto.dataCategoryConstraints);
+      } catch (err) {
+        throw new BadRequestException(this.formatScopeError('dataCategoryConstraints', err));
+      }
+    }
+  }
+
+  private formatScopeError(field: string, err: unknown): string {
+    if (err instanceof ZodError) {
+      const first = err.issues[0];
+      const path = first && first.path.length > 0 ? `.${first.path.join('.')}` : '';
+      const message = first ? first.message : 'invalid payload';
+      return `${field}${path}: ${message}`;
+    }
+    return `${field} is invalid`;
   }
 
   private toDto(entity: ConnectionReferenceEntity): ConnectionReference {

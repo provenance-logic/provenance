@@ -475,14 +475,22 @@ describe('ConsentService', () => {
     it('marks modifiedByApprover true when the approver narrows scope', async () => {
       referenceRepoInTxn.findOne.mockResolvedValue(makePendingReference());
 
+      // Per Domain 12 plan Decision 1, ports-only narrowing happens in
+      // ConnectionReferenceScope while category-level narrowing happens
+      // in DataCategoryConstraints. Here the approver narrows duration
+      // and adds a category constraint that the original request did
+      // not specify — that's a valid "narrow on approval" path.
       const options: ApproveConnectionReferenceOptions = {
-        approvedScope: { ports: ['output-1'], fields: ['customer_id'] },
+        approvedDataCategoryConstraints: { allowed_categories: ['customer_id'] },
         approvedDurationDays: 14,
       };
       const result = await service.approveConnectionReference(ORG_ID, 'ref-1', OWNER_ID, options);
 
       expect(result.modifiedByApprover).toBe(true);
-      expect(result.approvedScope).toEqual({ ports: ['output-1'], fields: ['customer_id'] });
+      expect(result.approvedScope).toEqual({ ports: ['output-1'] });
+      expect(result.approvedDataCategoryConstraints).toEqual({
+        allowed_categories: ['customer_id'],
+      });
       expect(result.approvedDurationDays).toBe(14);
     });
 

@@ -39,17 +39,33 @@ export type ConnectionReferenceCause =
 
 /**
  * Scope of an agent's intended or approved consumption of a product.
- * Currently an opaque JSON shape — the concrete schema is defined by
- * later F-IDs (F12.16 runtime enforcement, F12.6 scope structure).
- * Kept loose here to avoid over-committing the shape before those land.
+ * The MVP shape (locked 2026-05-08, see Domain 12 implementation plan
+ * Decision 1) names output ports only. Action-verb gating and field-
+ * level narrowing are deliberate future work — write tools land in
+ * Phase 6+, and category-level narrowing lives in
+ * {@link DataCategoryConstraints}.
+ *
+ * `ports` is a list of port names (not UUIDs). F12.6 requires the
+ * use-case declaration to be preserved verbatim and immutably, and
+ * names are what the human approver saw at approval time. The wildcard
+ * `'*'` means "all output ports of the product" and must be rendered
+ * as "all ports" in approval UIs so the principal sees what they
+ * consent to.
  */
-export type ConnectionReferenceScope = Record<string, unknown>;
+export interface ConnectionReferenceScope {
+  ports: string[];
+}
 
 /**
  * Optional restriction to specific data categories within a product
- * that carries fields of multiple sensitivity levels (F12.6).
+ * that carries fields of multiple sensitivity levels (F12.6). When
+ * `allowed_categories` is absent the reference imposes no
+ * category-level narrowing beyond the port list in
+ * {@link ConnectionReferenceScope}.
  */
-export type DataCategoryConstraints = Record<string, unknown>;
+export interface DataCategoryConstraints {
+  allowed_categories?: string[];
+}
 
 export interface ConnectionReference {
   id: Uuid;
