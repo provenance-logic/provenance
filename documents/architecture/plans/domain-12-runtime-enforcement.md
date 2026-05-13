@@ -1,9 +1,11 @@
 # Domain 12 Runtime Scope Enforcement — Implementation Plan
 
-**Status:** Scoping (no code yet)
+**Status:** ✅ Shipped 2026-05-13 across PRs #77–#86 (P0, #1, #2, #3, #4, #5a, #5b, #5c, F12.25, #6). `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default on the Agent Query Layer.
 **Authors:** Architect agent (scoping pass), Matt McGarvey (review)
-**Date:** 2026-05-08
-**Supersedes:** Inline notes in `documents/prd/implementation-status.md` only — this is the first detailed implementation plan for the runtime-enforcement piece of Domain 12.
+**Date:** 2026-05-08 (plan locked), 2026-05-13 (implementation complete)
+**Supersedes:** Inline notes in `documents/prd/implementation-status.md` only — this was the first detailed implementation plan for the runtime-enforcement piece of Domain 12.
+
+> **Retained for reference.** The plan below is preserved as written so its design rationale, locked decisions, and rejected alternatives stay visible to future readers. For current per-requirement status of Domain 12 see `documents/prd/implementation-status.md` Domain 12 section. For the merged PR list see `documents/prd/osr-roadmap.md` Stage 3.
 
 ## Summary
 

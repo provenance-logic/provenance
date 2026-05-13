@@ -1,6 +1,6 @@
 # Open Source Readiness Roadmap
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-13
 **Authoritative blocker list:** [implementation-status.md](./implementation-status.md)
 **Target definition:** Provenance functions properly without weird workarounds. Not full enterprise-ready (SOC 2, etc.) — that is Phase 6.
 
@@ -52,45 +52,26 @@ For context on where we are coming from. Everything below this line still needs 
 
 ---
 
-## Stage 3 — Domain 12 runtime enforcement (3–4 weeks, long pole)
+## Stage 3 — Domain 12 runtime enforcement ✅ Shipped 2026-05-13
 
-**Why this is the biggest single piece:** the platform's narrative is "agents are first-class participants with per-use-case consent." Today the consent model is described in the data layer and state machine but not enforced at runtime. Shipping Open Source Ready without runtime enforcement undercuts the platform's whole story.
+**The arc that closed the platform's "agents with per-use-case consent" narrative.** Shadow-mode-then-flip rollout across nine PRs (#77–#86). `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default; every product-bound MCP tool call is gated on an active access grant AND an active connection reference AND a scope match.
 
-**Sequenced PRs (each with its own tests + verification):**
+**What landed (in merge order):**
 
-**PR 1 — Outbox publisher** (3 days)
-- Redpanda producer that drains `consent.connection_reference_outbox`.
-- Publishes `connection_reference.state` events on every state transition.
-- Nothing else can react to state changes until this exists.
+- **#77 (P0)** — locked the `ConnectionReferenceScope` payload shape (`{ ports: string[] }`, with `'*'` wildcard) and `DataCategoryConstraints` (`{ allowed_categories?: string[] }`) per the plan's Decision 1.
+- **#78 (PR #4)** — pure-function `scope-match.ts` + `tool-scope-map.ts` (5 exempt MCP tools, 4 product-bound, unknown-tool safety belt). 27 truth-table tests.
+- **#79 (PR #2)** — internal control-plane endpoints `/api/v1/internal/consent/connection-references/active` (cold-load) + `/active/lookup` (cache miss). New `InternalServiceGuard` + `AQL_INTERNAL_TOKEN` env var.
+- **#80 (PR #1)** — outbox publisher worker drains `consent.connection_reference_outbox` to Redpanda topic `connection_reference.state` (1-second tick, `FOR UPDATE SKIP LOCKED`, partition key = `org_id`). Strict-publish primitive added to `KafkaProducerService`.
+- **#81 (PR #3)** — AQL in-memory `ConnectionReferenceCache` + `AccessGrantCache` (24h TTL), Redpanda consumer keeping the cache aligned with state events, cold-load on AQL boot via the internal endpoint.
+- **#82 (PR #5a)** — internal active-grant lookup endpoint `/api/v1/internal/access/grants/active/lookup` for access-grant cache-miss fallback.
+- **#83 (PR #5b)** — `ConnectionReferenceGuard` wired into the MCP tool dispatch path. Five distinct denial codes (`ACCESS_GRANT_NOT_FOUND`, `CONNECTION_REFERENCE_NOT_FOUND`, `CONNECTION_REFERENCE_SUSPENDED`, `CONNECTION_REFERENCE_EXPIRED`, `CONNECTION_REFERENCE_SCOPE_VIOLATION`) plus `UNKNOWN_TOOL` safety belt. Audit row on every denial. Shadow-mode flag at config layer.
+- **#84 (PR #5c)** — scope-violation notification fan-out. New `connection_reference_scope_violation` category, governance-mandatory, recipients = owning principal + every `governance_member`. Runs regardless of enforcement mode per "never silent."
+- **#85 (F12.25)** — legacy-agent migration endpoint. Provisions 30-day non-renewable legacy refs for existing agent-product grants with no active reference; idempotent; V28 migration extends `caused_by` CHECK with `legacy_migration`; new `connection_reference_legacy_provisioned` notification category.
+- **#86 (PR #6)** — flipped `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED` default from `false` to `true`. Fresh deployments enforce by default; shadow mode is opt-in. Upgrade runbook for existing installations: run F12.25 endpoint before deploying.
 
-**PR 2 — Agent Query Layer in-memory cache + invalidation** (3 days)
-- Per-(agent, product) connection-reference cache at the AQL.
-- Subscribed to the outbox topic for invalidation per [ADR-006](../architecture/adr/ADR-006-runtime-scope-enforcement.md).
-- Cache populated lazily on first request, evicted on state-change events.
+**Retrospective.** The plan estimated 3–4 weeks. The arc landed in roughly one session because (a) the implementation plan locked all four design decisions before any code was written, (b) splitting PR #5 into 5a/5b/5c kept review surface tractable, and (c) every PR had a scout pass before coding to avoid silent bonus scope.
 
-**PR 3 — Enforcement check on every MCP request** (3 days)
-- The actual AND-check: active grant AND active reference AND scope match.
-- Four distinct denial reasons per CLAUDE.md rules: no grant, no active reference, scope violation, reference expired.
-- Audit log entry on every denial. Notification to owning principal on scope violation.
-- **This is the moment enforcement goes live.** Land it behind a per-org feature flag.
-
-**PR 4 — Automatic expiration + MAJOR-version suspension** (5 days)
-- Temporal workflow that fires on connection reference expiration (F12.22).
-- Event-driven Temporal workflow that suspends all active references for a product on MAJOR version publication (F12.15).
-- Both write audit + outbox + notification.
-
-**PR 5 — Legacy-agent migration** (2 days)
-- One-shot migration that auto-provisions 30-day legacy-compatibility references for every existing agent at enforcement activation (F12.25).
-- Visually distinct in the UI, non-renewable. On expiry the agent must submit a proper request.
-- Without this, flipping the enforcement flag denies every existing agent on day one.
-
-**PR 6 — Governance override + Supervised oversight-hold + remaining cascade triggers** (1 week)
-- Governance role can override consent decisions per F12.14 / F12.20.
-- Supervised oversight-hold sub-state for Supervised-class agents.
-- Cascade triggers for product lifecycle and owner deactivation per F12.21.
-- Polish PRs to close out the domain.
-
-**Checkpoint after PR 1, 3, and 5.** PR 3 is the largest decision moment — flipping the enforcement flag changes platform behavior for every agent.
+**Deliberately deferred (not OSR blockers, tracked in implementation-status.md Domain 12 section):** Supervised oversight-hold sub-state, governance override on activation (F12.14) and governance-initiated revocation (F12.20), MAJOR-version suspension (F12.15), automatic-expiration Temporal workflow (F12.22), behavioral differences at runtime (F12.17), provenance-envelope verification (F12.18), the remaining F12.21 cascade triggers (product lifecycle, agent lifecycle, owner deactivation), per-reference scope filtering on the connection package (ADR-008 "Scope Inheritance"), and a UI that visually distinguishes legacy refs from properly requested ones.
 
 ---
 
@@ -124,17 +105,15 @@ For context on where we are coming from. Everything below this line still needs 
 
 ## Total wall-clock estimate
 
-**5–7 weeks** at current cadence with one developer (Matt + Claude pair).
+**Roughly 2 weeks remaining** at current cadence with one developer (Matt + Claude pair). Down from the original 5–7-week estimate after Domain 12 closed 2026-05-13.
 
-| Stage | Effort |
-| --- | --- |
-| 1. Setup-time measurement + fixes | 1–4 days |
-| 2. Role + team UI | 1–2 weeks |
-| 3. Domain 12 runtime enforcement | 3–4 weeks |
-| 4. Onboarding flow | 1 week |
-| 5. Pre-launch sweep | 2–3 days |
-
-Domain 12 is two-thirds of the wall-clock time. Everything else is deliberately small and fast so visible progress lands weekly leading up to the long Domain 12 stretch.
+| Stage | Effort | Status |
+| --- | --- | --- |
+| 1. Setup-time measurement + fixes | 1–4 days | Outstanding |
+| 2. Role + team UI | 1–2 weeks | Outstanding |
+| 3. Domain 12 runtime enforcement | 3–4 weeks (actual: one session) | ✅ Shipped 2026-05-13 |
+| 4. Onboarding flow | 1 week | Outstanding |
+| 5. Pre-launch sweep | 2–3 days | Outstanding |
 
 ---
 
