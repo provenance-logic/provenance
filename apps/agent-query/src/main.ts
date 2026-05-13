@@ -7,6 +7,7 @@ import { ConnectionReferenceCache } from './cache/connection-reference-cache.js'
 import { AccessGrantCache } from './cache/access-grant-cache.js';
 import { ConnectionReferenceConsumer } from './cache/connection-reference-consumer.js';
 import { InternalControlPlaneClient } from './control-plane/internal-control-plane.client.js';
+import { ConnectionReferenceGuard } from './auth/connection-reference.guard.js';
 
 async function bootstrap() {
   const config = loadConfig();
@@ -20,12 +21,16 @@ async function bootstrap() {
   // operators can observe the data flow in the logs before enforcement
   // activates.
   const connectionReferenceCache = new ConnectionReferenceCache();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const accessGrantCache = new AccessGrantCache();
   const internalControlPlane = new InternalControlPlaneClient();
   const connectionReferenceConsumer = new ConnectionReferenceConsumer(
     config.KAFKA_BROKERS.split(','),
     connectionReferenceCache,
+    internalControlPlane,
+  );
+  const guard = new ConnectionReferenceGuard(
+    connectionReferenceCache,
+    accessGrantCache,
     internalControlPlane,
   );
 
@@ -63,8 +68,16 @@ async function bootstrap() {
     res.json({ status: 'ok', service: 'agent-query', version: '0.1.0' });
   });
 
-  // Initialize MCP server
-  initMcpServer();
+  // Initialize MCP server with the Domain 12 guard. The flag flag
+  // CONNECTION_REFERENCE_ENFORCEMENT_ENABLED defaults to false (shadow
+  // mode) — the guard will run on every product-bound tool call and
+  // log/audit would-be denials, but does not block until the flag
+  // flips. PR #6 of the runtime-enforcement arc handles the flip
+  // after F12.25 legacy-agent migration.
+  initMcpServer({
+    guard,
+    enforcementEnabled: config.CONNECTION_REFERENCE_ENFORCEMENT_ENABLED,
+  });
 
   // ADR-002 Phase 5b: JWT auth middleware for MCP endpoints
   const agentAuth = createAgentAuthMiddleware();
