@@ -18,6 +18,11 @@ tags:
     description: Consumer access requests and approval workflow
   - name: ApprovalEvents
     description: Append-only approval audit trail
+  - name: AccessInternal
+    description: |
+      Internal endpoints the Agent Query Layer calls for access-grant
+      cache-miss fallback (ADR-006). Service-token authenticated, NOT
+      user-JWT authenticated. Not for end-user consumption.
 
 paths:
   /organizations/{orgId}/access/grants:
@@ -329,6 +334,53 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /internal/access/grants/active/lookup:
+    get:
+      operationId: internalLookupActiveAccessGrant
+      summary: Cache-miss fallback — one active access grant by (org, agent, product)
+      tags: [AccessInternal]
+      description: |
+        Returns the active access grant for a single
+        (orgId, agentId, productId) triple, or 404 when none exists.
+        Called by the Agent Query Layer's connection-reference guard
+        when the in-memory access-grant cache misses for that triple.
+
+        "Active" means non-revoked AND non-expired. Revoked grants
+        and grants whose `expiresAt` is in the past produce a 404.
+
+        Authentication is via the `x-internal-service-token` header.
+      security:
+        - internalServiceToken: []
+      parameters:
+        - name: orgId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: agentId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The active access grant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessGrant'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     orgId:
@@ -371,6 +423,18 @@ components:
         type: integer
         minimum: 0
         default: 0
+
+  securitySchemes:
+    internalServiceToken:
+      type: apiKey
+      in: header
+      name: x-internal-service-token
+      description: |
+        Shared secret between the API and internal callers (Agent Query
+        Layer for Domain 12; future internal workers). Constant-time-
+        compared to the API's `AQL_INTERNAL_TOKEN` config. Not for
+        end-user use — the value is rotated by operators and never
+        leaves trusted infrastructure.
 
   responses:
     BadRequest:

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { getConfig } from '../config.js';
-import type { ConnectionReference } from '@provenance/types';
+import type { AccessGrant, ConnectionReference } from '@provenance/types';
 
 // Internal control-plane client (Domain 12 PR #3).
 //
@@ -82,6 +82,32 @@ export class InternalControlPlaneClient {
       // error, 401 (bad token), 500 — bubbles up. The cache layer logs
       // and re-throws so the request path can deny correctly rather
       // than silently letting it through.
+      if (err instanceof AxiosError && err.response?.status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Cache-miss fallback for the access-grant cache. Returns the active
+   * grant for the triple, or null when no active grant exists.
+   * "Active" means non-revoked AND non-expired (the API filters; the
+   * client just propagates the 200/404 contract).
+   */
+  async lookupActiveAccessGrant(
+    orgId: string,
+    agentId: string,
+    productId: string,
+  ): Promise<AccessGrant | null> {
+    try {
+      const res = await this.http.get<AccessGrant>(
+        '/access/grants/active/lookup',
+        { params: { orgId, agentId, productId } },
+      );
+      if (res.status === 404) return null;
+      return res.data;
+    } catch (err) {
       if (err instanceof AxiosError && err.response?.status === 404) {
         return null;
       }

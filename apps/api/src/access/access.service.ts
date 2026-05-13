@@ -186,6 +186,39 @@ export class AccessService {
     return this.toGrant(grant);
   }
 
+  /**
+   * Look up the currently-active access grant for an agent-product pair
+   * within an org. Returns null when no active grant exists. Called by
+   * the Agent Query Layer's connection-reference guard on cache miss
+   * (Domain 12 PR #5).
+   *
+   * "Active" means: not revoked AND (no expiry OR expiry is in the
+   * future). Callers (the AQL guard) do not need to distinguish absent
+   * from revoked from expired — all three map to the same denial code,
+   * `ACCESS_GRANT_NOT_FOUND`. The narrowness of the contract is
+   * deliberate: the guard's decision is binary, so anything more
+   * structured would be wasted in the hot path.
+   */
+  async findActiveGrant(
+    orgId: string,
+    agentId: string,
+    productId: string,
+  ): Promise<AccessGrant | null> {
+    const grant = await this.grantRepo.findOne({
+      where: {
+        orgId,
+        productId,
+        granteePrincipalId: agentId,
+        revokedAt: IsNull(),
+      },
+    });
+    if (!grant) return null;
+    if (grant.expiresAt && grant.expiresAt <= new Date()) {
+      return null;
+    }
+    return this.toGrant(grant);
+  }
+
   async revokeGrant(
     orgId: string,
     grantId: string,
