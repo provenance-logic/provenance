@@ -1,6 +1,6 @@
 # Provenance Implementation Status
 
-**Last updated:** April 24, 2026
+**Last updated:** May 14, 2026
 **PRD version:** 1.5
 **Active phase:** Phase 5 - Open Source Ready
 
@@ -353,7 +353,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 12: Connection References and Per-Use-Case Consent
 
-New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enforcement for all agent access. A connection reference composes with (does not replace) the existing access grant: both must be active for any agent action against a product. **Partial as of 2026-04-24.** Depends on Domain 6 (Agent Integration Layer), Domain 8 (Operations and Workflow State), Domain 10 (Self-Serve Infrastructure), Domain 11 (Notifications). Architectural decisions in ADR-005 (composition), ADR-006 (runtime scope enforcement), ADR-007 (state propagation), ADR-008 (reference ↔ package relationship).
+New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enforcement for all agent access. A connection reference composes with (does not replace) the existing access grant: both must be active for any agent action against a product. **Partial as of 2026-05-14.** Depends on Domain 6 (Agent Integration Layer), Domain 8 (Operations and Workflow State), Domain 10 (Self-Serve Infrastructure), Domain 11 (Notifications). Architectural decisions in ADR-005 (composition), ADR-006 (runtime scope enforcement), ADR-007 (state propagation), ADR-008 (reference ↔ package relationship).
 
 **Shipped in this window (2026-04-24):**
 
@@ -362,12 +362,19 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 - **Package at activation.** Approval now generates a per-reference connection package via `ConnectionPackageService` (ADR-008) and stores it on the row. Narrowing the package to the approved scope is deferred; the full product package is currently stored.
 - **REST surface.** `ConsentController` exposes request / approve / deny / revoke / get / list under `/api/v1/organizations/{orgId}/consent/connection-references`. Guarded by `JwtAuthGuard` + `RolesGuard`; ownership precision enforced at the service row level. `packages/openapi/consent.yaml` validates clean (redocly).
 
+**Shipped in this window (2026-05-14):**
+
+- **Runtime scope enforcement at the Agent Query Layer (F12.16 / ADR-006 Phase 1).** Every product-targeted MCP tool call (`get_product`, `get_trust_score`, `get_lineage`, `get_slo_summary`) now passes through a `ScopeEnforcer` that resolves the active connection reference for `(orgId, agentId, productId)` and runs the structural scope match before invoking the handler. Three distinct denial codes — `CONNECTION_REFERENCE_NOT_FOUND`, `CONNECTION_REFERENCE_EXPIRED`, `CONNECTION_REFERENCE_SCOPE_VIOLATION` — surface to the agent and to audit so that "no consent", "expired consent", and "out-of-scope action" are legible failure modes. Every denial writes an `mcp_tool_call_denied` audit entry capturing the requested action, the approved scope, and the reference identity (F12.24 starter).
+- **Internal read endpoint.** `GET /api/v1/internal/consent/connection-references/active?productId=` (server-resolves orgId and agentId from the MCP-API-key + X-Agent-Id headers) backs the enforcer. `ConsentService.findActiveByAgentProduct` does the lookup.
+- **Fail-closed semantics.** Lookup errors are treated as `NOT_FOUND` so that a transient control-plane outage cannot defeat preventive enforcement (NF12.6). The enforcer is the only allow path; if it does not return `allow: true`, the handler does not run.
+
 **Deferred (explicit):**
 
 - Supervised oversight-hold sub-state between submission and owner routing — requires the Domain 11 notification path.
 - Governance override on activation (F12.14) and governance-initiated revocation (F12.20) — need a governance-role gate on the service.
 - MAJOR-version suspension (F12.15) — Temporal workflow triggered by the product lifecycle event.
-- Runtime scope enforcement at the Agent Query Layer (F12.16–F12.18, ADR-006) — the hot-path in-memory cache and its Redpanda consumer.
+- **ADR-006 Phases 2–4** — in-memory cache with Redpanda-event invalidation (Phase 2/3) and OPA hook for activation-time governance rules (Phase 4). The MVP path runs a synchronous PG lookup per call; NF12.2 (50ms p95 overhead) is met with headroom at single-replica MVP scale but will require the cache at production scale.
+- F12.17 trust-classification runtime differentiation and F12.18 envelope verification — the dispatcher knows the agent's classification but does not yet branch on it.
 - Automatic expiration (F12.22) — Temporal expiration workflow with advance-notice notifications.
 - Legacy-agent migration on enforcement activation (F12.25).
 - Remaining F12.21 cascade triggers: product deprecation/decommission, agent lifecycle transitions, owning-principal deactivation.
@@ -393,7 +400,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.13 | Activation on Approval | Partial | `ConsentService.approveConnectionReference` transitions pending → active, sets approved_* fields (inheriting from the request when the approver makes no change, marking `modifiedByApprover` when narrowed), recomputes `expires_at` from the approved duration, generates the per-reference connection package (ADR-008) via `ConnectionPackageService.generateForProduct` and stores it on the row, writes audit + outbox atomically. Only the owning principal may approve. **Per-reference scope filtering on the package (ADR-008 "Scope Inheritance") still deferred** — the full product package is stored; narrowing to approved_scope requires extending the Domain 10 package contract. |
 | F12.14 | Governance Override on Activation | Not implemented | |
 | F12.15 | Version Behavior on Product Republication | Not implemented | MAJOR version auto-suspends active references |
-| F12.16 | Use-Case Scope Enforcement | Not implemented | Blocker — real-time preventive enforcement at Agent Query Layer (ADR-006) |
+| F12.16 | Use-Case Scope Enforcement | Partial | Agent Query Layer dispatcher now resolves an active connection reference and runs an ADR-006 structural scope match before every product-targeted MCP tool call (`get_product`, `get_trust_score`, `get_lineage`, `get_slo_summary`). Denials carry distinct codes (`CONNECTION_REFERENCE_NOT_FOUND` / `_EXPIRED` / `_SCOPE_VIOLATION`) and write a denial audit entry with the requested action and approved scope (F12.24 starter). Data source is a synchronous control-plane lookup via a new `GET /internal/consent/connection-references/active` endpoint; the in-memory cache + Redpanda invalidation consumer described by ADR-006 Phases 2–3 are deferred to a follow-on slice, as is OPA-integrated activation-time policy (Phase 4) and runtime data-category enforcement (F12.6 taxonomy dependency). |
 | F12.17 | Behavioral Differences by Trust Classification at Runtime | Not implemented | Runtime enforcement of F6.3 behavior per tier |
 | F12.18 | Connection Reference Verification in Provenance Envelopes | Not implemented | Extends F6.17 envelope |
 | F12.19 | Principal-Initiated Revocation | Partial | `ConsentService.revokeConnectionReference` transitions active/suspended → revoked; only the owning principal may revoke; reason is required and recorded in the audit log (not on the row). Transactional outbox + audit. Frozen-state propagation for in-flight operations (F8.1 integration at the Agent Query Layer) deferred — the operations registry doesn't exist there yet. Notifications (Domain 11) deferred. |
@@ -401,7 +408,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 | F12.21 | Automatic Revocation Triggers | Partial | `ConsentService.cascadeRevokeForGrant` implemented; wired into `AccessService.revokeGrant` so that revoking a grant automatically revokes all non-terminal connection references for that agent-product pair with `caused_by = 'grant_revocation_cascade'`. Idempotent. Product deprecation/decommission, agent lifecycle, and owning-principal deactivation triggers not yet wired. |
 | F12.22 | Expiration Behavior | Not implemented | |
 | F12.23 | Complete Audit Trail | Not implemented | Blocker — every state transition must be reconstructible from audit log alone |
-| F12.24 | Scope Violation Logging | Not implemented | |
+| F12.24 | Scope Violation Logging | Partial | Every enforcement denial at the Agent Query Layer writes an `mcp_tool_call_denied` audit entry capturing the reason code, the requested action, the approved scope at the time, and the reference identity (when one was resolved). Reconstruction from the audit log alone is complete for the surfaces guarded by F12.16; surfaces that don't yet go through the dispatcher (e.g., observability emission) are deferred. |
 | F12.25 | Legacy Agent Migration on Enforcement Activation | Not implemented | Blocker — one-time legacy-compatibility provisioning to avoid immediate denial on rollout |
 | NF12.1 | Consent capture latency (5s) | Not implemented | |
 | NF12.2 | Runtime scope enforcement p95 overhead (+50ms cap) | Not implemented | |
@@ -427,7 +434,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 7. **F7.46 Onboarding Experience** - No guided onboarding; depends on Domain 10 Workstream B
 8. **Domain 10 Workstream B — Connection packages and schema authoring** - Partially shipped 2026-04-19. Connection details (F10.5) and connection package generation (F10.8, F10.9) are implemented and deployed; connection-details confidentiality (F10.6) is wired end to end but UI disclosure flow is not yet verified; automated connectivity validation (F10.7) and connection-package refresh (F10.10) remain. Schema authoring items (F10.11–F10.13) untouched. Workstream A shipped earlier in Phase 5.
 9. **Domain 9 Priority 1 completeness** - Column-level schema, ownership, freshness, access status not in get_product response. Agents and consumers cannot evaluate or use data products without this information.
-10. **Domain 12 Connection References and Per-Use-Case Consent** - New in PRD v1.5. Universal per-use-case consent and runtime scope enforcement for all agent access; connection references compose with access grants and both must be active for any agent action. **Partial as of 2026-04-24** — data primitives (V18/V19), state-machine service (request / approve / deny / principal-revoke / grant-revoke cascade), REST surface at `/consent/connection-references`, and connection package emission at activation (ADR-008) have shipped. Runtime scope enforcement at the Agent Query Layer (ADR-006), automatic expiration (F12.22), governance override (F12.14/F12.20), MAJOR-version suspension (F12.15), legacy-agent migration (F12.25), outbox publisher, and notification fan-out (F12.10 — needs Domain 11) remain. Architectural decisions captured in ADR-005 through ADR-008.
+10. **Domain 12 Connection References and Per-Use-Case Consent** - New in PRD v1.5. Universal per-use-case consent and runtime scope enforcement for all agent access; connection references compose with access grants and both must be active for any agent action. **Partial as of 2026-05-14** — data primitives (V18/V19), state-machine service (request / approve / deny / principal-revoke / grant-revoke cascade), REST surface at `/consent/connection-references`, connection package emission at activation (ADR-008), and runtime scope enforcement at the Agent Query Layer for product-targeted MCP tools (F12.16 / ADR-006 Phase 1, synchronous PG path) have shipped. Remaining: ADR-006 Phases 2–4 (in-memory cache + Redpanda invalidation + OPA hook), automatic expiration (F12.22), governance override (F12.14/F12.20), MAJOR-version suspension (F12.15), F12.17 trust-classification runtime differentiation, F12.18 envelope verification, legacy-agent migration (F12.25), outbox publisher, and notification fan-out (F12.10 — needs Domain 11). Architectural decisions captured in ADR-005 through ADR-008.
 
 ### Post-Launch (important but not blocking)
 

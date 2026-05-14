@@ -171,3 +171,23 @@ export interface DenyConnectionReferenceRequest {
 export interface RevokeConnectionReferenceRequest {
   reason: string;
 }
+
+// ---------------------------------------------------------------------------
+// Runtime scope enforcement — F12.16 / ADR-006
+// ---------------------------------------------------------------------------
+
+/**
+ * Failure modes for runtime scope enforcement at the Agent Query Layer.
+ * Distinct codes are surfaced on MCP denials so that agent developers
+ * and audit tooling can tell "I never had consent" apart from "my
+ * consent expired" apart from "I asked for something outside my
+ * consent" without an additional API call (ADR-006 § Decision).
+ */
+export const SCOPE_ENFORCEMENT_ERROR_CODES = {
+  CONNECTION_REFERENCE_NOT_FOUND: 'CONNECTION_REFERENCE_NOT_FOUND',
+  CONNECTION_REFERENCE_EXPIRED: 'CONNECTION_REFERENCE_EXPIRED',
+  CONNECTION_REFERENCE_SCOPE_VIOLATION: 'CONNECTION_REFERENCE_SCOPE_VIOLATION',
+} as const;
+
+export type ScopeEnforcementErrorCode =
+  (typeof SCOPE_ENFORCEMENT_ERROR_CODES)[keyof typeof SCOPE_ENFORCEMENT_ERROR_CODES];

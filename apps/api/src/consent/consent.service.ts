@@ -67,6 +67,42 @@ export class ConsentService {
     return this.toDto(reference);
   }
 
+  /**
+   * Look up the currently-active connection reference for an
+   * (org, agent, product) triple — the read path that the Agent Query
+   * Layer hits before every product-targeted tool call to satisfy
+   * F12.16 / ADR-006.
+   *
+   * Returns null when no active reference exists; the AQL turns that
+   * into a `CONNECTION_REFERENCE_NOT_FOUND` denial.
+   *
+   * Terminal states (`expired`, `revoked`) are excluded — the AQL must
+   * see the *current* enforcement view, not historical records. A
+   * recently-expired reference is correctly reported as missing here;
+   * F12.22 will additionally write expiration events through the
+   * outbox so the cache (when it lands) is invalidated promptly. In
+   * the meantime, the synchronous path returning null is the
+   * authoritative answer.
+   *
+   * Note on uniqueness: the platform's intent (F12.19, F12.21) is that
+   * at most one active reference exists per (agent, product). The
+   * schema does not yet enforce that with a partial unique index —
+   * tracked as a separate hardening item — so this method returns the
+   * most-recently-activated row to be deterministic if the invariant
+   * ever drifts.
+   */
+  async findActiveByAgentProduct(
+    orgId: string,
+    agentId: string,
+    productId: string,
+  ): Promise<ConnectionReference | null> {
+    const reference = await this.referenceRepo.findOne({
+      where: { orgId, agentId, productId, state: 'active' },
+      order: { activatedAt: 'DESC' },
+    });
+    return reference ? this.toDto(reference) : null;
+  }
+
   async listConnectionReferences(
     orgId: string,
     filters: {

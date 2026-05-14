@@ -779,6 +779,30 @@ describe('ConsentService', () => {
     });
   });
 
+  // F12.16 / ADR-006 enforcement read path. Returns the active reference
+  // for an (org, agent, product) triple, or null if none. The AQL guard
+  // turns null into a CONNECTION_REFERENCE_NOT_FOUND denial.
+  describe('findActiveByAgentProduct', () => {
+    it('returns the active reference DTO when one exists', async () => {
+      referenceRepo.findOne.mockResolvedValue(
+        makePendingReference({ state: 'active', activatedAt: new Date('2026-05-01T00:00:00Z') }),
+      );
+      const result = await service.findActiveByAgentProduct(ORG_ID, AGENT_ID, PRODUCT_ID);
+      expect(result).not.toBeNull();
+      expect(result!.state).toBe('active');
+      expect(referenceRepo.findOne).toHaveBeenCalledWith({
+        where: { orgId: ORG_ID, agentId: AGENT_ID, productId: PRODUCT_ID, state: 'active' },
+        order: { activatedAt: 'DESC' },
+      });
+    });
+
+    it('returns null when no active reference exists (pending, revoked, expired do not count)', async () => {
+      referenceRepo.findOne.mockResolvedValue(null);
+      const result = await service.findActiveByAgentProduct(ORG_ID, AGENT_ID, PRODUCT_ID);
+      expect(result).toBeNull();
+    });
+  });
+
   describe('listConnectionReferences', () => {
     it('returns a paginated list with meta', async () => {
       const refs = [

@@ -1,6 +1,7 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, isAxiosError } from 'axios';
 import { getConfig } from '../config.js';
 import type { SessionIdentity } from '../mcp/tools.js';
+import type { ConnectionReference } from '@provenance/types';
 
 export interface ProductSummary {
   id: string;
@@ -165,6 +166,30 @@ export class ControlPlaneClient {
       return res.data;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Fetch the currently-active connection reference for the
+   * authenticated agent against a specific product (F12.16 / ADR-006).
+   *
+   * Returns null on 404 — the AQL guard turns that into a
+   * `CONNECTION_REFERENCE_NOT_FOUND` denial. Other errors propagate so
+   * that callers can fail closed (the guard treats any non-404 error
+   * as a denial, since allowing on enforcement-service failure would
+   * defeat preventive enforcement per NF12.6).
+   */
+  async getActiveConnectionReference(productId: string): Promise<ConnectionReference | null> {
+    try {
+      const res = await this.http.get('/internal/consent/connection-references/active', {
+        params: { productId },
+      });
+      return res.data;
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 404) {
+        return null;
+      }
+      throw err;
     }
   }
 

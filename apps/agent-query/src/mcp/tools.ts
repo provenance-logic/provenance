@@ -2,6 +2,28 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResult, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ControlPlaneClient, ProductSummary, LineageNode } from '../control-plane/control-plane.client.js';
 import { getConfig } from '../config.js';
+import { ScopeEnforcer } from '../auth/scope-enforcement.js';
+import type { RequestedAction } from '../auth/scope-match.js';
+
+// Product-targeted tools require an active connection reference per
+// F12.16 / ADR-006. Discovery tools (list_products, search_products,
+// semantic_search) and agent self-management tools (register_agent,
+// get_agent_status) are not scoped to a specific product and run
+// without enforcement at this slice. When the MCP surface adds
+// port-targeted tools, those tools should populate `port` on the
+// returned RequestedAction so the scope-match function can apply the
+// port-subset rule.
+type EnforcementResolver = (args: Record<string, string>) => {
+  productId: string;
+  action: RequestedAction;
+} | null;
+
+const PRODUCT_TARGETED_TOOLS: Record<string, EnforcementResolver> = {
+  get_product: (args) => args.product_id ? { productId: args.product_id, action: {} } : null,
+  get_trust_score: (args) => args.product_id ? { productId: args.product_id, action: {} } : null,
+  get_lineage: (args) => args.product_id ? { productId: args.product_id, action: {} } : null,
+  get_slo_summary: (args) => args.product_id ? { productId: args.product_id, action: {} } : null,
+};
 
 export interface SessionIdentity {
   agentId: string;
@@ -349,6 +371,7 @@ export function makeTools(client: ControlPlaneClient, session: SessionIdentity):
 
 export function registerTools(server: McpServer, client: ControlPlaneClient, session: SessionIdentity): void {
   const tools = makeTools(client, session);
+  const enforcer = new ScopeEnforcer(client);
 
   const underlying = server.server;
 
@@ -403,6 +426,33 @@ export function registerTools(server: McpServer, client: ControlPlaneClient, ses
         await client.writeAuditEntry(auditEntry);
       } catch (err) {
         console.error('[Audit] Tool call audit failed (non-blocking):', err);
+      }
+
+      // F12.16 / ADR-006 runtime scope enforcement. Discovery and
+      // agent-self tools fall through; product-targeted tools must
+      // resolve to an active connection reference whose approved
+      // scope covers the action.
+      const resolver = PRODUCT_TARGETED_TOOLS[request.params.name];
+      if (resolver) {
+        const resolved = resolver(args);
+        if (!resolved) {
+          return {
+            content: [{ type: 'text', text: `Error: tool ${request.params.name} requires product_id` }],
+            isError: true,
+          };
+        }
+        const decision = await enforcer.enforce({
+          session,
+          productId: resolved.productId,
+          toolName: request.params.name,
+          action: resolved.action,
+        });
+        if (!decision.allow) {
+          return {
+            content: [{ type: 'text', text: `${decision.code}: ${decision.message}` }],
+            isError: true,
+          };
+        }
       }
 
       try {

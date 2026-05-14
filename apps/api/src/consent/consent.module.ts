@@ -8,6 +8,7 @@ import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessModule } from '../access/access.module.js';
 import { ConsentService } from './consent.service.js';
 import { ConsentController } from './consent.controller.js';
+import { InternalConsentController } from './internal-consent.controller.js';
 
 // Domain 12 — Connection References and Per-Use-Case Consent (ADR-005 through ADR-008).
 //
@@ -36,7 +37,7 @@ import { ConsentController } from './consent.controller.js';
     forwardRef(() => AccessModule),
   ],
   providers: [ConsentService],
-  controllers: [ConsentController],
+  controllers: [ConsentController, InternalConsentController],
   exports: [ConsentService, TypeOrmModule],
 })
 export class ConsentModule {}

@@ -1,7 +1,7 @@
 # ADR-006: Runtime Scope Enforcement Strategy
 
 **Date:** April 21, 2026
-**Status:** Proposed
+**Status:** Accepted — Phase 1 implemented 2026-05-14 (synchronous control-plane path; cache and event-invalidation Phases 2–3 deferred; OPA hook Phase 4 deferred)
 **Author:** Provenance Platform Team
 
 ---
