@@ -9,6 +9,50 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-028 — EC2 dev box: containers don't pick up new compose env vars without `--force-recreate`
+
+- **Severity:** Medium
+- **Status:** Open
+- **Area:** Operations / EC2 dev box
+- **Discovered:** 2026-05-14, while debugging the pink-banner-everywhere bug on dev.provenancelogic.com.
+
+**Symptom.** A user reports every page on dev.provenancelogic.com renders a small pink error banner across the top. Every API request returns 502 Bad Gateway. The frontend, Caddy, Postgres, Keycloak, OPA, Redpanda, OpenSearch, Neo4j, Temporal, embedding service all show `(healthy)`. Only `provenance-ec2-api` shows `(unhealthy)`.
+
+**Root cause.** The Domain 12 PRs (#79 / #82 / #83) introduced a new required env var `AQL_INTERNAL_TOKEN`, defined with a fallback default in `docker-compose.ec2-dev.yml`. The compose file change is correct. But on this dev box the API container had been created BEFORE that compose-file line was added, and a normal `docker compose restart api` only stops/starts the process — it does NOT re-read compose YAML and inject new env. So the running container's environment was missing `AQL_INTERNAL_TOKEN`, the config validator rejected the env, and the API entered a crash/restart loop. Every API call became 502.
+
+The fix was `docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api`, which destroys and rebuilds the container so it picks up the current compose YAML's env.
+
+**Why it'll keep happening.** Every time someone `git pull`s `/opt/provenance` on the dev box AND the new code adds a required env var, the same break pattern recurs. The Domain 12 push was the proximate cause this time; the next push that adds a required env var will trigger it again.
+
+**Proposed fixes.**
+
+1. **Short-term, no code:** add a one-paragraph "After git pull on the dev box" note to `documents/runbooks/operations.md` documenting that any code change adding a required env var needs a `docker compose up -d --force-recreate <service>` rather than a `restart`. Two minutes of writing.
+2. **Medium-term:** a small ops script `infrastructure/scripts/refresh-ec2-dev.sh` that does `git pull && docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api agent-query web` so the "I pulled new code" path is one command instead of three.
+3. **Larger:** an env-validator pre-flight that runs in CI against `docker-compose.ec2-dev.yml` so the absence of a required var is caught at PR time, not at runtime on the box.
+
+(1) is the minimum to capture today's lesson; (2) and (3) are nice-to-haves.
+
+---
+
+## B-029 — EC2 dev box: Vite HMR bind-mount staleness; `restart` not enough, `--force-recreate` needed
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Operations / EC2 dev box
+- **Discovered:** 2026-05-14, immediately after B-028 was fixed and while verifying a frontend nav change.
+
+**Symptom.** A source edit to `apps/web/src/shared/components/NavShell.tsx` was applied on the host (visible via `grep` from `/opt/provenance`), and Vite was running in dev mode inside the web container with a `:cached` bind mount of the source. Expected: Vite's HMR fires an `[vite] hmr update` log and the browser updates. Actual: no HMR update, the web container's view of the file was still the pre-edit content (confirmed by `docker exec provenance-ec2-web cat /app/apps/web/src/shared/components/NavShell.tsx`).
+
+**Root cause.** Docker bind mounts on Linux can drop inotify events that Vite's file watcher relies on, particularly under certain combinations of host filesystem and Docker storage driver. `docker compose restart web` does NOT cure this — it stops and starts the same container with the same stale mount state. Only `docker compose up -d --force-recreate web` creates a fresh container with a fresh bind mount, which then reads the current host file.
+
+**Why it matters.** Without `--force-recreate`, a frontend code change can appear deployed (file is on disk, branch is checked out) but the dev box's browser keeps serving the old version. Easy to think "my fix didn't work" and chase phantom bugs.
+
+**Proposed fix.** Same as B-028 fix 1: a runbook paragraph noting that frontend code changes on the dev box require `docker compose up -d --force-recreate web`, not `restart web`. Pair with B-028 in `operations.md`.
+
+A more invasive fix would be enabling Vite's `server.watch.usePolling` config, which works around inotify gaps at the cost of constant CPU polling. Not worth it for a dev environment that's shut down most of the time; skip unless this bites repeatedly.
+
+---
+
 ## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
 
 - **Severity:** Low
