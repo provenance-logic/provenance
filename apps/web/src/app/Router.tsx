@@ -19,11 +19,13 @@ import { OrgRolesPage } from '../features/team/OrgRolesPage.js';
 import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
 import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 
-function ComingSoon({ title }: { title: string }) {
+function ComingSoon({ title, detail }: { title: string; detail?: string }) {
   return (
     <div className="p-8">
       <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
-      <p className="mt-2 text-sm text-slate-500">Coming in a later phase.</p>
+      <p className="mt-2 text-sm text-slate-500">
+        {detail ?? 'Coming in a later phase.'}
+      </p>
     </div>
   );
 }
@@ -101,7 +103,15 @@ export function AppRouter() {
           <Route path="governance/policies" element={<PolicyStudioPage />} />
           <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
           <Route path="governance/exceptions" element={<ExceptionsPage />} />
-          <Route path="agents" element={<ComingSoon title="Agents" />} />
+          <Route
+            path="agents"
+            element={
+              <ComingSoon
+                title="Agents"
+                detail="Agent management UI is in development (tracked as B-026). The agent backend is fully shipped — agents can self-register via the MCP register_agent tool today, and every MCP tool call is audited under an agent identity. This page will surface that data once the UI lands."
+              />
+            }
+          />
 
           {/* Notifications (Domain 11 — F11.4) */}
           <Route path="notifications" element={<NotificationsPage />} />
