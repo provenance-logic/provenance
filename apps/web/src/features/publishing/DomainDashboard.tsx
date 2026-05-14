@@ -37,12 +37,20 @@ export function DomainDashboard() {
             <p className="mt-1 text-sm text-slate-500">{domain.description}</p>
           )}
         </div>
-        <Link
-          to="products/new"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
-        >
-          New Data Product
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to="team"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-white border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
+          >
+            Team
+          </Link>
+          <Link
+            to="products/new"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+          >
+            New Data Product
+          </Link>
+        </div>
       </div>
 
       {products.length === 0 ? (

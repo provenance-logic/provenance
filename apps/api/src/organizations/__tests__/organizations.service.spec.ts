@@ -489,6 +489,169 @@ describe('OrganizationsService', () => {
     });
   });
 
+  describe('listDomainMembers (F7.22)', () => {
+    it('filters role_assignments to the supplied domainId', async () => {
+      const now = new Date();
+      const assignments = [
+        { id: 'ra-1', orgId: 'org-1', principalId: 'p-1', role: 'data_product_owner', domainId: 'd-1', grantedBy: null, grantedAt: now },
+      ];
+      roleAssignmentRepo.findAndCount.mockResolvedValue([assignments, 1]);
+      principalRepo.find.mockResolvedValue([
+        { id: 'p-1', principalType: 'human_user', email: 'a@x.com', displayName: 'A' },
+      ]);
+
+      const result = await service.listDomainMembers('org-1', 'd-1', 20, 0);
+
+      expect(roleAssignmentRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { orgId: 'org-1', domainId: 'd-1' } }),
+      );
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].domainId).toBe('d-1');
+    });
+  });
+
+  describe('addDomainMember (F7.22)', () => {
+    const now = new Date();
+    const principal = {
+      id: 'p-1', orgId: 'org-1', principalType: 'human_user' as const,
+      keycloakSubject: 'kc-sub-1', email: 'a@x.com',
+      displayName: 'A', createdAt: now, updatedAt: now,
+    };
+    const dto = { principalId: 'p-1', principalType: 'human_user' as const, role: 'data_product_owner' as const };
+
+    function primeAdd({ heldElsewhere }: { heldElsewhere: boolean }) {
+      domainRepo.findOne.mockResolvedValue({ id: 'd-1', orgId: 'org-1' });
+      principalRepo.findOne.mockResolvedValue(principal);
+      // 1st findOne: existing assignment at this exact scope → null (clear path)
+      // 2nd findOne: held elsewhere check
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(heldElsewhere ? { id: 'ra-org', domainId: null } : null);
+      const saved = {
+        id: 'ra-1', orgId: 'org-1', principalId: 'p-1',
+        role: 'data_product_owner' as const, domainId: 'd-1', grantedBy: 'granter-1', grantedAt: now,
+      };
+      roleAssignmentRepo.create.mockReturnValue(saved);
+      roleAssignmentRepo.save.mockResolvedValue(saved);
+    }
+
+    it('persists a domain-scoped role_assignment and returns the member with domainId', async () => {
+      primeAdd({ heldElsewhere: false });
+
+      const result = await service.addDomainMember('org-1', 'd-1', dto, 'granter-1');
+
+      expect(result.domainId).toBe('d-1');
+      expect(roleAssignmentRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: 'org-1', principalId: 'p-1', role: 'data_product_owner', domainId: 'd-1', grantedBy: 'granter-1' }),
+      );
+    });
+
+    it('writes a role_assigned audit row including the domainId', async () => {
+      primeAdd({ heldElsewhere: false });
+
+      await service.addDomainMember('org-1', 'd-1', dto, 'granter-1');
+
+      const auditCalls = dataSource.query.mock.calls.filter((c: any[]) =>
+        typeof c[0] === 'string' && c[0].includes('INSERT INTO audit.audit_log'),
+      );
+      expect(auditCalls).toHaveLength(1);
+      const newValueJson = auditCalls[0][1][6] as string;
+      expect(JSON.parse(newValueJson)).toMatchObject({ role: 'data_product_owner', domainId: 'd-1' });
+    });
+
+    it('binds the Keycloak realm role when the principal does not already hold it elsewhere', async () => {
+      primeAdd({ heldElsewhere: false });
+
+      await service.addDomainMember('org-1', 'd-1', dto, 'granter-1');
+
+      expect(keycloakAdmin.assignRealmRoles).toHaveBeenCalledWith('kc-sub-1', ['data_product_owner']);
+    });
+
+    it('skips Keycloak binding when the principal already holds this role at another scope (idempotent)', async () => {
+      primeAdd({ heldElsewhere: true });
+
+      await service.addDomainMember('org-1', 'd-1', dto, 'granter-1');
+
+      expect(keycloakAdmin.assignRealmRoles).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the domain does not exist', async () => {
+      domainRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.addDomainMember('org-1', 'd-missing', dto, 'granter-1'))
+        .rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ConflictException when principal already holds this role in this domain', async () => {
+      domainRepo.findOne.mockResolvedValue({ id: 'd-1', orgId: 'org-1' });
+      principalRepo.findOne.mockResolvedValue(principal);
+      roleAssignmentRepo.findOne.mockResolvedValueOnce({ id: 'ra-existing' });
+
+      await expect(service.addDomainMember('org-1', 'd-1', dto, 'granter-1'))
+        .rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('removeDomainMemberRole (F7.22)', () => {
+    const now = new Date();
+    const principal = {
+      id: 'p-1', orgId: 'org-1', principalType: 'human_user' as const,
+      keycloakSubject: 'kc-sub-1', email: 'a@x.com', displayName: 'A',
+      createdAt: now, updatedAt: now,
+    };
+    const domainAssignment = {
+      id: 'ra-1', orgId: 'org-1', principalId: 'p-1',
+      role: 'data_product_owner', domainId: 'd-1', grantedBy: null, grantedAt: now,
+    };
+
+    it('removes the (principal, domain, role) row and writes a role_revoked audit with domainId', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(domainAssignment)
+        .mockResolvedValueOnce(null); // not held elsewhere
+      principalRepo.findOne.mockResolvedValue(principal);
+
+      await service.removeDomainMemberRole('org-1', 'd-1', 'p-1', 'data_product_owner', 'admin-1');
+
+      expect(roleAssignmentRepo.remove).toHaveBeenCalledWith(domainAssignment);
+      const auditCalls = dataSource.query.mock.calls.filter((c: any[]) =>
+        typeof c[0] === 'string' && c[0].includes('INSERT INTO audit.audit_log'),
+      );
+      expect(auditCalls).toHaveLength(1);
+      const newValueJson = auditCalls[0][1][6] as string;
+      expect(JSON.parse(newValueJson)).toMatchObject({ role: 'data_product_owner', domainId: 'd-1' });
+    });
+
+    it('strips the Keycloak realm role only when the principal no longer holds it anywhere', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(domainAssignment)
+        .mockResolvedValueOnce(null);
+      principalRepo.findOne.mockResolvedValue(principal);
+
+      await service.removeDomainMemberRole('org-1', 'd-1', 'p-1', 'data_product_owner', 'admin-1');
+
+      expect(keycloakAdmin.removeRealmRoles).toHaveBeenCalledWith('kc-sub-1', ['data_product_owner']);
+    });
+
+    it('keeps the Keycloak realm role when the principal still holds it in another domain or at org scope', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(domainAssignment)
+        .mockResolvedValueOnce({ id: 'ra-other', role: 'data_product_owner', domainId: 'd-2' });
+      principalRepo.findOne.mockResolvedValue(principal);
+
+      await service.removeDomainMemberRole('org-1', 'd-1', 'p-1', 'data_product_owner', 'admin-1');
+
+      expect(keycloakAdmin.removeRealmRoles).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the principal does not hold the role in this domain', async () => {
+      roleAssignmentRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.removeDomainMemberRole('org-1', 'd-1', 'p-1', 'data_product_owner', 'admin-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('removeMemberRole (F7.7 per-role revoke)', () => {
     const now = new Date();
     const principal = {

@@ -28,17 +28,27 @@ export function DomainTeamPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('members');
 
+  // F7.22: load three lists in parallel —
+  //   - domain metadata,
+  //   - members WITH domain-scoped role assignments only (was previously
+  //     showing every org-scoped member, which was the bug),
+  //   - org members (any scope) so the "assign existing member" form
+  //     can offer the picker without forcing an invitation roundtrip.
+  // Invitations remain domain-scoped via the existing endpoint.
+  const [orgMembers, setOrgMembers] = useState<Member[]>([]);
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [d, m, i] = await Promise.all([
+      const [d, m, om, i] = await Promise.all([
         organizationsApi.domains.get(orgId, domainId),
+        organizationsApi.members.listForDomain(orgId, domainId),
         organizationsApi.members.list(orgId),
         invitationsApi.listForDomain(orgId, domainId),
       ]);
       setDomain(d);
       setMembers(m.items);
+      setOrgMembers(om.items);
       setInvitations(i.items);
     } catch (err) {
       setError((err as Error).message ?? 'Failed to load team');
@@ -102,6 +112,7 @@ export function DomainTeamPage() {
           orgId={orgId}
           domainId={domainId}
           members={members}
+          orgMembers={orgMembers}
           onChanged={loadAll}
         />
       ) : (
@@ -147,39 +158,53 @@ function MembersTab({
   orgId,
   domainId,
   members,
+  orgMembers,
   onChanged,
 }: {
   orgId: string;
   domainId: string;
   members: Member[];
+  orgMembers: Member[];
   onChanged: () => Promise<void>;
 }) {
-  void domainId; // preserved for future domain-scoped filters
-  const [removing, setRemoving] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
-  async function handleRemove(principalId: string) {
-    if (!confirm('Remove this member from the organization? Their access will be revoked immediately.')) {
+  // F7.22: revoke removes one (principal, role, domain) row rather than
+  // the principal's entire membership. Stripping all org-wide
+  // assignments from a Domain Team page would be a destructive bug.
+  async function handleRevokeRole(principalId: string, role: string) {
+    if (!confirm(`Revoke '${role.replace(/_/g, ' ')}' from this member for this domain? Their other roles and other domain memberships are unaffected.`)) {
       return;
     }
-    setRemoving(principalId);
-    setRemoveError(null);
+    const key = `${principalId}:${role}`;
+    setRevoking(key);
+    setRevokeError(null);
     try {
-      await organizationsApi.members.remove(orgId, principalId);
+      await organizationsApi.members.removeRoleForDomain(orgId, domainId, principalId, role);
       await onChanged();
     } catch (err) {
-      setRemoveError((err as Error).message ?? 'Failed to remove member');
+      setRevokeError((err as Error).message ?? 'Failed to revoke role');
     } finally {
-      setRemoving(null);
+      setRevoking(null);
     }
   }
 
   return (
     <div className="space-y-6">
-      <InviteMemberForm orgId={orgId} domainId={domainId} onInvited={onChanged} />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <AssignExistingMemberForm
+          orgId={orgId}
+          domainId={domainId}
+          orgMembers={orgMembers}
+          domainMembers={members}
+          onChanged={onChanged}
+        />
+        <InviteMemberForm orgId={orgId} domainId={domainId} onInvited={onChanged} />
+      </div>
 
-      {removeError && (
-        <div className="rounded-md bg-red-50 p-3 border border-red-200 text-sm text-red-700">{removeError}</div>
+      {revokeError && (
+        <div className="rounded-md bg-red-50 p-3 border border-red-200 text-sm text-red-700">{revokeError}</div>
       )}
 
       <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
@@ -189,7 +214,7 @@ function MembersTab({
               <Th>Name</Th>
               <Th>Email</Th>
               <Th>Role</Th>
-              <Th>Joined</Th>
+              <Th>Granted</Th>
               <Th><span className="sr-only">Actions</span></Th>
             </tr>
           </thead>
@@ -197,33 +222,159 @@ function MembersTab({
             {members.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-slate-400 text-sm">
-                  No members yet. Invite someone below.
+                  No domain members yet. Use the forms above to assign a role or invite by email.
                 </td>
               </tr>
             )}
-            {members.map((m) => (
-              <tr key={`${m.principalId}-${m.role}`}>
-                <Td>{m.displayName ?? '—'}</Td>
-                <Td>{m.email ?? '—'}</Td>
-                <Td>
-                  <RolePill role={m.role} />
-                </Td>
-                <Td>{new Date(m.joinedAt).toLocaleDateString()}</Td>
-                <Td>
-                  <button
-                    type="button"
-                    onClick={() => { void handleRemove(m.principalId); }}
-                    disabled={removing === m.principalId}
-                    className="text-sm text-red-600 hover:text-red-800 disabled:opacity-50"
-                  >
-                    {removing === m.principalId ? 'Removing…' : 'Revoke'}
-                  </button>
-                </Td>
-              </tr>
-            ))}
+            {members.map((m) => {
+              const key = `${m.principalId}:${m.role}`;
+              return (
+                <tr key={key}>
+                  <Td>{m.displayName ?? '—'}</Td>
+                  <Td>{m.email ?? '—'}</Td>
+                  <Td>
+                    <RolePill role={m.role} />
+                  </Td>
+                  <Td>{new Date(m.joinedAt).toLocaleDateString()}</Td>
+                  <Td>
+                    <button
+                      type="button"
+                      onClick={() => { void handleRevokeRole(m.principalId, m.role); }}
+                      disabled={revoking === key}
+                      className="text-sm text-red-600 hover:text-red-800 disabled:opacity-50"
+                    >
+                      {revoking === key ? 'Revoking…' : 'Revoke'}
+                    </button>
+                  </Td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// F7.22 — assign an existing org member to a domain role. Mirrors the
+// OrgRolesPage assignment form. Filters the picker to org members who
+// don't already hold the chosen role in this domain.
+function AssignExistingMemberForm({
+  orgId,
+  domainId,
+  orgMembers,
+  domainMembers,
+  onChanged,
+}: {
+  orgId: string;
+  domainId: string;
+  orgMembers: Member[];
+  domainMembers: Member[];
+  onChanged: () => Promise<void>;
+}) {
+  const [principalId, setPrincipalId] = useState('');
+  const [role, setRole] = useState<RoleType>('data_product_owner');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Deduplicate the picker by principalId so a person with multiple
+  // org-level roles doesn't appear twice.
+  const principals = React.useMemo(() => {
+    const seen = new Map<string, Member>();
+    for (const m of orgMembers) {
+      if (!seen.has(m.principalId)) seen.set(m.principalId, m);
+    }
+    return Array.from(seen.values()).sort((a, b) =>
+      (a.displayName ?? a.email ?? '').localeCompare(b.displayName ?? b.email ?? ''),
+    );
+  }, [orgMembers]);
+
+  const alreadyInDomain = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const m of domainMembers) {
+      set.add(`${m.principalId}:${m.role}`);
+    }
+    return set;
+  }, [domainMembers]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!principalId) return;
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const target = principals.find((p) => p.principalId === principalId);
+      await organizationsApi.members.addForDomain(orgId, domainId, {
+        principalId,
+        principalType: target?.principalType ?? 'human_user',
+        role,
+      });
+      setResult({ ok: true, message: 'Role assigned to this domain.' });
+      setPrincipalId('');
+      await onChanged();
+    } catch (err) {
+      setResult({ ok: false, message: (err as Error).message ?? 'Failed to assign role' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const wouldDuplicate = principalId && alreadyInDomain.has(`${principalId}:${role}`);
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-5">
+      <h2 className="text-sm font-semibold text-slate-900">Assign an existing org member</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Grant a current member of this organization a role in this domain. They keep any other roles they already hold.
+      </p>
+      <form onSubmit={(e) => { void handleSubmit(e); }} className="mt-4 space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Org member</label>
+          <select
+            className="input w-full"
+            value={principalId}
+            onChange={(e) => setPrincipalId(e.target.value)}
+            required
+          >
+            <option value="" disabled>Select a member…</option>
+            {principals.map((p) => (
+              <option key={p.principalId} value={p.principalId}>
+                {(p.displayName ?? p.email ?? p.principalId)}{p.email && p.displayName ? ` — ${p.email}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Role</label>
+          <select
+            className="input w-full"
+            value={role}
+            onChange={(e) => setRole(e.target.value as RoleType)}
+          >
+            <option value="domain_owner">Domain owner</option>
+            <option value="data_product_owner">Data product owner</option>
+            <option value="consumer">Consumer</option>
+          </select>
+        </div>
+        <button
+          type="submit"
+          disabled={submitting || !principalId || Boolean(wouldDuplicate)}
+          className="w-full px-3 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+        >
+          {submitting ? 'Assigning…' : wouldDuplicate ? 'Already in this domain at this role' : 'Assign role'}
+        </button>
+      </form>
+      {result && (
+        <div
+          className={`mt-3 rounded-md p-2 text-xs ${
+            result.ok
+              ? 'bg-green-50 border border-green-200 text-green-700'
+              : 'bg-red-50 border border-red-200 text-red-700'
+          }`}
+        >
+          {result.message}
+        </div>
+      )}
     </div>
   );
 }

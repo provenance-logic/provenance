@@ -232,6 +232,38 @@ export class OrganizationsService {
     };
   }
 
+  /**
+   * F7.22 — list members whose role assignment is scoped to a specific
+   * domain (`domainId = X`). Distinct from `listMembers`, which returns
+   * every role assignment in the org regardless of scope, so the
+   * domain Team page can show its own membership instead of the
+   * whole-org list.
+   */
+  async listDomainMembers(
+    orgId: string,
+    domainId: string,
+    limit: number,
+    offset: number,
+  ): Promise<MemberList> {
+    const [assignments, total] = await this.roleAssignmentRepo.findAndCount({
+      where: { orgId, domainId },
+      order: { grantedAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    const principalIds = [...new Set(assignments.map((a) => a.principalId))];
+    const principals = principalIds.length
+      ? await this.principalRepo.find({ where: { orgId, id: In(principalIds) } })
+      : [];
+    const principalMap = new Map(principals.map((p) => [p.id, p]));
+
+    return {
+      items: assignments.map((ra) => this.toMember(ra, principalMap.get(ra.principalId) ?? null)),
+      meta: { total, limit, offset },
+    };
+  }
+
   async addMember(orgId: string, dto: AddMemberRequest, grantedByPrincipalId: string): Promise<Member> {
     await this.getOrganization(orgId);
 
@@ -321,6 +353,131 @@ export class OrganizationsService {
           err,
         );
         throw err;
+      }
+    }
+  }
+
+  /**
+   * F7.22 — assign a domain-scoped role. Writes `role_assignments` with
+   * the supplied domainId (vs. `addMember` which always writes
+   * domainId=null at org scope). Same audit + Keycloak-sync semantics
+   * as `addMember`, with one difference: Keycloak realm-role binding
+   * is idempotent and only added when the principal does not already
+   * hold this role anywhere in the org (any domain or at org scope).
+   * Keycloak realm roles don't carry scope; the domainId tracking is
+   * application-level (F10.4 deferral).
+   */
+  async addDomainMember(
+    orgId: string,
+    domainId: string,
+    dto: AddMemberRequest,
+    grantedByPrincipalId: string,
+  ): Promise<Member> {
+    const domain = await this.domainRepo.findOne({ where: { id: domainId, orgId } });
+    if (!domain) {
+      throw new NotFoundException(`Domain ${domainId} not found in organization ${orgId}`);
+    }
+
+    const principal = await this.principalRepo.findOne({ where: { id: dto.principalId, orgId } });
+    if (!principal) {
+      throw new NotFoundException(`Principal ${dto.principalId} not found in organization ${orgId}`);
+    }
+
+    const existing = await this.roleAssignmentRepo.findOne({
+      where: { orgId, principalId: dto.principalId, role: dto.role, domainId },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `Principal already has role '${dto.role}' in this domain`,
+      );
+    }
+
+    const heldElsewhere = await this.roleAssignmentRepo.findOne({
+      where: { orgId, principalId: dto.principalId, role: dto.role },
+    });
+
+    const assignment = this.roleAssignmentRepo.create({
+      orgId,
+      principalId: dto.principalId,
+      role: dto.role,
+      domainId,
+      grantedBy: grantedByPrincipalId,
+    });
+    const saved = await this.roleAssignmentRepo.save(assignment);
+
+    await this.writeRoleAudit({
+      orgId,
+      actingPrincipalId: grantedByPrincipalId,
+      action: 'role_assigned',
+      subjectPrincipalId: dto.principalId,
+      role: dto.role,
+      domainId,
+    });
+
+    if (principal.keycloakSubject && !heldElsewhere) {
+      try {
+        await this.keycloakAdmin.assignRealmRoles(principal.keycloakSubject, [dto.role]);
+      } catch (err) {
+        this.logger.error(
+          `Failed to sync role '${dto.role}' to Keycloak for principal ${dto.principalId} (domain ${domainId})`,
+          err,
+        );
+        throw err;
+      }
+    }
+
+    return this.toMember(saved, principal);
+  }
+
+  /**
+   * F7.22 — per-(principal, domain, role) revoke. Filters to the exact
+   * (org, principal, domain, role) row; mirrors `removeMemberRole` but
+   * with a non-null domainId. Keycloak realm-role binding is removed
+   * only when the principal no longer holds this role anywhere in the
+   * org (across all domains and at org scope), since Keycloak doesn't
+   * carry scope.
+   */
+  async removeDomainMemberRole(
+    orgId: string,
+    domainId: string,
+    principalId: string,
+    role: AddMemberRequest['role'],
+    actingPrincipalId: string,
+  ): Promise<void> {
+    const assignment = await this.roleAssignmentRepo.findOne({
+      where: { orgId, principalId, role, domainId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        `Principal ${principalId} does not hold role '${role}' in domain ${domainId}`,
+      );
+    }
+    const principal = await this.principalRepo.findOne({ where: { id: principalId, orgId } });
+
+    await this.roleAssignmentRepo.remove(assignment);
+    await this.writeRoleAudit({
+      orgId,
+      actingPrincipalId,
+      action: 'role_revoked',
+      subjectPrincipalId: principalId,
+      role,
+      domainId,
+    });
+
+    if (principal?.keycloakSubject) {
+      const stillHeldElsewhere = await this.roleAssignmentRepo.findOne({
+        where: { orgId, principalId, role },
+      });
+      if (!stillHeldElsewhere) {
+        try {
+          await this.keycloakAdmin.removeRealmRoles(principal.keycloakSubject, [role]);
+        } catch (err) {
+          this.logger.error(
+            `Failed to remove role '${role}' from Keycloak for principal ${principalId} (domain ${domainId})`,
+            err,
+          );
+          throw err;
+        }
       }
     }
   }
