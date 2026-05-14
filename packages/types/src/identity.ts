@@ -58,6 +58,45 @@ export interface RequestContext {
 }
 
 // ---------------------------------------------------------------------------
+// Per-principal preferences — F7.46 onboarding wizard initially, room
+// for future preference shapes (UI layout, default filters, etc.).
+// ---------------------------------------------------------------------------
+
+/**
+ * Onboarding-wizard progress (F7.46). The wizard reads this on every
+ * dashboard load and decides whether to surface itself. Once
+ * `completedAt` or `dismissedAt` is set the wizard never auto-opens
+ * again, but the user can re-enter it from a "Restart onboarding"
+ * link if we add one later.
+ */
+export interface OnboardingState {
+  /** Step keys the user has marked complete. */
+  completedSteps: string[];
+  /** Step keys the user explicitly skipped (counts as "done" for the wizard). */
+  skippedSteps: string[];
+  /** Set when the user finishes or skips the last step. */
+  completedAt: IsoTimestamp | null;
+  /** Set when the user clicks "Dismiss for now" — wizard stops auto-opening but progress is retained. */
+  dismissedAt: IsoTimestamp | null;
+  /** Most recent step the user was on, so resume-on-next-login lands on the right panel. */
+  lastStep: string | null;
+}
+
+export interface PrincipalPreferences {
+  onboarding?: OnboardingState;
+}
+
+export interface PrincipalPreferencesResponse {
+  preferences: PrincipalPreferences;
+  updatedAt: IsoTimestamp;
+}
+
+/** Deep partial — `PATCH /me/preferences` accepts any subset and merges. */
+export interface UpdatePrincipalPreferencesRequest {
+  preferences: Partial<PrincipalPreferences>;
+}
+
+// ---------------------------------------------------------------------------
 // Agent identity (Phase 4 — declared here for type completeness)
 // ---------------------------------------------------------------------------
 

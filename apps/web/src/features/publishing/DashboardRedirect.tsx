@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { productsApi } from '../../shared/api/products.js';
+import { OnboardingWizard } from '../onboarding/OnboardingWizard.js';
 import type { Domain, Organization } from '@provenance/types';
 
 interface DomainWithCount extends Domain {
@@ -93,6 +94,7 @@ export function DashboardRedirect() {
   if (state === 'no-domain') {
     return (
       <Shell>
+        {org && <OnboardingWizard org={org} domains={[]} />}
         <div className="text-center py-16">
           <div className="text-4xl mb-4">📂</div>
           <h2 className="text-lg font-semibold text-slate-900">No domains yet</h2>
@@ -114,6 +116,7 @@ export function DashboardRedirect() {
   // state === 'ready' — show all domains
   return (
     <Shell>
+      {org && <OnboardingWizard org={org} domains={domains} />}
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Data Products</h1>
         <p className="mt-1 text-sm text-slate-500">

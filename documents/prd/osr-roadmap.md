@@ -1,6 +1,6 @@
 # Open Source Readiness Roadmap
 
-**Last updated:** 2026-05-14
+**Last updated:** 2026-05-14 (Stage 4 closed; only Stage 5 polish remains)
 **Authoritative blocker list:** [implementation-status.md](./implementation-status.md)
 **Target definition:** Provenance functions properly without weird workarounds. Not full enterprise-ready (SOC 2, etc.) — that is Phase 6.
 
@@ -67,17 +67,25 @@ For context on where we are coming from. Everything below this line still needs 
 
 ---
 
-## Stage 4 — F7.46 Onboarding flow (1 week)
+## Stage 4 — F7.46 Onboarding flow ✅ Shipped 2026-05-14
 
-**Why last among the must-dos:** a guided tour through a half-finished platform wastes the work. Build the tour over the path you actually want contributors to walk.
+**What landed.** Inline first-run wizard at the top of `/dashboard` with five steps backed by per-principal preferences (`identity.principal_preferences` table + `GET/PATCH /me/preferences`):
 
-**Scope:**
-- First-run wizard triggered when a user lands on an empty org.
-- Steps: confirm org details → invite teammates → register a connector → publish a draft product → invite an agent.
-- Skippable, dismissible, resumable. Save progress per principal.
-- "Sample data" button that runs the seed CLI from the UI for users who want a populated environment instead of an empty one.
+1. **Confirm your organization** — display-only summary of the org name, slug, description. "Looks good — continue" advances; "Skip" skips.
+2. **Invite teammates** — primary CTA links to the OrgRolesPage shipped earlier the same day in F7.7; "Mark done" after sending an invite, or skip if flying solo.
+3. **Register a connector** — skip-only "Coming soon" panel. Tracked as B-025; the backend exists, the UI route doesn't.
+4. **Publish your first data product** — if no domain yet, links to the existing domain-creation flow; otherwise links straight to `NewProductForm` scoped to the first available domain.
+5. **Invite an AI agent** — skip-only "Coming soon" panel. Tracked as B-026; the MCP `register_agent` tool exists, the human-driven UI doesn't.
 
-**Checkpoint:** Walk a first-time user (Matt or a friend) through the tour. Stop the moment something is unclear; that is the bug.
+The wizard is skippable per step, dismissible globally ("Dismiss for now" sets `dismissedAt`), and resumable across sessions. Once all five steps are completed or skipped, `completedAt` is set and the wizard never auto-opens again. The "Sample data" button from the original scope is deferred to B-027 — it requires a new authz-gated seed wrapper that wasn't worth the scope creep for v1.
+
+**Files of record:**
+- Migration: `apps/api/migrations/V29__create_principal_preferences.sql`
+- Backend: `apps/api/src/preferences/`
+- Frontend wizard: `apps/web/src/features/onboarding/OnboardingWizard.tsx`
+- Integration: `apps/web/src/features/publishing/DashboardRedirect.tsx`
+
+**Walk-through checkpoint (from this stage's original spec).** A first-time user (Matt or a friend) walks the wizard. Bugs filed inline in `documents/bugs/open.md`. Sample-data UX is the most likely next deferral to upgrade to a real feature once a fresh user confirms the wizard's value.
 
 ---
 
@@ -104,7 +112,7 @@ For context on where we are coming from. Everything below this line still needs 
 | 1. Setup-time measurement + fixes | 1–4 days (actual: 2 days) | ✅ Substantively shipped 2026-05-07/08; final under-30-min timing deferred to Stage 5 |
 | 2. Role + team UI | 1–2 weeks | Outstanding |
 | 3. Domain 12 runtime enforcement | 3–4 weeks (actual: one session) | ✅ Shipped 2026-05-13 |
-| 4. Onboarding flow | 1 week | Outstanding |
+| 4. Onboarding flow | 1 week (actual: one session) | ✅ Shipped 2026-05-14 |
 | 5. Pre-launch sweep | 2–3 days | Outstanding |
 
 ---

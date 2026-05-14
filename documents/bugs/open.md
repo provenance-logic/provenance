@@ -9,6 +9,74 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Frontend / onboarding
+- **Discovered:** 2026-05-14, during F7.46 implementation.
+
+**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "register a connector" as one of the five guided onboarding steps. Connectors exist in the data model (F3.1 Connector as First-Class Entity, F3.8 Source Registration) and the backend at `apps/api/src/connectors/` is implemented, but there is no frontend UI route for a human to register a new connector. The wizard renders this step as a skip-only "Coming soon" panel.
+
+**Resolution chosen for F7.46 v1.** Ship the wizard with the connector step as a skip-only placeholder. Add this bug entry so the followup PR has a tracked entry to close.
+
+**Proposed scope for the followup PR.**
+
+1. New route `/dashboard/:orgId/connectors/new` or similar with a connector-registration form.
+2. Form fields aligned with `apps/api/src/connectors/dto/register-connector.dto.ts` (connector type, name, credentials reference, configuration).
+3. Wire to `POST /organizations/:orgId/connectors` (already exists per the backend module).
+4. Add a "Connectors" nav item to NavShell or a domain-scoped subpage.
+5. Update the OnboardingWizard's `register_connector` step body in `apps/web/src/features/onboarding/OnboardingWizard.tsx` to link to the new route and offer a "Mark done" button alongside Skip.
+
+Once landed, the wizard step in F7.46 should be upgraded from skip-only to fully wired.
+
+---
+
+## B-026 — F7.46 onboarding wizard: agent registration UI does not exist
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Frontend / onboarding
+- **Discovered:** 2026-05-14, during F7.46 implementation.
+
+**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "invite an AI agent" as one of the five guided onboarding steps. The `/agents` route in `apps/web/src/app/Router.tsx` is registered as `<ComingSoon title="Agents" />`. The backend has `apps/api/src/agents/` with agent CRUD, and the MCP `register_agent` tool exists at the Agent Query Layer, but there is no UI for a human to register an agent from the wizard. The wizard renders this step as a skip-only "Coming soon" panel.
+
+**Resolution chosen for F7.46 v1.** Ship the wizard with the agent step as a skip-only placeholder. Add this bug entry so the followup PR has a tracked entry to close.
+
+**Proposed scope for the followup PR.**
+
+1. Replace the `ComingSoon` placeholder at `/agents` with a real Agents page.
+2. List existing agents in the org with their trust classification, oversight contact, model, last activity.
+3. "Register an agent" form: display name, model identifier (Claude Sonnet 4.6, etc.), model provider, human oversight contact (must be a registered platform user).
+4. Wire to `POST /organizations/:orgId/agents`.
+5. Update the OnboardingWizard's `invite_agent` step body to link to the new route.
+
+The MCP `register_agent` tool stays as the programmatic registration path; this PR builds the human-driven counterpart.
+
+---
+
+## B-027 — F7.46 onboarding wizard: "Sample data" button not built
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Frontend / onboarding / seed
+- **Discovered:** 2026-05-14, during F7.46 implementation.
+
+**Symptom.** The osr-roadmap Stage 4 scope mentions: "'Sample data' button that runs the seed CLI from the UI for users who want a populated environment instead of an empty one." The F7.46 v1 wizard does not include this button. The seed endpoints at `apps/api/src/seed/` exist but are gated by `SeedGuard` (constant-time token + `SEED_ENABLED` flag, dev-only) and are not safely callable from an authenticated end-user browser session.
+
+**Resolution chosen for F7.46 v1.** Defer. The wizard ships without the button. Real value of the wizard is the guided five-step flow; the "Sample data" affordance is a nice-to-have that requires a separate backend design.
+
+**Proposed scope for the followup PR.**
+
+1. New backend endpoint, e.g. `POST /organizations/:orgId/sample-data`, gated to `org_admin`.
+2. Internally calls a `SeedFacadeService` that runs an org-scoped subset of the seed CLI (one or two domains, two or three published products, an SLO, an access grant, sample notifications). Reuses the existing idempotent seed primitives.
+3. Returns a summary of what was created.
+4. UI button on the wizard's welcome step ("Populate sample data" / "Start clean") — confirms before running so a user with real data isn't surprised.
+
+The existing `/api/v1/seed/*` HTTP endpoints stay as the dev-environment seed surface; the new endpoint is the user-facing wrapper with proper authz.
+
+---
+
 ## B-023 — F7.7 Role Assignment UI: `platform_admin` and `platform_observer` roles not modeled
 
 - **Severity:** Low
