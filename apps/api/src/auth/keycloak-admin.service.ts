@@ -307,22 +307,10 @@ export class KeycloakAdminService {
    * Assign one or more realm roles to a Keycloak user.
    */
   async assignRealmRoles(userId: string, roleNames: string[]): Promise<void> {
-    const token = await this.getAdminToken();
-
-    const rolesRes = await fetch(
-      `${this.baseUrl}/admin/realms/${this.realm}/roles`,
-      { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } },
-    );
-    if (!rolesRes.ok) {
-      throw new Error(`Failed to list realm roles: ${rolesRes.status}`);
-    }
-    const allRoles = await rolesRes.json() as Array<{ id: string; name: string }>;
-    const bindings = allRoles
-      .filter((r) => roleNames.includes(r.name))
-      .map((r) => ({ id: r.id, name: r.name }));
-
+    const bindings = await this.resolveRoleBindings(roleNames);
     if (bindings.length === 0) return;
 
+    const token = await this.getAdminToken();
     const res = await fetch(
       `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}/role-mappings/realm`,
       {
@@ -337,6 +325,59 @@ export class KeycloakAdminService {
     if (!res.ok) {
       throw new Error(`Failed to assign realm roles to user: ${res.status}`);
     }
+  }
+
+  /**
+   * Remove one or more realm roles from a Keycloak user. Sibling of
+   * `assignRealmRoles`; the Keycloak Admin API uses DELETE on the same
+   * resource with the same `[{id, name}]` body.
+   *
+   * Idempotent: if a binding does not exist, Keycloak returns 204 anyway,
+   * so callers can revoke roles without first reading the user's current
+   * mappings.
+   */
+  async removeRealmRoles(userId: string, roleNames: string[]): Promise<void> {
+    const bindings = await this.resolveRoleBindings(roleNames);
+    if (bindings.length === 0) return;
+
+    const token = await this.getAdminToken();
+    const res = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}/role-mappings/realm`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bindings),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to remove realm roles from user: ${res.status}`);
+    }
+  }
+
+  /**
+   * Look up the {id, name} bindings for a list of role names. Hits the
+   * realm roles endpoint once and filters in-memory. Shared by
+   * assignRealmRoles + removeRealmRoles.
+   */
+  private async resolveRoleBindings(
+    roleNames: string[],
+  ): Promise<Array<{ id: string; name: string }>> {
+    if (roleNames.length === 0) return [];
+    const token = await this.getAdminToken();
+    const rolesRes = await fetch(
+      `${this.baseUrl}/admin/realms/${this.realm}/roles`,
+      { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } },
+    );
+    if (!rolesRes.ok) {
+      throw new Error(`Failed to list realm roles: ${rolesRes.status}`);
+    }
+    const allRoles = await rolesRes.json() as Array<{ id: string; name: string }>;
+    return allRoles
+      .filter((r) => roleNames.includes(r.name))
+      .map((r) => ({ id: r.id, name: r.name }));
   }
 
   // ---------------------------------------------------------------------------

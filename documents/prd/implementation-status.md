@@ -27,7 +27,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F1.3 | Domain Namespacing | Implemented | Namespace model in place |
 | F1.4 | Governance Layer as Distinct Entity | Implemented | Governance layer separation confirmed |
 | F1.5 | Identity and Principal Model | Implemented | Four principal types supported |
-| F1.6 | Role Assignment | Partially implemented | Role model exists; no UI for assignment (see F7.7) |
+| F1.6 | Role Assignment | Implemented | Role model in `identity.role_assignments`; org-level assignment UI shipped via F7.7 with audit + Keycloak sync; domain-level assignment via the existing Domain Team page (F7.22). Platform-instance-scope roles (`platform_admin`, `platform_observer`) tracked as B-023 — out of scope for MVP (single-tenant-per-deployment); `org_admin` functions as Platform Admin. |
 | F1.7 | Domain Autonomy Boundaries | Implemented | Cross-domain isolation enforced |
 | F1.8 | Multi-Cloud Tenant Isolation | Implemented | Control/data plane separation enforced |
 | F1.9 | Self-Service Org Onboarding | Implemented | Covered by F10.1 + F10.2 + F10.3 — Keycloak signup, `POST /organizations/self-serve` binding the first platform admin, and the invitation flow for adding collaborators. End-to-end onboarding of a new org and its initial team is now fully self-serve; Workstream A of Domain 10 shipped in Phase 5. |
@@ -229,7 +229,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F7.4 | Global Search | Implemented | |
 | F7.5 | Notifications | Implemented | Domain 11 fully shipped — all 27 PRD trigger requirements wired or explicitly deferred behind upstream features (subscription model, schema-drift detection, classification post-publish mutability, auto-suspension, human review queue, frozen-state machine). See the Domain 11 section below for per-trigger detail. |
 | F7.6 | Keyboard and Accessibility | Not implemented | WCAG 2.1 AA not verified |
-| F7.7 | Role Assignment UI | Not implemented | Blocker - requires Keycloak console today |
+| F7.7 | Role Assignment UI | Implemented | Org-level Roles page at `/dashboard/:orgId/roles` lists members grouped by principal with their org-level role pills, supports assigning to an existing member or inviting by email at a chosen role, and per-role revoke (new `DELETE /organizations/:orgId/members/:principalId/roles/:role`). Every role mutation writes an audit-log row and syncs to Keycloak (new `KeycloakAdminService.removeRealmRoles` sibling of `assignRealmRoles`). Two deferrals: `platform_admin`/`platform_observer` role types (B-023, MVP treats `org_admin` as Platform Admin); governance-acknowledgment gate on `governance_member` assignment (B-024, audit-only governance for v1). |
 | F7.8 | Progressive Disclosure | Partially implemented | |
 | F7.9 | Empty States | Partially implemented | Some surfaces have empty states |
 | F7.10 | Inline Contextual Help | Not implemented | |
@@ -426,11 +426,10 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 
 ### Blockers (must be resolved before open source ready)
 
-**Down from 10 at the start of the April 30 push, now 3 active with Domain 12 closing 2026-05-13 and F7.29 / F7.42 explicitly deferred to post-launch per [osr-roadmap.md](./osr-roadmap.md).** Closed since: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), and **Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default. See the Domain 12 section above for the per-requirement breakdown.** Active blockers:
+**Down from 10 at the start of the April 30 push, now 2 active with Domain 12 closing 2026-05-13, F7.7 shipping 2026-05-14, and F7.29 / F7.42 explicitly deferred to post-launch per [osr-roadmap.md](./osr-roadmap.md).** Closed since: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), **Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default**, and **F7.7 Role Assignment UI — org-level Roles page with audit + Keycloak sync + per-role revoke, two minor deferrals tracked in B-023 / B-024**. Active blockers:
 
-1. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
-2. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
-3. **F7.46 Onboarding Experience** - No guided onboarding
+1. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
+2. **F7.46 Onboarding Experience** - No guided onboarding
 
 **Deferred post-launch (no shame):**
 

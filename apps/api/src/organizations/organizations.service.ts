@@ -247,6 +247,11 @@ export class OrganizationsService {
       throw new ConflictException(`Principal already has role '${dto.role}' in this organization`);
     }
 
+    // F7.7: persist the assignment row, write an audit-log entry, sync to
+    // Keycloak. Sequential rather than transactional — for role changes
+    // the requirement is "audit log entry on every role change," not
+    // strict atomicity. A failure in audit or Keycloak propagates to the
+    // caller; the DB row is authoritative.
     const assignment = this.roleAssignmentRepo.create({
       orgId,
       principalId: dto.principalId,
@@ -255,15 +260,159 @@ export class OrganizationsService {
       grantedBy: grantedByPrincipalId,
     });
     const saved = await this.roleAssignmentRepo.save(assignment);
+
+    await this.writeRoleAudit({
+      orgId,
+      actingPrincipalId: grantedByPrincipalId,
+      action: 'role_assigned',
+      subjectPrincipalId: dto.principalId,
+      role: dto.role,
+      domainId: null,
+    });
+
+    if (principal.keycloakSubject) {
+      try {
+        await this.keycloakAdmin.assignRealmRoles(principal.keycloakSubject, [dto.role]);
+      } catch (err) {
+        this.logger.error(
+          `Failed to sync role '${dto.role}' to Keycloak for principal ${dto.principalId} — DB is authoritative; next login will resync`,
+          err,
+        );
+        throw err;
+      }
+    }
+
     return this.toMember(saved, principal);
   }
 
-  async removeMember(orgId: string, principalId: string): Promise<void> {
+  async removeMember(
+    orgId: string,
+    principalId: string,
+    actingPrincipalId: string | null = null,
+  ): Promise<void> {
     const assignments = await this.roleAssignmentRepo.find({ where: { orgId, principalId } });
     if (assignments.length === 0) {
       throw new NotFoundException(`Principal ${principalId} is not a member of organization ${orgId}`);
     }
+    const principal = await this.principalRepo.findOne({ where: { id: principalId, orgId } });
+
+    // removeMember strips every role this principal holds in the org;
+    // per-role revoke is `removeMemberRole`. Sequential pattern matches
+    // addMember.
     await this.roleAssignmentRepo.remove(assignments);
+    for (const a of assignments) {
+      await this.writeRoleAudit({
+        orgId,
+        actingPrincipalId,
+        action: 'role_revoked',
+        subjectPrincipalId: principalId,
+        role: a.role,
+        domainId: a.domainId,
+      });
+    }
+
+    if (principal?.keycloakSubject) {
+      const roleNames = [...new Set(assignments.map((a) => a.role))];
+      try {
+        await this.keycloakAdmin.removeRealmRoles(principal.keycloakSubject, roleNames);
+      } catch (err) {
+        this.logger.error(
+          `Failed to remove roles from Keycloak for principal ${principalId} — DB is authoritative`,
+          err,
+        );
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Per-role revoke (F7.7). Unlike `removeMember` which strips every role
+   * this principal holds in the org, this removes a single (principal, role)
+   * pair at the org scope (domainId IS NULL). 404 if no matching row.
+   *
+   * The caller is captured in the audit log. Keycloak sync follows the same
+   * commit-then-sync pattern as addMember/removeMember.
+   */
+  async removeMemberRole(
+    orgId: string,
+    principalId: string,
+    role: AddMemberRequest['role'],
+    actingPrincipalId: string,
+  ): Promise<void> {
+    const assignment = await this.roleAssignmentRepo.findOne({
+      where: { orgId, principalId, role, domainId: IsNull() },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        `Principal ${principalId} does not hold org-level role '${role}' in organization ${orgId}`,
+      );
+    }
+    const principal = await this.principalRepo.findOne({ where: { id: principalId, orgId } });
+
+    await this.roleAssignmentRepo.remove(assignment);
+    await this.writeRoleAudit({
+      orgId,
+      actingPrincipalId,
+      action: 'role_revoked',
+      subjectPrincipalId: principalId,
+      role,
+      domainId: null,
+    });
+
+    if (principal?.keycloakSubject) {
+      const stillHeldElsewhere = await this.roleAssignmentRepo.findOne({
+        where: { orgId, principalId, role },
+      });
+      // Only strip the Keycloak binding when the principal no longer holds
+      // this role anywhere in the org (org-level OR any domain). Otherwise
+      // the JWT claim would lose a still-valid grant.
+      if (!stillHeldElsewhere) {
+        try {
+          await this.keycloakAdmin.removeRealmRoles(principal.keycloakSubject, [role]);
+        } catch (err) {
+          this.logger.error(
+            `Failed to remove role '${role}' from Keycloak for principal ${principalId} — DB is authoritative`,
+            err,
+          );
+          throw err;
+        }
+      }
+    }
+  }
+
+  /**
+   * Insert an audit.audit_log row for a role-mutation event. Called inside
+   * the same transaction as the role change so both succeed or fail
+   * together (F7.7: "audit log entry on every role change").
+   */
+  private async writeRoleAudit(
+    entry: {
+      orgId: string;
+      actingPrincipalId: string | null;
+      action: 'role_assigned' | 'role_revoked';
+      subjectPrincipalId: string;
+      role: string;
+      domainId: string | null;
+    },
+  ): Promise<void> {
+    await this.dataSource.query(
+      `INSERT INTO audit.audit_log
+         (org_id, principal_id, principal_type, action, resource_type, resource_id, new_value)
+       VALUES ($1, $2::uuid, $3, $4, $5, $6::uuid, $7)`,
+      [
+        entry.orgId,
+        entry.actingPrincipalId,
+        'human',
+        entry.action,
+        'role_assignment',
+        entry.subjectPrincipalId,
+        JSON.stringify({
+          subjectPrincipalId: entry.subjectPrincipalId,
+          role: entry.role,
+          domainId: entry.domainId,
+        }),
+      ],
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -456,6 +605,7 @@ export class OrganizationsService {
       principalId: assignment.principalId,
       principalType: principal?.principalType ?? 'human_user',
       role: assignment.role,
+      domainId: assignment.domainId,
       email: principal?.email ?? null,
       displayName: principal?.displayName ?? null,
       joinedAt: assignment.grantedAt.toISOString(),

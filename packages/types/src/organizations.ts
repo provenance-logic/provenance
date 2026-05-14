@@ -79,6 +79,8 @@ export interface Member {
   principalId: Uuid;
   principalType: PrincipalType;
   role: RoleType;
+  /** Null for org-level role assignments; set for domain-scoped roles. */
+  domainId: Uuid | null;
   email: string | null;
   displayName: string | null;
   joinedAt: IsoTimestamp;

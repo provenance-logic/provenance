@@ -61,5 +61,12 @@ export const organizationsApi = {
 
     remove: (orgId: string, principalId: string) =>
       api.delete(`/organizations/${orgId}/members/${principalId}`),
+
+    // F7.7 per-role revoke. `remove` above strips every role this
+    // principal holds in the org; `removeRole` strips one org-level role
+    // (domainId IS NULL) so granular revocation doesn't accidentally
+    // delete unrelated grants.
+    removeRole: (orgId: string, principalId: string, role: string) =>
+      api.delete(`/organizations/${orgId}/members/${principalId}/roles/${role}`),
   },
 };

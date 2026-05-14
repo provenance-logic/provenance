@@ -54,6 +54,10 @@ const mockPolicySchemaRepo = () => ({
 
 let seededPolicyRows: any[] = [];
 const mockDataSource = () => ({
+  // F7.7 writeRoleAudit calls dataSource.query() directly to insert
+  // into audit.audit_log. The mock returns the empty result tuple
+  // pg drivers produce for a successful INSERT.
+  query: jest.fn().mockResolvedValue([]),
   transaction: jest.fn(async (cb: (mgr: any) => Promise<any>) => {
     seededPolicyRows = [];
     const mgr: any = {
@@ -96,6 +100,7 @@ const mockDataSource = () => ({
 const mockKeycloakAdmin = () => ({
   updateUserAttributes: jest.fn().mockResolvedValue(undefined),
   assignRealmRoles: jest.fn().mockResolvedValue(undefined),
+  removeRealmRoles: jest.fn().mockResolvedValue(undefined),
   findUserByEmail: jest.fn(),
   createUser: jest.fn(),
 });
@@ -112,6 +117,7 @@ describe('OrganizationsService', () => {
   let roleAssignmentRepo: ReturnType<typeof mockRoleAssignmentRepo>;
   let keycloakAdmin: ReturnType<typeof mockKeycloakAdmin>;
   let emailService: ReturnType<typeof mockEmailService>;
+  let dataSource: ReturnType<typeof mockDataSource>;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -135,6 +141,7 @@ describe('OrganizationsService', () => {
     roleAssignmentRepo = module.get(getRepositoryToken(RoleAssignmentEntity));
     keycloakAdmin = module.get(KeycloakAdminService);
     emailService = module.get(EmailService);
+    dataSource = module.get(getDataSourceToken());
   });
 
   // ---------------------------------------------------------------------------
@@ -338,25 +345,75 @@ describe('OrganizationsService', () => {
     };
     const dto = { principalId: 'principal-1', principalType: 'human_user' as const, role: 'consumer' as const };
 
-    it('creates a role assignment and returns the member', async () => {
+    function primeAdd() {
       orgRepo.findOne.mockResolvedValue(org);
       principalRepo.findOne.mockResolvedValue(principal);
-      roleAssignmentRepo.findOne.mockResolvedValue(null); // no existing assignment
+      roleAssignmentRepo.findOne.mockResolvedValue(null);
       const saved = {
         id: 'ra-1', orgId: 'org-1', principalId: 'principal-1',
         role: 'consumer' as const, domainId: null, grantedBy: 'granter-1', grantedAt: now,
       };
       roleAssignmentRepo.create.mockReturnValue(saved);
       roleAssignmentRepo.save.mockResolvedValue(saved);
+      return saved;
+    }
+
+    it('creates a role assignment and returns the member', async () => {
+      primeAdd();
 
       const result = await service.addMember('org-1', dto, 'granter-1');
 
       expect(result.principalId).toBe('principal-1');
       expect(result.role).toBe('consumer');
       expect(result.email).toBe('user@example.com');
+      expect(result.domainId).toBeNull();
       expect(roleAssignmentRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ orgId: 'org-1', principalId: 'principal-1', role: 'consumer', domainId: null, grantedBy: 'granter-1' }),
       );
+    });
+
+    it('F7.7: writes an audit-log row with action=role_assigned on every assignment', async () => {
+      primeAdd();
+      await service.addMember('org-1', dto, 'granter-1');
+
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit.audit_log'),
+        expect.arrayContaining([
+          'org-1',
+          'granter-1',
+          'human',
+          'role_assigned',
+          'role_assignment',
+          'principal-1',
+          expect.any(String),
+        ]),
+      );
+    });
+
+    it('F7.7: syncs the role to Keycloak so JWTs reflect the assignment without re-login', async () => {
+      primeAdd();
+
+      await service.addMember('org-1', dto, 'granter-1');
+
+      expect(keycloakAdmin.assignRealmRoles).toHaveBeenCalledWith('kc-sub-1', ['consumer']);
+    });
+
+    it('skips Keycloak sync when the principal has no keycloakSubject (non-human principals)', async () => {
+      primeAdd();
+      principalRepo.findOne.mockResolvedValue({ ...principal, keycloakSubject: null });
+
+      await service.addMember('org-1', dto, 'granter-1');
+
+      expect(keycloakAdmin.assignRealmRoles).not.toHaveBeenCalled();
+    });
+
+    it('propagates Keycloak sync failure to the caller (DB row remains as authoritative source)', async () => {
+      primeAdd();
+      keycloakAdmin.assignRealmRoles.mockRejectedValue(new Error('keycloak down'));
+
+      await expect(service.addMember('org-1', dto, 'granter-1')).rejects.toThrow('keycloak down');
+      // DB row still committed before the failure
+      expect(roleAssignmentRepo.save).toHaveBeenCalled();
     });
 
     it('throws NotFoundException when organization does not exist', async () => {
@@ -375,30 +432,118 @@ describe('OrganizationsService', () => {
     it('throws ConflictException when principal already holds this role in the org', async () => {
       orgRepo.findOne.mockResolvedValue(org);
       principalRepo.findOne.mockResolvedValue(principal);
-      roleAssignmentRepo.findOne.mockResolvedValue({ id: 'ra-existing' }); // already assigned
+      roleAssignmentRepo.findOne.mockResolvedValue({ id: 'ra-existing' });
 
       await expect(service.addMember('org-1', dto, 'granter-1')).rejects.toThrow(ConflictException);
     });
   });
 
   describe('removeMember', () => {
+    const now = new Date();
+    const principal = {
+      id: 'principal-1', orgId: 'org-1', principalType: 'human_user' as const,
+      keycloakSubject: 'kc-sub-1', email: 'user@example.com',
+      displayName: 'Test User', createdAt: now, updatedAt: now,
+    };
+
     it('removes all role assignments for the principal and returns void', async () => {
-      const now = new Date();
       const assignments = [
         { id: 'ra-1', orgId: 'org-1', principalId: 'principal-1', role: 'consumer', domainId: null, grantedBy: null, grantedAt: now },
         { id: 'ra-2', orgId: 'org-1', principalId: 'principal-1', role: 'org_admin', domainId: null, grantedBy: null, grantedAt: now },
       ];
       roleAssignmentRepo.find.mockResolvedValue(assignments);
+      principalRepo.findOne.mockResolvedValue(principal);
       roleAssignmentRepo.remove.mockResolvedValue(undefined);
 
       await expect(service.removeMember('org-1', 'principal-1')).resolves.toBeUndefined();
       expect(roleAssignmentRepo.remove).toHaveBeenCalledWith(assignments);
     });
 
+    it('F7.7: writes one role_revoked audit row per assignment removed and removes Keycloak realm roles', async () => {
+      const assignments = [
+        { id: 'ra-1', orgId: 'org-1', principalId: 'principal-1', role: 'consumer', domainId: null, grantedBy: null, grantedAt: now },
+        { id: 'ra-2', orgId: 'org-1', principalId: 'principal-1', role: 'org_admin', domainId: null, grantedBy: null, grantedAt: now },
+      ];
+      roleAssignmentRepo.find.mockResolvedValue(assignments);
+      principalRepo.findOne.mockResolvedValue(principal);
+      await service.removeMember('org-1', 'principal-1', 'admin-1');
+
+      const auditCalls = dataSource.query.mock.calls.filter((c: any[]) =>
+        typeof c[0] === 'string' && c[0].includes('INSERT INTO audit.audit_log'),
+      );
+      expect(auditCalls).toHaveLength(2);
+      auditCalls.forEach((call: any[]) => {
+        expect(call[1]).toContain('role_revoked');
+        expect(call[1]).toContain('admin-1');
+      });
+      expect(keycloakAdmin.removeRealmRoles).toHaveBeenCalledWith(
+        'kc-sub-1',
+        expect.arrayContaining(['consumer', 'org_admin']),
+      );
+    });
+
     it('throws NotFoundException when principal has no role assignments in the org', async () => {
       roleAssignmentRepo.find.mockResolvedValue([]);
 
       await expect(service.removeMember('org-1', 'principal-unknown')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('removeMemberRole (F7.7 per-role revoke)', () => {
+    const now = new Date();
+    const principal = {
+      id: 'principal-1', orgId: 'org-1', principalType: 'human_user' as const,
+      keycloakSubject: 'kc-sub-1', email: 'user@example.com',
+      displayName: 'Test User', createdAt: now, updatedAt: now,
+    };
+    const orgAssignment = {
+      id: 'ra-1', orgId: 'org-1', principalId: 'principal-1',
+      role: 'consumer', domainId: null, grantedBy: null, grantedAt: now,
+    };
+
+    it('removes only the matching org-level row and writes a role_revoked audit', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(orgAssignment) // initial lookup
+        .mockResolvedValueOnce(null);          // stillHeldElsewhere check
+      principalRepo.findOne.mockResolvedValue(principal);
+      await service.removeMemberRole('org-1', 'principal-1', 'consumer', 'admin-1');
+
+      expect(roleAssignmentRepo.remove).toHaveBeenCalledWith(orgAssignment);
+      const auditCalls = dataSource.query.mock.calls.filter((c: any[]) =>
+        typeof c[0] === 'string' && c[0].includes('INSERT INTO audit.audit_log'),
+      );
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0][1]).toContain('role_revoked');
+    });
+
+    it('strips the Keycloak realm role only when the principal no longer holds it anywhere', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(orgAssignment)
+        .mockResolvedValueOnce(null); // no other holdings
+      principalRepo.findOne.mockResolvedValue(principal);
+
+      await service.removeMemberRole('org-1', 'principal-1', 'consumer', 'admin-1');
+
+      expect(keycloakAdmin.removeRealmRoles).toHaveBeenCalledWith('kc-sub-1', ['consumer']);
+    });
+
+    it('keeps the Keycloak realm role when the principal still holds it at a domain scope', async () => {
+      roleAssignmentRepo.findOne
+        .mockResolvedValueOnce(orgAssignment)
+        .mockResolvedValueOnce({ id: 'ra-domain-1', role: 'consumer', domainId: 'd-1' }); // still held in a domain
+      principalRepo.findOne.mockResolvedValue(principal);
+
+      await service.removeMemberRole('org-1', 'principal-1', 'consumer', 'admin-1');
+
+      expect(keycloakAdmin.removeRealmRoles).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the principal does not hold the role at org scope', async () => {
+      roleAssignmentRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.removeMemberRole('org-1', 'principal-1', 'consumer', 'admin-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

@@ -158,7 +158,29 @@ export class OrganizationsController {
   removeMember(
     @Param('orgId') orgId: string,
     @Param('principalId') principalId: string,
+    @ReqContext() ctx: RequestContext,
   ) {
-    return this.orgsService.removeMember(orgId, principalId);
+    return this.orgsService.removeMember(orgId, principalId, ctx.principalId);
+  }
+
+  // F7.7 — per-role revoke. `removeMember` above strips every role the
+  // principal holds in the org; this strips one specific org-level role
+  // (domainId IS NULL). Use this from the Roles page so revoking
+  // governance_member doesn't accidentally remove org_admin too.
+  @Delete(':orgId/members/:principalId/roles/:role')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles('org_admin')
+  removeMemberRole(
+    @Param('orgId') orgId: string,
+    @Param('principalId') principalId: string,
+    @Param('role') role: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.orgsService.removeMemberRole(
+      orgId,
+      principalId,
+      role as AddMemberRequest['role'],
+      ctx.principalId,
+    );
   }
 }
