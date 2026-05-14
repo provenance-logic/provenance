@@ -126,6 +126,36 @@ sudo docker compose -f /opt/provenance/infrastructure/docker/docker-compose.ec2-
   up -d --build <service-name>
 ```
 
+### When `restart` Isn't Enough — Use `--force-recreate`
+
+`docker compose restart` stops and starts the same container. It does NOT re-read `docker-compose.ec2-dev.yml` and does NOT refresh bind-mount state. Two recurring scenarios on this box require `--force-recreate` instead:
+
+**Scenario 1 — A `git pull` brought in code that needs a new compose env var (B-028).** Example: the Domain 12 PRs added `AQL_INTERNAL_TOKEN` to the `api` and `agent-query` service blocks. An existing container created before that change will start up, fail config validation with `Required` errors, and enter a crash-restart loop. Caddy will return 502 for every API request and the dev site renders pink error banners everywhere.
+
+**Scenario 2 — A frontend source edit doesn't reach the running web container's view of the file (B-029).** Symptom: you edited `apps/web/src/...` on disk, `grep` from the host confirms the change is there, but `docker exec provenance-ec2-web cat <same-path>` shows the OLD content. Vite never fires `[vite] hmr update` for that file. The `:cached` bind mount has gone stale; only a fresh container picks it up.
+
+**The fix in both cases:**
+
+```bash
+sudo docker compose -f /opt/provenance/infrastructure/docker/docker-compose.ec2-dev.yml \
+  --env-file /opt/provenance/infrastructure/docker/.env.ec2 \
+  up -d --force-recreate <service-name>
+```
+
+Roughly 10–30 seconds of downtime for the recreated service (Caddy returns 502 in that window for the API; the web page fails to load). Other services are unaffected. After the recreate, do a hard refresh in your browser (Cmd+Shift+R) — the browser may still be holding the old JS bundle.
+
+**Default workflow after `git pull` on this box:**
+
+```bash
+cd /opt/provenance && git pull
+cd infrastructure/docker
+sudo docker compose -f docker-compose.ec2-dev.yml \
+  --env-file .env.ec2 \
+  up -d --force-recreate api agent-query web
+```
+
+This is the safe rebuild path for the three services that volume-mount source code or carry frequently-updated env config. Other services (postgres, keycloak, opa, neo4j, opensearch, redpanda, temporal, embedding) rarely need a recreate after a `git pull`; recreate them only if a compose-file change names them explicitly.
+
 ---
 
 ## Disk Cleanup

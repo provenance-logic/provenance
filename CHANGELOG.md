@@ -8,22 +8,33 @@ This file picks up after **Phase 4 — Agent Integration** completed and tracks 
 
 ## [Unreleased] — toward v0.1.0-osr
 
-The active OSR blocker list is empty for the first time since the launch push began on 2026-04-30. Remaining work for the `v0.1.0-osr` tag is Stage 5 polish per [`documents/prd/osr-roadmap.md`](./documents/prd/osr-roadmap.md): README and CHANGELOG (this file), documentation navigation, a final fresh-laptop timing run, and the release tag itself.
+The active OSR blocker list is empty for the first time since the launch push began on 2026-04-30. Remaining work for the `v0.1.0-osr` tag: a final fresh-laptop timing run and the release tag itself.
 
-### Added in this PR
-- This `CHANGELOG.md` (no prior changelog existed).
-- Documentation index files at `documents/README.md`, `documents/prd/README.md`, and `documents/architecture/README.md` so readers landing on a folder get navigation instead of an empty page.
-- CI badge in the README.
+### Added in this PR (#95)
+- Bug entries B-028 (compose env-var drift on the EC2 dev box) and B-029 (Vite HMR bind-mount staleness) in `documents/bugs/open.md`. Both surfaced during today's dev.provenancelogic.com outage debug; entries include proposed fixes so future operators don't re-discover them.
+- Runbook subsection "When `restart` Isn't Enough — Use `--force-recreate`" in `documents/runbooks/operations.md`. Documents the post-`git pull` workflow that prevents recurrence of the B-028 / B-029 failure modes.
 
-### Fixed in this PR
-- README badge hrefs now point at the rendered `.md` files instead of folder listings (PRD, Architecture, Status).
-- README "Project Status" section now reflects 0 active OSR blockers and the 2026-05-14 shipping wave.
+### Changed in this PR (#95)
+- `/agents` route placeholder copy. The previous "Coming in a later phase" was misleading — the agent backend is shipped (MCP `register_agent`, identity model, trust classifications, audit on every tool call). Replaced with copy that names B-026 (the missing UI) and points to the available MCP path. `ComingSoon` component generalised to accept an optional `detail` prop.
 
 ---
 
-## 2026-05-14 — Stage 2 and Stage 4 close
+## 2026-05-14 — Stage 2, Stage 4, and dev-site outage fix
 
-Four PRs landed in one session, closing the last three active OSR blockers (F7.7, F7.22 / F10.4, F7.46) and the documentation-reconciliation that unblocked them.
+Six PRs in one session: closing the last three active OSR blockers (F7.7, F7.22 / F10.4, F7.46), the documentation-reconciliation that unblocked them, the Stage 5 polish pass, and a same-day operational fix for the dev box.
+
+### Added
+
+- **CHANGELOG.md** ([#93](https://github.com/provenance-logic/provenance/pull/93)). This file. Starts at the Phase 4 → Phase 5 boundary; pre-Phase-5 history points at the git log.
+- **Documentation index files** ([#93](https://github.com/provenance-logic/provenance/pull/93)). `documents/README.md`, `documents/prd/README.md`, and `documents/architecture/README.md` — previously 1-byte empty files; now navigation by audience (evaluator / contributor / OSR planner) plus a directory map and the precedence rule for when status docs disagree.
+- **CI workflow badge** ([#93](https://github.com/provenance-logic/provenance/pull/93)) in README.
+
+### Fixed
+
+- **README "Project Status" section** ([#93](https://github.com/provenance-logic/provenance/pull/93)). Blocker count refreshed (5 → 0 as of 2026-05-14); F7.7 / F7.22 / F7.46 shipping wave acknowledged; F7.29 / F7.42 named as explicit deferrals.
+- **README badge hrefs** ([#93](https://github.com/provenance-logic/provenance/pull/93)). PRD and Architecture badges now point at the rendered `.md` files instead of folder listings; Status badge links to `osr-roadmap.md` instead of an empty href.
+- **EC2 dev box Flyway baseline conflict** ([#94](https://github.com/provenance-logic/provenance/pull/94)). `docker-compose.ec2-dev.yml`'s flyway-migrate service was running `flyway baseline && flyway migrate`. PR #69 had dropped the `baseline &&` prefix from the other two compose files but missed this one. On a DB whose schema history was previously baselined at v8, the new `baseline` call failed → flyway-migrate exited 1 → API container couldn't start → every request to dev.provenancelogic.com returned 502. Aligning the ec2-dev compose with the other two restored the API.
+- **Duplicate Data Products nav** ([#94](https://github.com/provenance-logic/provenance/pull/94)). `NavShell` had both `Dashboard → /dashboard` and `Data Products → /products`, and the router redirected `/products` straight back to `/dashboard`. Two nav entries rendering the same page. Dropped the nav entry and the dead redirect route.
 
 ### Added
 
