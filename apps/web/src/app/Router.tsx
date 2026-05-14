@@ -15,6 +15,7 @@ import { NewOrganizationForm } from '../features/onboarding/NewOrganizationForm.
 import { NewDomainForm } from '../features/onboarding/NewDomainForm.js';
 import { AcceptInvitePage } from '../features/onboarding/AcceptInvitePage.js';
 import { DomainTeamPage } from '../features/team/DomainTeamPage.js';
+import { OrgRolesPage } from '../features/team/OrgRolesPage.js';
 import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
 import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 
@@ -82,6 +83,10 @@ export function AppRouter() {
           <Route
             path="dashboard/:orgId/domains/:domainId/team"
             element={<DomainTeamPage />}
+          />
+          <Route
+            path="dashboard/:orgId/roles"
+            element={<OrgRolesPage />}
           />
           <Route path="products" element={<Navigate to="/dashboard" replace />} />
 

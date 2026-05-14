@@ -9,6 +9,51 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-023 — F7.7 Role Assignment UI: `platform_admin` and `platform_observer` roles not modeled
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Identity / role model
+- **Discovered:** 2026-05-14, during F7.7 implementation.
+
+**Symptom.** PRD F7.7 names two role types — Platform Admin and Platform Observer — that do not exist in the `RoleType` enum (`packages/types/src/organizations.ts`). The current enum has `org_admin`, `domain_owner`, `data_product_owner`, `consumer`, `governance_member`.
+
+**Resolution chosen for F7.7 v1.** Treat `org_admin` as the Platform Admin function; skip Platform Observer entirely. No migration, no Keycloak realm change, no RolesGuard update. The Roles UI shows the existing five roles only.
+
+**When this matters.** If/when the platform grows a distinction between organization-scope administration (`org_admin`) and platform-instance-scope administration (a single principal who governs across all orgs on the deployment), we will need to:
+
+1. Add `platform_admin` and `platform_observer` to the `RoleType` enum.
+2. Migration extending the `identity.role_assignments` CHECK constraint.
+3. Seed the new realm roles in `infrastructure/docker/config/keycloak/realm-export.json`.
+4. RolesGuard checks at platform-level endpoints (cross-org listing, audit access).
+5. Update the F7.7 UI to surface them.
+
+**Impact today.** None — Provenance's MVP is single-tenant-per-deployment, and `org_admin` is functionally Platform Admin. This is a forward-compatibility seam, not a user-facing gap.
+
+---
+
+## B-024 — F7.7 Role Assignment UI: governance acknowledgment gate not implemented for `governance_member` assignment
+
+- **Severity:** Low
+- **Status:** Open
+- **Area:** Governance / role assignment
+- **Discovered:** 2026-05-14, during F7.7 implementation.
+
+**Symptom.** PRD F7.7 states: "Governance role assignment requires governance layer acknowledgment." The F7.7 v1 UI allows any `org_admin` to assign `governance_member` immediately, without requiring sign-off from an existing governance member.
+
+**Resolution chosen for F7.7 v1.** Defer. Per `documents/prd/osr-roadmap.md`'s "deferred with no shame" pattern, the acknowledgment gate is acceptable v1 — an org_admin who assigns governance is auditable through the existing `role_assigned` audit-log entry, so misuse is detectable even without preventive control.
+
+**Proposed fix path.** When governance acknowledgment is built, the natural shape is a "pending governance approval" state on `identity.role_assignments` (new column or sibling table), with:
+
+1. `addMember` for `role='governance_member'` creates a pending row + notification to existing governance members.
+2. New endpoint for governance to approve/deny.
+3. UI surface in the governance command center.
+4. RolesGuard sees pending assignments as inactive until approval.
+
+Composes naturally with Domain 11 notifications and Domain 4 governance flows; this is a Phase 6 follow-on, not OSR-blocking.
+
+---
+
 ## B-011 — OPA 0.63.0 image is amd64-only; Apple Silicon contributors run under emulation
 
 - **Severity:** Medium
