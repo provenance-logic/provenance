@@ -82,7 +82,6 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
-        flyway -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql baseline && \
         flyway -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql migrate
     environment:
       FLYWAY_URL: jdbc:postgresql://postgres:5432/provenance

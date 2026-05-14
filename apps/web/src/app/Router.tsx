@@ -88,7 +88,6 @@ export function AppRouter() {
             path="dashboard/:orgId/roles"
             element={<OrgRolesPage />}
           />
-          <Route path="products" element={<Navigate to="/dashboard" replace />} />
 
           {/* Onboarding — F10.2 self-serve org creation */}
           <Route path="onboarding/org" element={<NewOrganizationForm />} />
