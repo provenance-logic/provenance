@@ -9,7 +9,6 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard' },
-  { to: '/products', label: 'Data Products' },
   { to: '/marketplace', label: 'Marketplace' },
   { to: '/governance', label: 'Governance' },
   { to: '/agents', label: 'Agents' },
