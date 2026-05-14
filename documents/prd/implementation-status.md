@@ -1,8 +1,9 @@
 # Provenance Implementation Status
 
-**Last updated:** May 13, 2026
+**Last updated:** May 14, 2026
 **PRD version:** 1.5
 **Active phase:** Phase 5 - Open Source Ready
+**Sequencing:** See [osr-roadmap.md](./osr-roadmap.md) for the active stage plan. This document is the per-feature truth; the roadmap is the priority and deferral truth. Where the two disagree, the roadmap wins for "what to do next" and this document wins for "what's built."
 
 This document tracks the implementation status of every requirement in the PRD. It is a living burndown checklist updated as Phase 5 progresses. The PRD is the authoritative requirements document; this document tracks what is built against it.
 
@@ -425,23 +426,27 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 
 ### Blockers (must be resolved before open source ready)
 
-**Down from 10 at the start of the April 30 push, now 5 with Domain 12 closing 2026-05-13.** Closed since: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), and **Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default. See the Domain 12 section above for the per-requirement breakdown.** Remaining:
+**Down from 10 at the start of the April 30 push, now 3 active with Domain 12 closing 2026-05-13 and F7.29 / F7.42 explicitly deferred to post-launch per [osr-roadmap.md](./osr-roadmap.md).** Closed since: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), and **Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default. See the Domain 12 section above for the per-requirement breakdown.** Active blockers:
 
 1. **F7.7 Role Assignment UI** - Requires Keycloak console; not self-serve
 2. **F7.22 Domain Team Management UI** - Partially implemented — UI exists but membership listing is still org-scoped; strict domain isolation requires Keycloak console (tracked with F10.4)
-3. **F7.29 Access Request SLA and Escalation** - SLA notification triggers shipped in Domain 11 (F11.9 / F11.10), but no SLA enforcement timer at the access-grant layer and no escalation path beyond the breach notification
-4. **F7.42 Human Review Queue** - Observed-class agent actions have no review surface
-5. **F7.46 Onboarding Experience** - No guided onboarding
+3. **F7.46 Onboarding Experience** - No guided onboarding
 
-### Phase 5.6 (Developer Experience) — partial as of 2026-04-30
+**Deferred post-launch (no shame):**
+
+- **F7.29 Access Request SLA and Escalation** — SLA notification triggers shipped in Domain 11 (F11.9 / F11.10); no SLA enforcement timer at the access-grant layer and no escalation path beyond the breach notification. Acceptable v1 per osr-roadmap "with no shame" deferral list.
+- **F7.42 Human Review Queue** — Observed-class agent actions have no review surface. Only matters when Supervised agents are in active use, which is not an OSR launch capability. Documented as post-launch.
+
+### Phase 5.6 (Developer Experience) — substantially shipped as of 2026-05-08
 
 Shipped:
 - **B-009 OpenSearch BM25 reliability** (#52) — synchronous double-write to `provenance-products` on every publish/update/decommission, plus a one-shot `pnpm reindex:search` command for backfill after dev resets. Marketplace keyword search no longer silently returns empty results when the broker queue resets.
 - **In-product API reference** (#53) — `GET /api/v1/docs` serves an index of all 12 domain specs; `/api/v1/docs/:spec` renders Redoc; `/api/v1/docs/specs/:name.yaml` returns raw YAML. Reads from `packages/openapi/` at request time.
 - **Working seed CLI** (#54) — eight idempotent `/api/v1/seed/*` endpoints behind `SeedGuard` (constant-time token check + `SEED_ENABLED` flag, 404 in production). `pnpm --filter @provenance/seed seed` now runs end-to-end and populates 2 orgs / 9 domains / 17 principals / 8 policies / 16 published products / 27 ports / 2 agents / 86 lineage emissions.
+- **2026-05-07/08 fresh-laptop onboarding arc** (#65–#72) — 13 first-run blockers (B-010 through B-022) found by walking the README on a fresh Apple Silicon MacBook and all resolved. Container Node base-image bump 20 → 22 (#74). The fresh-laptop walkthrough is now the validated OSR test methodology.
 
-Remaining:
-- Local-setup-time measurement (clone → working stack on a fresh machine; needs a fresh contributor, not a simulation from inside the dev env)
+Remaining (deferred to Stage 5 polish per [osr-roadmap.md](./osr-roadmap.md)):
+- Final "under 30 minutes following only the README" timing run on a virgin contributor laptop. The May 7/8 arc found bugs against an intermediate state; no clean re-measurement has been done on a post-fix virgin laptop because the only available Apple Silicon hardware is the one the May 7/8 run used.
 
 Newly shipped (2026-05-02):
 - **Lineage emit idempotency** — `EmitLineageEventRequest.idempotency_key` plus a unique partial index on `(org_id, idempotency_key)` lets re-runs (seed, pipeline retries) skip the insert and the Neo4j edge merge. Verified locally: three back-to-back `pnpm seed` runs hold `emission_log` at 102 rows and Neo4j `LINEAGE_EDGE` at 100. Migration V27. SDKs can opt in for at-least-once dedup.

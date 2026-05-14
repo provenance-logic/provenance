@@ -1,6 +1,6 @@
 # Open Source Readiness Roadmap
 
-**Last updated:** 2026-05-13
+**Last updated:** 2026-05-14
 **Authoritative blocker list:** [implementation-status.md](./implementation-status.md)
 **Target definition:** Provenance functions properly without weird workarounds. Not full enterprise-ready (SOC 2, etc.) — that is Phase 6.
 
@@ -17,19 +17,11 @@ For context on where we are coming from. Everything below this line still needs 
 
 ---
 
-## Stage 1 — Local-setup-time measurement (1–4 days)
+## Stage 1 — Local-setup-time measurement ✅ Substantively shipped 2026-05-07/08
 
-**Why first:** cheap to do, and whatever it surfaces becomes additional must-fix scope. We do not yet know what a fresh contributor actually hits when they clone the repo and try to run it. The 4 GB RAM measurement we did was on the dev EC2 box — it tells us what already-working containers consume, not whether the install path works on a fresh machine.
+**The bug-discovery half is done.** Walking the README Getting Started path on a fresh Apple Silicon MacBook (PR #66 body) surfaced thirteen distinct OSR-blocking issues, all resolved across the 2026-05-07/08 arc (PRs #65–#72: B-010 OPA distroless healthcheck, B-012 .ts path mapping, B-013 packages/types prebuild, B-014 missing flyway-migrate service, B-015 flyway baselineVersion, B-016 Keycloak realm-admin roles, B-017 seed interface_type mismatch, B-018 unmanagedAttributePolicy, B-019 issuer-URL realm path, B-020 VITE_API_BASE_URL pointing at empty Kong, B-021 README paper cuts, B-022 api/minio healthcheck binaries). Post-fix verification ran as cumulative fresh-clone simulations in `/tmp/...` on the same machine and passed every other service `(healthy)`. The fresh-laptop walkthrough is now the validated OSR test methodology.
 
-**What to do:**
-1. Provision a clean machine (Linux VM or borrowed laptop, 16 GB RAM minimum to use the full profile).
-2. Time `git clone` → `pnpm install` → `docker compose up -d` → first successful login.
-3. Document every workaround required: missing env vars, undocumented dependencies, port conflicts, broken first-run scripts, anything where you have to read code to make it work.
-4. Open one bug per workaround in `documents/bugs/open.md`.
-
-**Exit criteria:** A fresh contributor can clone and run the full stack in under 30 minutes following only the README. Every blocker found is either fixed or has a tracked bug.
-
-**Checkpoint:** Review the bug list with Matt before deciding which ones must be fixed pre-launch vs which can be post-launch.
+**Caveat left for Stage 5.** The final "under 30 minutes following only the README" timing run on a *virgin* contributor laptop has not been done — Matt's laptop is the only fresh-Apple-Silicon platform available, and the May 7/8 run found bugs against an intermediate state rather than the post-fix state. Re-measurement options for Stage 5: (a) clean re-clone into `/tmp/` on the same laptop (closest available proxy to a virgin install; catches regressions, not first-install issues like missing Homebrew packages), (b) borrowed laptop or clean VM (definitive but logistically harder). Treating this as a Stage 5 polish item rather than a Stage 1 blocker so it doesn't gate Stage 2.
 
 ---
 
@@ -109,7 +101,7 @@ For context on where we are coming from. Everything below this line still needs 
 
 | Stage | Effort | Status |
 | --- | --- | --- |
-| 1. Setup-time measurement + fixes | 1–4 days | Outstanding |
+| 1. Setup-time measurement + fixes | 1–4 days (actual: 2 days) | ✅ Substantively shipped 2026-05-07/08; final under-30-min timing deferred to Stage 5 |
 | 2. Role + team UI | 1–2 weeks | Outstanding |
 | 3. Domain 12 runtime enforcement | 3–4 weeks (actual: one session) | ✅ Shipped 2026-05-13 |
 | 4. Onboarding flow | 1 week | Outstanding |
