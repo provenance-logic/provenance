@@ -183,4 +183,56 @@ export class OrganizationsController {
       ctx.principalId,
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Domain-scoped members (F7.22 / F10.4)
+  //
+  // Distinct from the org-scoped /members surface above: these endpoints
+  // operate on role_assignments rows with a non-null domain_id, which is
+  // what domain owners actually need to manage their team without falling
+  // back to the Keycloak console. The org-scoped endpoints continue to
+  // work for org_admins managing org-level role assignments.
+  // ---------------------------------------------------------------------------
+
+  @Get(':orgId/domains/:domainId/members')
+  @Roles('org_admin', 'domain_owner')
+  listDomainMembers(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Query('limit') limit = 20,
+    @Query('offset') offset = 0,
+  ) {
+    return this.orgsService.listDomainMembers(orgId, domainId, Number(limit), Number(offset));
+  }
+
+  @Post(':orgId/domains/:domainId/members')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('org_admin', 'domain_owner')
+  addDomainMember(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Body() dto: AddMemberRequest,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.orgsService.addDomainMember(orgId, domainId, dto, ctx.principalId);
+  }
+
+  @Delete(':orgId/domains/:domainId/members/:principalId/roles/:role')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles('org_admin', 'domain_owner')
+  removeDomainMemberRole(
+    @Param('orgId') orgId: string,
+    @Param('domainId') domainId: string,
+    @Param('principalId') principalId: string,
+    @Param('role') role: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.orgsService.removeDomainMemberRole(
+      orgId,
+      domainId,
+      principalId,
+      role as AddMemberRequest['role'],
+      ctx.principalId,
+    );
+  }
 }

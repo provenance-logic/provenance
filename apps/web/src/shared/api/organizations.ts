@@ -68,5 +68,23 @@ export const organizationsApi = {
     // delete unrelated grants.
     removeRole: (orgId: string, principalId: string, role: string) =>
       api.delete(`/organizations/${orgId}/members/${principalId}/roles/${role}`),
+
+    // F7.22 domain-scoped surface — separate from the org-scoped
+    // endpoints above because the Domain Team page must see only its
+    // own membership and revoke only its own role assignments. The
+    // backend writes/reads role_assignments rows with non-null
+    // domain_id; Keycloak realm-role sync is idempotent across scopes.
+    listForDomain: (orgId: string, domainId: string, limit = 50, offset = 0) =>
+      api.get<MemberList>(
+        `/organizations/${orgId}/domains/${domainId}/members?limit=${limit}&offset=${offset}`,
+      ),
+
+    addForDomain: (orgId: string, domainId: string, dto: AddMemberRequest) =>
+      api.post<Member>(`/organizations/${orgId}/domains/${domainId}/members`, dto),
+
+    removeRoleForDomain: (orgId: string, domainId: string, principalId: string, role: string) =>
+      api.delete(
+        `/organizations/${orgId}/domains/${domainId}/members/${principalId}/roles/${role}`,
+      ),
   },
 };
