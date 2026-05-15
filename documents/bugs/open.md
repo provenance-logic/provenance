@@ -53,29 +53,6 @@ A more invasive fix would be enabling Vite's `server.watch.usePolling` config, w
 
 ---
 
-## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
-
-- **Severity:** Low
-- **Status:** Open
-- **Area:** Frontend / onboarding
-- **Discovered:** 2026-05-14, during F7.46 implementation.
-
-**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "register a connector" as one of the five guided onboarding steps. Connectors exist in the data model (F3.1 Connector as First-Class Entity, F3.8 Source Registration) and the backend at `apps/api/src/connectors/` is implemented, but there is no frontend UI route for a human to register a new connector. The wizard renders this step as a skip-only "Coming soon" panel.
-
-**Resolution chosen for F7.46 v1.** Ship the wizard with the connector step as a skip-only placeholder. Add this bug entry so the followup PR has a tracked entry to close.
-
-**Proposed scope for the followup PR.**
-
-1. New route `/dashboard/:orgId/connectors/new` or similar with a connector-registration form.
-2. Form fields aligned with `apps/api/src/connectors/dto/register-connector.dto.ts` (connector type, name, credentials reference, configuration).
-3. Wire to `POST /organizations/:orgId/connectors` (already exists per the backend module).
-4. Add a "Connectors" nav item to NavShell or a domain-scoped subpage.
-5. Update the OnboardingWizard's `register_connector` step body in `apps/web/src/features/onboarding/OnboardingWizard.tsx` to link to the new route and offer a "Mark done" button alongside Skip.
-
-Once landed, the wizard step in F7.46 should be upgraded from skip-only to fully wired.
-
----
-
 ## B-027 — F7.46 onboarding wizard: "Sample data" button not built
 
 - **Severity:** Low

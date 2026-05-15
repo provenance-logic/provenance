@@ -235,10 +235,12 @@ function StepBody({
     return (
       <Body
         title={STEP_TITLES.register_connector}
-        description="Connectors register your existing data systems with Provenance so lineage and access can flow through. The dedicated connector registration UI is coming in a follow-on PR (tracked as B-025); for now you can skip this step and come back when it lands."
+        description="Connectors register your existing data systems against a domain so lineage and access flow through Provenance. Credentials are referenced by AWS Secrets Manager ARN — raw secrets never enter the platform."
       >
         <Actions>
-          <SkipButton onClick={onSkip} primary />
+          <PrimaryButton onClick={() => navigate('/connectors')}>Open connectors page</PrimaryButton>
+          <SecondaryButton onClick={onComplete}>Mark done</SecondaryButton>
+          <SkipButton onClick={onSkip} />
         </Actions>
       </Body>
     );

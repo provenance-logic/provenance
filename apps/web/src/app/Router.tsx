@@ -19,6 +19,7 @@ import { OrgRolesPage } from '../features/team/OrgRolesPage.js';
 import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
 import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 import { AgentsPage } from '../features/agents/AgentsPage.js';
+import { ConnectorsPage } from '../features/connectors/ConnectorsPage.js';
 
 function NotFoundPage() {
   return (
@@ -94,6 +95,7 @@ export function AppRouter() {
           <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
           <Route path="governance/exceptions" element={<ExceptionsPage />} />
           <Route path="agents" element={<AgentsPage />} />
+          <Route path="connectors" element={<ConnectorsPage />} />
 
           {/* Notifications (Domain 11 — F11.4) */}
           <Route path="notifications" element={<NotificationsPage />} />
