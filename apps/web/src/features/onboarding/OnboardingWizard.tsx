@@ -281,10 +281,12 @@ function StepBody({
     return (
       <Body
         title={STEP_TITLES.invite_agent}
-        description="Provenance treats AI agents as first-class participants alongside human teams. The agent registration UI is coming in a follow-on PR (tracked as B-026); agents can self-register today via the MCP `register_agent` tool if you need to onboard one right now."
+        description="Provenance treats AI agents as first-class participants alongside human teams. Register one here — agents start at the Observed trust classification and earn Supervised or Autonomous through governance review. Agents can also self-register via the MCP `register_agent` tool."
       >
         <Actions>
-          <SkipButton onClick={onSkip} primary />
+          <PrimaryButton onClick={() => navigate('/agents')}>Open agents page</PrimaryButton>
+          <SecondaryButton onClick={onComplete}>Mark done</SecondaryButton>
+          <SkipButton onClick={onSkip} />
         </Actions>
       </Body>
     );

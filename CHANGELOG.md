@@ -13,6 +13,7 @@ The active OSR blocker list is empty for the first time since the launch push be
 ### Added
 
 - **`refresh-ec2-dev.sh`** ops script at `infrastructure/scripts/refresh-ec2-dev.sh`. Wraps `git pull` plus `docker compose up -d --force-recreate api agent-query web` plus a 30-second `/api/v1/health` poll into one sudo-able command. Closes B-028 proposed fix 2; `operations.md` updated to recommend the script as the default post-`git pull` workflow on the EC2 dev box. B-028 entry stays Open pending fix 3 (the CI env-validator pre-flight).
+- **Agents page** at `apps/web/src/features/agents/AgentsPage.tsx` plus `agentsApi` client. Lists every agent in the active org with display name, model, trust-classification pill, oversight contact, and registration date. Registration form binds to `POST /agents` and surfaces the Keycloak client secret exactly once in a dismissable banner with a Copy button (the API only returns it on create; recovery is `POST /agents/:agentId/rotate-secret`). The OnboardingWizard's `invite_agent` step is upgraded from a skip-only placeholder to PrimaryButton → `/agents` plus Mark-done plus Skip, mirroring `publish_product`. Closes **B-026**. Trust-classification mutations and a "last activity" column are explicit deferrals (see resolved.md entry).
 
 ---
 

@@ -6,6 +6,27 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-026 — F7.46 onboarding wizard: agent registration UI does not exist
+
+- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Severity:** was Low
+- **Area:** Frontend / onboarding
+
+**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "invite an AI agent" as one of the five guided onboarding steps. The `/agents` route in `apps/web/src/app/Router.tsx` was registered as `<ComingSoon title="Agents" />`. The backend in `apps/api/src/agents/` and the MCP `register_agent` tool were shipped, but there was no UI for a human to register an agent from the wizard, so the wizard rendered this step as a skip-only "Coming soon" panel.
+
+**Fix.** New `AgentsPage` at `apps/web/src/features/agents/AgentsPage.tsx` plus an `agentsApi` shared client at `apps/web/src/shared/api/agents.ts`. The page resolves the current org (same first-org pattern `DashboardRedirect` uses), lists every agent in that org with display name, model, trust-classification pill, oversight contact, and registration date, and exposes a registration form binding to `POST /agents` (display name, model name, model provider dropdown, human oversight contact email).
+
+The Keycloak client secret returned by the API is shown exactly once in a dismissable amber banner with a Copy button. The banner spells out that Provenance never stores the secret in plaintext and that the recovery path is `POST /agents/:agentId/rotate-secret`. This matches the backend reality — `agents.service.ts` only includes the secret in the create response.
+
+The OnboardingWizard's `invite_agent` step body was rewritten to drop the "coming in a follow-on PR" hedging and now offers PrimaryButton (→ `/agents`) + SecondaryButton (Mark done) + SkipButton, mirroring `publish_product`. `ComingSoon` was the only consumer of that helper component in `Router.tsx` and was removed.
+
+**Scope deferrals.**
+
+- **Trust-classification mutations.** The PATCH `/agents/:agentId/classification` endpoint and its role gates (upgrades = governance only; downgrades = oversight contact OR governance) stay backend-only. The page surfaces the current classification but doesn't expose the upgrade/downgrade affordance — it lands in a follow-on once the policy UX is settled.
+- **Last activity.** The bug entry's proposed scope mentioned "last activity" as a column. That data lives in `agent_audit` rows and isn't on the agent identity object; adding it would mean either a derived field on the agent response or a separate query per row. Deferred — current registration date covers v1.
+
+---
+
 ## B-022 — `api` and `minio` healthchecks called HTTP tools the container images do not ship; both reported "unhealthy" forever
 
 - **Fixed:** 2026-05-08 — commit `<pending>`
