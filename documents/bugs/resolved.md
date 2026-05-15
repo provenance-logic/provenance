@@ -6,6 +6,36 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-028 — EC2 dev box: containers don't pick up new compose env vars without `--force-recreate`
+
+- **Fixed:** 2026-05-15 — three-stage close-out across #95 (fix 1), #96 (fix 2), and PR `<pending>` (fix 3)
+- **Severity:** was Medium
+- **Area:** Operations / EC2 dev box
+
+**Symptom.** Every page on dev.provenancelogic.com rendered a pink error banner; every API request returned 502 Bad Gateway. Caddy, Postgres, Keycloak, OPA, Redpanda, OpenSearch, Neo4j, Temporal, and the embedding service all reported `(healthy)`; only `provenance-ec2-api` was `(unhealthy)`.
+
+**Root cause.** The Domain 12 PRs (#79 / #82 / #83) added a new required env var `AQL_INTERNAL_TOKEN` to the api service's compose env block. The compose-file change was correct. But the api container on the dev box had been created BEFORE that line was added, and `docker compose restart api` only stops and starts the existing container — it does NOT re-read the compose YAML or inject new env. The running container's environment was missing `AQL_INTERNAL_TOKEN`, the api's zod config validator rejected the env on every boot attempt, the api entered a crash/restart loop, and every API call became a 502.
+
+**Fix — three stages.**
+
+1. **#95** — added the "When `restart` Isn't Enough — Use `--force-recreate`" subsection to `documents/runbooks/operations.md`. Documented the canonical `docker compose up -d --force-recreate api agent-query web` workflow after any `git pull` that may have touched env, and the parallel B-029 Vite-bind-mount-staleness motivation.
+
+2. **#96** — added `infrastructure/scripts/refresh-ec2-dev.sh`, a one-command wrapper that runs `git pull` + `docker compose up -d --force-recreate api agent-query web` + a 30-second `/api/v1/health` poll. Reduces the three-step manual incantation to one sudo-able command and exits non-zero on failure so cron / scripted use catches breakage.
+
+3. **PR `<pending>`** — added `infrastructure/scripts/validate-compose-env.mjs`, a Node script that scans `apps/api/src/**` and `apps/agent-query/src/**` for `process.env.X` references, `process.env['X']` bracket access, AND zod schema property declarations (the `KEY: z.string()...` pattern the AQL `config.ts` uses — the very pattern that hid `AQL_INTERNAL_TOKEN` from review the first time). Cross-references those keys against the `environment:` block of each service in `docker-compose.ec2-dev.yml`. Wired as a new `Validate Compose Env` job in `.github/workflows/ci.yml` so PRs that drift compose against code fail at review time, not at runtime.
+
+   An `infrastructure/scripts/compose-env-allowlist.txt` companion file holds env vars referenced by code but legitimately absent from compose (NODE_ENV, AWS SDK conventions, OPENAPI_SPECS_DIR, tuning knobs whose schema defaults are correct for the dev box). Every allowlist entry carries an inline comment naming why.
+
+**Latent drift the validator caught on first run.** The agent-query service's compose env block was missing three vars the AQL `config.ts` declared:
+
+- `AQL_INTERNAL_TOKEN` (z.string().min(16), no schema default — would crash AQL startup the first time someone `--force-recreate`d the agent-query container)
+- `KAFKA_BROKERS` (schema default `localhost:19092` — won't work in Docker networking; AQL needs `redpanda:9092`)
+- `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED` (schema default 'true' — defaults OK, but operationally important enough to be explicit so an operator can flip to shadow mode without rebuilding)
+
+Fixed in this PR alongside the validator wiring. The api service's three missing entries (`APPROVAL_TIMEOUT_HOURS`, `APPROVAL_ESCALATION_TIMEOUT_HOURS`, `INVITATION_DEFAULT_TTL_HOURS`) all have safe schema defaults and are tuning knobs without runtime dependencies on other services — allowlisted with `# schema default Xh` comments rather than added to compose.
+
+---
+
 ## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
 
 - **Fixed:** 2026-05-15 — PR `<pending>`

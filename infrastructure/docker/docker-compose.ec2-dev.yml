@@ -669,6 +669,21 @@ services:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: provenance
       DEPRECATION_WARNING_ONLY: "true"
+      # Domain 12 runtime-enforcement plumbing (Connection References).
+      # KAFKA_BROKERS: must match the api side (redpanda:9092 inside the
+      # compose network) so the AQL consumes the
+      # `connection_reference.state` topic the api outbox publishes.
+      KAFKA_BROKERS: redpanda:9092
+      # AQL_INTERNAL_TOKEN: shared secret with the api's
+      # InternalServiceGuard. Must byte-for-byte match the api side's
+      # AQL_INTERNAL_TOKEN — interpolation references the same env var
+      # so the default lines up automatically.
+      AQL_INTERNAL_TOKEN: ${AQL_INTERNAL_TOKEN:-dev-aql-internal-token-change-me}
+      # Enforcement mode default flipped to ON in PR #86. Explicit here
+      # so an operator can flip to "false" for shadow mode without
+      # rebuilding. See apps/agent-query/src/config.ts for the full
+      # upgrade-runbook comment.
+      CONNECTION_REFERENCE_ENFORCEMENT_ENABLED: "true"
     volumes:
       - ../../apps/agent-query:/app/apps/agent-query:cached
       - /app/apps/agent-query/node_modules

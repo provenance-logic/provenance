@@ -106,6 +106,28 @@ jobs:
           tags: provenance/${{ matrix.service.name }}:pr-${{ github.event.pull_request.number }}
 
   # ---------------------------------------------------------------------------
+  # Compose env validator (B-028 fix 3)
+  # ---------------------------------------------------------------------------
+  # Catches the failure mode where code references a `process.env.X` or a
+  # zod schema env-key that is NOT declared in
+  # docker-compose.ec2-dev.yml's environment block for the corresponding
+  # service. Without this, the next required env var added to api or
+  # agent-query code would only fail at runtime on the dev box after a
+  # `git pull` (the B-028 pattern).
+  validate-compose-env:
+    name: Validate Compose Env
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run env validator
+        run: node infrastructure/scripts/validate-compose-env.mjs
+
+  # ---------------------------------------------------------------------------
   # OpenAPI spec validation
   # ---------------------------------------------------------------------------
   validate-openapi:
