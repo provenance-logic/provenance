@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { preferencesApi } from '../../shared/api/preferences.js';
+import { sampleDataApi, type SampleDataResponse } from '../../shared/api/sample-data.js';
 import type { Domain, OnboardingState, Organization } from '@provenance/types';
 
 // F7.46 — guided multi-step first-run wizard. Reads/writes
@@ -212,6 +213,7 @@ function StepBody({
           <PrimaryButton onClick={onComplete}>Looks good — continue</PrimaryButton>
           <SkipButton onClick={onSkip} />
         </Actions>
+        <SampleDataAffordance orgId={org.id} />
       </Body>
     );
   }
@@ -342,6 +344,72 @@ function SecondaryButton({ onClick, children }: { onClick: () => void; children:
     >
       {children}
     </button>
+  );
+}
+
+// B-027 — "Populate sample data" affordance attached to the welcome step.
+// Hidden if the env flag is off (the endpoint returns 404 in that case,
+// which we treat as "feature disabled" rather than an error). After a
+// successful populate, replaces itself with a success summary so the
+// operator can't double-click and get confused — though the endpoint is
+// idempotent so a second click would be a no-op anyway.
+function SampleDataAffordance({ orgId }: { orgId: string }) {
+  const [state, setState] = useState<'idle' | 'submitting' | 'ok' | 'error' | 'disabled'>('idle');
+  const [summary, setSummary] = useState<SampleDataResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    if (state === 'submitting') return;
+    const ok = window.confirm(
+      'Populate this workspace with a small demo dataset?\n\n'
+        + 'Creates one domain ("Customer Data") and two products. Re-running is a no-op. '
+        + 'You can delete the seeded entities from the domain page if you don\'t want them.',
+    );
+    if (!ok) return;
+    setState('submitting');
+    setError(null);
+    try {
+      const res = await sampleDataApi.populate(orgId);
+      setSummary(res);
+      setState('ok');
+    } catch (err) {
+      const e = err as { status?: number; message?: string };
+      if (e.status === 404) {
+        setState('disabled');
+      } else {
+        setError(e.message ?? 'Failed to populate sample data');
+        setState('error');
+      }
+    }
+  }
+
+  if (state === 'disabled') return null;
+
+  if (state === 'ok' && summary) {
+    return (
+      <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+        Sample workspace populated: {summary.created.domains} domain, {summary.created.products} products, {summary.created.ports} ports, {summary.created.slos} SLO, {summary.created.notifications} notifications. Check the notification bell.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          Want to see a populated workspace? <span className="font-medium">Populate sample data</span> seeds one domain and two products so the rest of the wizard has something to point at.
+        </span>
+        <button
+          type="button"
+          onClick={() => { void handleClick(); }}
+          disabled={state === 'submitting'}
+          className="shrink-0 px-2 py-1 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+        >
+          {state === 'submitting' ? 'Populating…' : 'Populate sample data'}
+        </button>
+      </div>
+      {error && <div className="mt-1 text-red-600">{error}</div>}
+    </div>
   );
 }
 
