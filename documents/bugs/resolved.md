@@ -6,6 +6,26 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
+
+- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Severity:** was Low
+- **Area:** Frontend / onboarding
+
+**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "register a connector" as one of the five guided onboarding steps. The backend at `apps/api/src/connectors/` was fully implemented (controller at `/organizations/:orgId/connectors`, 13 connector types, validation + health-event endpoints, nested source registrations and schema snapshots), but there was no frontend UI for a human to register a connector — the wizard rendered this step as a skip-only "Coming soon" panel.
+
+**Fix.** New `ConnectorsPage` at `apps/web/src/features/connectors/ConnectorsPage.tsx` plus a `connectorsApi` shared client at `apps/web/src/shared/api/connectors.ts`. The page resolves the active org (same first-org pattern `DashboardRedirect` and the agents page use), fetches the org's domains so the form has a real domain picker, and lists every connector with name + description, type label, domain name, validation-status pill (pending / valid / invalid / stale, color-coded), and registration date. Registration form binds to `POST /organizations/:orgId/connectors` with name, domain picker, 13-option connector-type dropdown, optional credential ARN, optional description, and a JSON textarea for connection config (defaults to `{}`, client-side-parsed and rejected if it isn't a JSON object).
+
+`NavShell` gains a "Connectors" nav item between Dashboard and Marketplace. The OnboardingWizard's `register_connector` step is rewritten from skip-only to PrimaryButton (→ `/connectors`) + SecondaryButton (Mark done) + SkipButton, mirroring the shape of `publish_product` and `invite_agent`.
+
+**Scope deferrals.**
+
+- **Per-connector-type config schemas.** The form exposes connection config as a generic JSON textarea rather than rendering 13 type-specific forms. Each connector type really has its own required-field schema (postgres wants host/port/database; s3 wants bucket/region; etc.), and a fully validated per-type form is a larger UX project. Deferred — operators currently paste a config object from their seed templates or platform docs.
+- **Validation, source registration, and snapshot workflows.** The page does not yet expose "Validate now," "Register a source under this connector," or "Capture schema snapshot" — all three endpoints exist on the controller. Captured in the row's validation pill (read-only) for now; interactive workflows are a follow-on.
+- **Secrets-manager picker.** The credential ARN field is a free-text input. A picker that lists ARNs the org's IAM role can read against would be nicer but requires an aws-sdk dependency we don't otherwise need on the frontend.
+
+---
+
 ## B-026 — F7.46 onboarding wizard: agent registration UI does not exist
 
 - **Fixed:** 2026-05-15 — PR `<pending>`
