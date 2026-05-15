@@ -220,10 +220,11 @@ function RegisterConnectorForm({
     let parsedConfig: Record<string, unknown> = {};
     if (connectionConfig.trim()) {
       try {
-        parsedConfig = JSON.parse(connectionConfig);
-        if (typeof parsedConfig !== 'object' || parsedConfig === null || Array.isArray(parsedConfig)) {
+        const raw: unknown = JSON.parse(connectionConfig);
+        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
           throw new Error('connection config must be a JSON object');
         }
+        parsedConfig = raw as Record<string, unknown>;
       } catch (err) {
         setSubmitting(false);
         setResult({ ok: false, message: `Connection config: ${(err as Error).message}` });
