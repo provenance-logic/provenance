@@ -67,25 +67,29 @@ For context on where we are coming from. Everything below this line still needs 
 
 ---
 
-## Stage 4 — F7.46 Onboarding flow ✅ Shipped 2026-05-14
+## Stage 4 — F7.46 Onboarding flow ✅ Shipped 2026-05-14, fully wired 2026-05-15
 
 **What landed.** Inline first-run wizard at the top of `/dashboard` with five steps backed by per-principal preferences (`identity.principal_preferences` table + `GET/PATCH /me/preferences`):
 
-1. **Confirm your organization** — display-only summary of the org name, slug, description. "Looks good — continue" advances; "Skip" skips.
+1. **Confirm your organization** — display-only summary of the org name, slug, description. "Looks good — continue" advances; "Skip" skips. The confirm-org step also hosts the optional **Populate sample data** affordance (B-027 close-out) that seeds the workspace with one domain and two products so the rest of the wizard has something to point at.
 2. **Invite teammates** — primary CTA links to the OrgRolesPage shipped earlier the same day in F7.7; "Mark done" after sending an invite, or skip if flying solo.
-3. **Register a connector** — skip-only "Coming soon" panel. Tracked as B-025; the backend exists, the UI route doesn't.
+3. **Register a connector** — links to the new `/connectors` page (B-025 close-out, [#98](https://github.com/provenance-logic/provenance/pull/98)). PrimaryButton → connectors page + Mark-done + Skip.
 4. **Publish your first data product** — if no domain yet, links to the existing domain-creation flow; otherwise links straight to `NewProductForm` scoped to the first available domain.
-5. **Invite an AI agent** — skip-only "Coming soon" panel. Tracked as B-026; the MCP `register_agent` tool exists, the human-driven UI doesn't.
+5. **Invite an AI agent** — links to the new `/agents` page (B-026 close-out, [#97](https://github.com/provenance-logic/provenance/pull/97)). PrimaryButton → agents page + Mark-done + Skip.
 
-The wizard is skippable per step, dismissible globally ("Dismiss for now" sets `dismissedAt`), and resumable across sessions. Once all five steps are completed or skipped, `completedAt` is set and the wizard never auto-opens again. The "Sample data" button from the original scope is deferred to B-027 — it requires a new authz-gated seed wrapper that wasn't worth the scope creep for v1.
+The wizard is skippable per step, dismissible globally ("Dismiss for now" sets `dismissedAt`), and resumable across sessions. Once all five steps are completed or skipped, `completedAt` is set and the wizard never auto-opens again.
+
+**Skip-only steps remaining: zero** (as of 2026-05-15). The 2026-05-14 ship landed steps 1, 2, 4 wired; the 2026-05-15 follow-on session closed steps 3, 5, and the sample-data affordance via PRs [#97](https://github.com/provenance-logic/provenance/pull/97) (B-026 agents UI), [#98](https://github.com/provenance-logic/provenance/pull/98) (B-025 connectors UI), and [#100](https://github.com/provenance-logic/provenance/pull/100) (B-027 sample-data button).
 
 **Files of record:**
 - Migration: `apps/api/migrations/V29__create_principal_preferences.sql`
-- Backend: `apps/api/src/preferences/`
+- Backend (preferences): `apps/api/src/preferences/`
+- Backend (sample-data): `apps/api/src/sample-data/`
 - Frontend wizard: `apps/web/src/features/onboarding/OnboardingWizard.tsx`
+- Frontend pages: `apps/web/src/features/agents/AgentsPage.tsx`, `apps/web/src/features/connectors/ConnectorsPage.tsx`
 - Integration: `apps/web/src/features/publishing/DashboardRedirect.tsx`
 
-**Walk-through checkpoint (from this stage's original spec).** A first-time user (Matt or a friend) walks the wizard. Bugs filed inline in `documents/bugs/open.md`. Sample-data UX is the most likely next deferral to upgrade to a real feature once a fresh user confirms the wizard's value.
+**Walk-through checkpoint (from this stage's original spec).** A first-time user (Matt or a friend) walks the wizard. Bugs filed inline in `documents/bugs/open.md`. With all five steps wired and the sample-data affordance live, the natural next demo-prep item is standing up `demo.provenancelogic.com` so investors can be walked through against a populated environment rather than the daily dev box.
 
 ---
 

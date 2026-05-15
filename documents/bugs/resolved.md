@@ -8,7 +8,7 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ## B-027 — F7.46 onboarding wizard: "Sample data" button not built
 
-- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Fixed:** 2026-05-15 — [#100](https://github.com/provenance-logic/provenance/pull/100)
 - **Severity:** was Low
 - **Area:** Frontend / onboarding / seed
 
@@ -37,7 +37,7 @@ The OnboardingWizard's `confirm_org` step gains a `SampleDataAffordance` row: a 
 
 ## B-028 — EC2 dev box: containers don't pick up new compose env vars without `--force-recreate`
 
-- **Fixed:** 2026-05-15 — three-stage close-out across #95 (fix 1), #96 (fix 2), and PR `<pending>` (fix 3)
+- **Fixed:** 2026-05-15 — three-stage close-out across [#95](https://github.com/provenance-logic/provenance/pull/95) (fix 1), [#96](https://github.com/provenance-logic/provenance/pull/96) (fix 2), and [#99](https://github.com/provenance-logic/provenance/pull/99) (fix 3)
 - **Severity:** was Medium
 - **Area:** Operations / EC2 dev box
 
@@ -51,7 +51,7 @@ The OnboardingWizard's `confirm_org` step gains a `SampleDataAffordance` row: a 
 
 2. **#96** — added `infrastructure/scripts/refresh-ec2-dev.sh`, a one-command wrapper that runs `git pull` + `docker compose up -d --force-recreate api agent-query web` + a 30-second `/api/v1/health` poll. Reduces the three-step manual incantation to one sudo-able command and exits non-zero on failure so cron / scripted use catches breakage.
 
-3. **PR `<pending>`** — added `infrastructure/scripts/validate-compose-env.mjs`, a Node script that scans `apps/api/src/**` and `apps/agent-query/src/**` for `process.env.X` references, `process.env['X']` bracket access, AND zod schema property declarations (the `KEY: z.string()...` pattern the AQL `config.ts` uses — the very pattern that hid `AQL_INTERNAL_TOKEN` from review the first time). Cross-references those keys against the `environment:` block of each service in `docker-compose.ec2-dev.yml`. Wired as a new `Validate Compose Env` job in `.github/workflows/ci.yml` so PRs that drift compose against code fail at review time, not at runtime.
+3. **[#99](https://github.com/provenance-logic/provenance/pull/99)** — added `infrastructure/scripts/validate-compose-env.mjs`, a Node script that scans `apps/api/src/**` and `apps/agent-query/src/**` for `process.env.X` references, `process.env['X']` bracket access, AND zod schema property declarations (the `KEY: z.string()...` pattern the AQL `config.ts` uses — the very pattern that hid `AQL_INTERNAL_TOKEN` from review the first time). Cross-references those keys against the `environment:` block of each service in `docker-compose.ec2-dev.yml`. Wired as a new `Validate Compose Env` job in `.github/workflows/ci.yml` so PRs that drift compose against code fail at review time, not at runtime.
 
    An `infrastructure/scripts/compose-env-allowlist.txt` companion file holds env vars referenced by code but legitimately absent from compose (NODE_ENV, AWS SDK conventions, OPENAPI_SPECS_DIR, tuning knobs whose schema defaults are correct for the dev box). Every allowlist entry carries an inline comment naming why.
 
@@ -67,7 +67,7 @@ Fixed in this PR alongside the validator wiring. The api service's three missing
 
 ## B-025 — F7.46 onboarding wizard: connector registration UI does not exist
 
-- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Fixed:** 2026-05-15 — [#98](https://github.com/provenance-logic/provenance/pull/98)
 - **Severity:** was Low
 - **Area:** Frontend / onboarding
 
@@ -87,7 +87,7 @@ Fixed in this PR alongside the validator wiring. The api service's three missing
 
 ## B-026 — F7.46 onboarding wizard: agent registration UI does not exist
 
-- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Fixed:** 2026-05-15 — [#97](https://github.com/provenance-logic/provenance/pull/97)
 - **Severity:** was Low
 - **Area:** Frontend / onboarding
 
