@@ -9,31 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-028 — EC2 dev box: containers don't pick up new compose env vars without `--force-recreate`
-
-- **Severity:** Medium
-- **Status:** Open
-- **Area:** Operations / EC2 dev box
-- **Discovered:** 2026-05-14, while debugging the pink-banner-everywhere bug on dev.provenancelogic.com.
-
-**Symptom.** A user reports every page on dev.provenancelogic.com renders a small pink error banner across the top. Every API request returns 502 Bad Gateway. The frontend, Caddy, Postgres, Keycloak, OPA, Redpanda, OpenSearch, Neo4j, Temporal, embedding service all show `(healthy)`. Only `provenance-ec2-api` shows `(unhealthy)`.
-
-**Root cause.** The Domain 12 PRs (#79 / #82 / #83) introduced a new required env var `AQL_INTERNAL_TOKEN`, defined with a fallback default in `docker-compose.ec2-dev.yml`. The compose file change is correct. But on this dev box the API container had been created BEFORE that compose-file line was added, and a normal `docker compose restart api` only stops/starts the process — it does NOT re-read compose YAML and inject new env. So the running container's environment was missing `AQL_INTERNAL_TOKEN`, the config validator rejected the env, and the API entered a crash/restart loop. Every API call became 502.
-
-The fix was `docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api`, which destroys and rebuilds the container so it picks up the current compose YAML's env.
-
-**Why it'll keep happening.** Every time someone `git pull`s `/opt/provenance` on the dev box AND the new code adds a required env var, the same break pattern recurs. The Domain 12 push was the proximate cause this time; the next push that adds a required env var will trigger it again.
-
-**Proposed fixes.**
-
-1. ~~**Short-term, no code:** add a one-paragraph "After git pull on the dev box" note to `documents/runbooks/operations.md` documenting that any code change adding a required env var needs a `docker compose up -d --force-recreate <service>` rather than a `restart`. Two minutes of writing.~~ **Landed in #95** as the "When `restart` Isn't Enough — Use `--force-recreate`" subsection of `documents/runbooks/operations.md`.
-2. ~~**Medium-term:** a small ops script `infrastructure/scripts/refresh-ec2-dev.sh` that does `git pull && docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api agent-query web` so the "I pulled new code" path is one command instead of three.~~ **Landed in this PR** as `infrastructure/scripts/refresh-ec2-dev.sh`. Adds a post-recreate `/api/v1/health` poll (30s budget) so a failed refresh exits non-zero instead of leaving the operator guessing.
-3. **Larger, still open:** an env-validator pre-flight that runs in CI against `docker-compose.ec2-dev.yml` so the absence of a required var is caught at PR time, not at runtime on the box.
-
-Fixes 1 and 2 reduce time-to-recovery from minutes to seconds but do not stop B-028 from recurring. Only fix 3 prevents the runtime failure outright; entry stays Open until it ships.
-
----
-
 ## B-029 — EC2 dev box: Vite HMR bind-mount staleness; `restart` not enough, `--force-recreate` needed
 
 - **Severity:** Low

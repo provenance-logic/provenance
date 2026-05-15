@@ -1,0 +1,43 @@
+# compose-env-allowlist.txt
+#
+# Env vars that are referenced in apps/api/src or apps/agent-query/src but
+# NOT declared in docker-compose.ec2-dev.yml's environment block — and that's
+# intentional. The validator at infrastructure/scripts/validate-compose-env.mjs
+# (B-028 fix 3) reads this file to suppress its complaint for these vars.
+#
+# Format: one VAR_NAME per line. Inline `# comment` allowed. Blank lines and
+# lines beginning with `#` are ignored.
+#
+# Anything added here should come with a comment naming the reason — otherwise
+# the next reader has no way to tell whether the entry is still needed.
+
+# ---------------------------------------------------------------------------
+# Process-level / standard environment vars set by Node, Docker, or the host
+# ---------------------------------------------------------------------------
+NODE_ENV                  # Docker sets this; not declared explicitly in every service
+PATH                      # System
+HOME                      # System
+
+# ---------------------------------------------------------------------------
+# AWS-SDK conventions — the SDK reads these from the environment in
+# production. The dev compose stack doesn't talk to real AWS, so they
+# are intentionally undefined on the dev box.
+# ---------------------------------------------------------------------------
+AWS_REGION
+AWS_DEFAULT_REGION
+
+# ---------------------------------------------------------------------------
+# Dev/test-only knobs — never set in the running container, used only by
+# unit tests, the openapi build, or local CLI tools.
+# ---------------------------------------------------------------------------
+OPENAPI_SPECS_DIR         # Read by the openapi package builder, not the API runtime
+
+# ---------------------------------------------------------------------------
+# Tuning knobs with safe schema defaults. Compose intentionally leaves these
+# unset so a fresh deploy gets the documented defaults. If you need to
+# override, add to the api service's environment block in
+# docker-compose.ec2-dev.yml; the validator will allow either.
+# ---------------------------------------------------------------------------
+APPROVAL_TIMEOUT_HOURS              # schema default 72h (apps/api/src/config.ts)
+APPROVAL_ESCALATION_TIMEOUT_HOURS   # schema default 24h
+INVITATION_DEFAULT_TTL_HOURS        # schema default 168h (7 days)
