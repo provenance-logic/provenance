@@ -18,6 +18,7 @@ import { ObservabilityModule } from './observability/observability.module.js';
 import { TrustScoreModule } from './trust-score/trust-score.module.js';
 import { AgentsModule } from './agents/agents.module.js';
 import { SeedModule } from './seed/seed.module.js';
+import { SampleDataModule } from './sample-data/sample-data.module.js';
 import { PreferencesModule } from './preferences/preferences.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
@@ -42,6 +43,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     TrustScoreModule,
     AgentsModule,
     SeedModule,
+    SampleDataModule,
     PreferencesModule,
   ],
 })

@@ -28,28 +28,6 @@ A more invasive fix would be enabling Vite's `server.watch.usePolling` config, w
 
 ---
 
-## B-027 — F7.46 onboarding wizard: "Sample data" button not built
-
-- **Severity:** Low
-- **Status:** Open
-- **Area:** Frontend / onboarding / seed
-- **Discovered:** 2026-05-14, during F7.46 implementation.
-
-**Symptom.** The osr-roadmap Stage 4 scope mentions: "'Sample data' button that runs the seed CLI from the UI for users who want a populated environment instead of an empty one." The F7.46 v1 wizard does not include this button. The seed endpoints at `apps/api/src/seed/` exist but are gated by `SeedGuard` (constant-time token + `SEED_ENABLED` flag, dev-only) and are not safely callable from an authenticated end-user browser session.
-
-**Resolution chosen for F7.46 v1.** Defer. The wizard ships without the button. Real value of the wizard is the guided five-step flow; the "Sample data" affordance is a nice-to-have that requires a separate backend design.
-
-**Proposed scope for the followup PR.**
-
-1. New backend endpoint, e.g. `POST /organizations/:orgId/sample-data`, gated to `org_admin`.
-2. Internally calls a `SeedFacadeService` that runs an org-scoped subset of the seed CLI (one or two domains, two or three published products, an SLO, an access grant, sample notifications). Reuses the existing idempotent seed primitives.
-3. Returns a summary of what was created.
-4. UI button on the wizard's welcome step ("Populate sample data" / "Start clean") — confirms before running so a user with real data isn't surprised.
-
-The existing `/api/v1/seed/*` HTTP endpoints stay as the dev-environment seed surface; the new endpoint is the user-facing wrapper with proper authz.
-
----
-
 ## B-023 — F7.7 Role Assignment UI: `platform_admin` and `platform_observer` roles not modeled
 
 - **Severity:** Low

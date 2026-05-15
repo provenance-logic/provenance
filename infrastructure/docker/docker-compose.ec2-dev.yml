@@ -543,6 +543,10 @@ services:
       # @provenance/seed package's runner. Production must NEVER set this true.
       SEED_ENABLED: ${SEED_ENABLED:-true}
       SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
+      # Sample-data button (B-027). When true, an org_admin can populate
+      # their org with a small demo workspace via POST /organizations/:orgId/sample-data.
+      # Production deploys must keep this false.
+      DEMO_DATA_ENABLED: ${DEMO_DATA_ENABLED:-true}
       # Domain 12 — Agent Query Layer internal-endpoint token. Throwaway
       # default for ec2-dev; constant-time-compared by InternalServiceGuard.
       AQL_INTERNAL_TOKEN: ${AQL_INTERNAL_TOKEN:-dev-aql-internal-token-change-me}

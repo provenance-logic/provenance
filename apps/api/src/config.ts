@@ -106,6 +106,19 @@ const envSchema = z.object({
     .transform((v) => v.toLowerCase() === 'true'),
   SEED_API_KEY: z.string().optional(),
 
+  // Sample-data button (B-027). When true, an org_admin can POST to
+  // /organizations/:orgId/sample-data to populate the org with a small
+  // demo workspace (one domain, two products, an SLO, a notification).
+  // Different gate than SEED_ENABLED: this one is callable from an
+  // authenticated browser session (role-gated, not token-gated) and is
+  // intended for dev and demo deployments. Production must keep this
+  // false — the endpoint returns 404 when disabled so probing attackers
+  // cannot detect the surface.
+  DEMO_DATA_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
+
   // Domain 12 — internal control-plane endpoints (ADR-006 cold load + cache
   // miss fallback). The Agent Query Layer calls /api/v1/internal/consent/*
   // with this token in the `x-internal-service-token` header. Constant-time

@@ -6,6 +6,35 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-027 — F7.46 onboarding wizard: "Sample data" button not built
+
+- **Fixed:** 2026-05-15 — PR `<pending>`
+- **Severity:** was Low
+- **Area:** Frontend / onboarding / seed
+
+**Symptom.** The osr-roadmap Stage 4 scope listed a "Sample data" button so the wizard could populate the workspace with demo content for users (and especially investor-demo runs) who didn't want to start clean. The F7.46 v1 wizard shipped without it; the existing `/api/v1/seed/*` endpoints at `apps/api/src/seed/` were not safely callable from a browser session (constant-time `SEED_API_KEY` token gate — exposing the token to the frontend is the wrong shape).
+
+**Fix.** New `apps/api/src/sample-data/` module, one endpoint `POST /organizations/:orgId/sample-data`, gated by `JwtAuthGuard + RolesGuard` with `@Roles('org_admin')` and an env-flag check (`DEMO_DATA_ENABLED=true`). The service throws `NotFoundException` when the flag is off, so production deploys can keep the flag false and probing attackers cannot detect the surface.
+
+The service idempotently populates the calling org with:
+
+- One domain (`Customer Data`)
+- Two products (`Customer 360 View` published, `Marketing Segments` draft)
+- One output port per product (SQL JDBC + file export, contract schemas filled in)
+- One freshness SLO on the published product (max event age ≤ 4 hours)
+- Two notifications to the calling principal (workspace-ready, product-published) so the notification bell shows non-zero state
+
+Idempotency is via natural-key find-or-create — slug-scoped to the org for domain/product/port, principal+dedup-key for notifications. Re-running is a no-op. Bypasses the production publish flow's governance pre-checks and Kafka lifecycle events (the payload is authored, not user-supplied; same trade-off the `SeedController` makes for the dev-runner endpoints).
+
+The OnboardingWizard's `confirm_org` step gains a `SampleDataAffordance` row: a one-line description and a "Populate sample data" button. Clicking shows a `window.confirm` dialog before submit. On success, the row is replaced with a green summary banner showing the created counts. On `404` (env flag off), the row hides itself silently — production users never see a feature that doesn't work for them.
+
+**Scope deferrals.**
+
+- **Access grant** was named in the bug entry's proposed scope. Skipped because grants need a non-owner principal to be meaningful (granting an org_admin access to their own org's product is a no-op in the policy engine) and seeding a second principal expands scope materially. The seed runner does this when populating a whole org; the in-app button focuses on what the wizard can show without secondary identities.
+- **A "Start clean" button** was the second option named in the bug entry. The default state IS clean — no button needed for that path. Removed from the affordance to keep the surface tight.
+
+---
+
 ## B-028 — EC2 dev box: containers don't pick up new compose env vars without `--force-recreate`
 
 - **Fixed:** 2026-05-15 — three-stage close-out across #95 (fix 1), #96 (fix 2), and PR `<pending>` (fix 3)
