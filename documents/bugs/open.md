@@ -76,29 +76,6 @@ Once landed, the wizard step in F7.46 should be upgraded from skip-only to fully
 
 ---
 
-## B-026 — F7.46 onboarding wizard: agent registration UI does not exist
-
-- **Severity:** Low
-- **Status:** Open
-- **Area:** Frontend / onboarding
-- **Discovered:** 2026-05-14, during F7.46 implementation.
-
-**Symptom.** PRD F7.46 + osr-roadmap Stage 4 list "invite an AI agent" as one of the five guided onboarding steps. The `/agents` route in `apps/web/src/app/Router.tsx` is registered as `<ComingSoon title="Agents" />`. The backend has `apps/api/src/agents/` with agent CRUD, and the MCP `register_agent` tool exists at the Agent Query Layer, but there is no UI for a human to register an agent from the wizard. The wizard renders this step as a skip-only "Coming soon" panel.
-
-**Resolution chosen for F7.46 v1.** Ship the wizard with the agent step as a skip-only placeholder. Add this bug entry so the followup PR has a tracked entry to close.
-
-**Proposed scope for the followup PR.**
-
-1. Replace the `ComingSoon` placeholder at `/agents` with a real Agents page.
-2. List existing agents in the org with their trust classification, oversight contact, model, last activity.
-3. "Register an agent" form: display name, model identifier (Claude Sonnet 4.6, etc.), model provider, human oversight contact (must be a registered platform user).
-4. Wire to `POST /organizations/:orgId/agents`.
-5. Update the OnboardingWizard's `invite_agent` step body to link to the new route.
-
-The MCP `register_agent` tool stays as the programmatic registration path; this PR builds the human-driven counterpart.
-
----
-
 ## B-027 — F7.46 onboarding wizard: "Sample data" button not built
 
 - **Severity:** Low
