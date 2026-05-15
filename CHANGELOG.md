@@ -10,18 +10,24 @@ This file picks up after **Phase 4 — Agent Integration** completed and tracks 
 
 The active OSR blocker list is empty for the first time since the launch push began on 2026-04-30. Remaining work for the `v0.1.0-osr` tag: a final fresh-laptop timing run and the release tag itself.
 
-### Added in this PR (#95)
-- Bug entries B-028 (compose env-var drift on the EC2 dev box) and B-029 (Vite HMR bind-mount staleness) in `documents/bugs/open.md`. Both surfaced during today's dev.provenancelogic.com outage debug; entries include proposed fixes so future operators don't re-discover them.
-- Runbook subsection "When `restart` Isn't Enough — Use `--force-recreate`" in `documents/runbooks/operations.md`. Documents the post-`git pull` workflow that prevents recurrence of the B-028 / B-029 failure modes.
+### Added
 
-### Changed in this PR (#95)
-- `/agents` route placeholder copy. The previous "Coming in a later phase" was misleading — the agent backend is shipped (MCP `register_agent`, identity model, trust classifications, audit on every tool call). Replaced with copy that names B-026 (the missing UI) and points to the available MCP path. `ComingSoon` component generalised to accept an optional `detail` prop.
+- **`refresh-ec2-dev.sh`** ops script at `infrastructure/scripts/refresh-ec2-dev.sh`. Wraps `git pull` plus `docker compose up -d --force-recreate api agent-query web` plus a 30-second `/api/v1/health` poll into one sudo-able command. Closes B-028 proposed fix 2; `operations.md` updated to recommend the script as the default post-`git pull` workflow on the EC2 dev box. B-028 entry stays Open pending fix 3 (the CI env-validator pre-flight).
 
 ---
 
 ## 2026-05-14 — Stage 2, Stage 4, and dev-site outage fix
 
 Six PRs in one session: closing the last three active OSR blockers (F7.7, F7.22 / F10.4, F7.46), the documentation-reconciliation that unblocked them, the Stage 5 polish pass, and a same-day operational fix for the dev box.
+
+### Added
+
+- **Bug entries B-028 and B-029** ([#95](https://github.com/provenance-logic/provenance/pull/95)) in `documents/bugs/open.md`. B-028 (compose env-var drift) and B-029 (Vite HMR bind-mount staleness) both surfaced during the dev.provenancelogic.com outage debug; entries include proposed fixes so future operators don't re-discover them.
+- **Runbook subsection "When `restart` Isn't Enough — Use `--force-recreate`"** ([#95](https://github.com/provenance-logic/provenance/pull/95)) in `documents/runbooks/operations.md`. Documents the post-`git pull` workflow that prevents recurrence of the B-028 / B-029 failure modes.
+
+### Changed
+
+- **`/agents` route placeholder copy** ([#95](https://github.com/provenance-logic/provenance/pull/95)). The previous "Coming in a later phase" was misleading — the agent backend is shipped (MCP `register_agent`, identity model, trust classifications, audit on every tool call). Replaced with copy that names B-026 (the missing UI) and points to the available MCP path. `ComingSoon` component generalised to accept an optional `detail` prop.
 
 ### Added
 

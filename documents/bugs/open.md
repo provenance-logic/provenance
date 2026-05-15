@@ -26,11 +26,11 @@ The fix was `docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate
 
 **Proposed fixes.**
 
-1. **Short-term, no code:** add a one-paragraph "After git pull on the dev box" note to `documents/runbooks/operations.md` documenting that any code change adding a required env var needs a `docker compose up -d --force-recreate <service>` rather than a `restart`. Two minutes of writing.
-2. **Medium-term:** a small ops script `infrastructure/scripts/refresh-ec2-dev.sh` that does `git pull && docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api agent-query web` so the "I pulled new code" path is one command instead of three.
-3. **Larger:** an env-validator pre-flight that runs in CI against `docker-compose.ec2-dev.yml` so the absence of a required var is caught at PR time, not at runtime on the box.
+1. ~~**Short-term, no code:** add a one-paragraph "After git pull on the dev box" note to `documents/runbooks/operations.md` documenting that any code change adding a required env var needs a `docker compose up -d --force-recreate <service>` rather than a `restart`. Two minutes of writing.~~ **Landed in #95** as the "When `restart` Isn't Enough — Use `--force-recreate`" subsection of `documents/runbooks/operations.md`.
+2. ~~**Medium-term:** a small ops script `infrastructure/scripts/refresh-ec2-dev.sh` that does `git pull && docker compose -f docker-compose.ec2-dev.yml up -d --force-recreate api agent-query web` so the "I pulled new code" path is one command instead of three.~~ **Landed in this PR** as `infrastructure/scripts/refresh-ec2-dev.sh`. Adds a post-recreate `/api/v1/health` poll (30s budget) so a failed refresh exits non-zero instead of leaving the operator guessing.
+3. **Larger, still open:** an env-validator pre-flight that runs in CI against `docker-compose.ec2-dev.yml` so the absence of a required var is caught at PR time, not at runtime on the box.
 
-(1) is the minimum to capture today's lesson; (2) and (3) are nice-to-haves.
+Fixes 1 and 2 reduce time-to-recovery from minutes to seconds but do not stop B-028 from recurring. Only fix 3 prevents the runtime failure outright; entry stays Open until it ships.
 
 ---
 

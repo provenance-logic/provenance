@@ -147,6 +147,12 @@ Roughly 10–30 seconds of downtime for the recreated service (Caddy returns 502
 **Default workflow after `git pull` on this box:**
 
 ```bash
+sudo /opt/provenance/infrastructure/scripts/refresh-ec2-dev.sh
+```
+
+Wraps `git pull` plus `docker compose up -d --force-recreate api agent-query web` and polls `/api/v1/health` for up to 30 seconds, exiting non-zero if the API doesn't come back. Pass `--no-pull` to recreate at the current ref without pulling; `--services "a b c"` to override the recreated list; `--skip-healthcheck` to skip the post-recreate poll. The expanded form is:
+
+```bash
 cd /opt/provenance && git pull
 cd infrastructure/docker
 sudo docker compose -f docker-compose.ec2-dev.yml \
@@ -154,7 +160,7 @@ sudo docker compose -f docker-compose.ec2-dev.yml \
   up -d --force-recreate api agent-query web
 ```
 
-This is the safe rebuild path for the three services that volume-mount source code or carry frequently-updated env config. Other services (postgres, keycloak, opa, neo4j, opensearch, redpanda, temporal, embedding) rarely need a recreate after a `git pull`; recreate them only if a compose-file change names them explicitly.
+The three services in the default list are the ones that volume-mount source code or carry frequently-updated env config. Other services (postgres, keycloak, opa, neo4j, opensearch, redpanda, temporal, embedding) rarely need a recreate after a `git pull`; recreate them only if a compose-file change names them explicitly.
 
 ---
 
