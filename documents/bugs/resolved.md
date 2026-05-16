@@ -8,7 +8,7 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ## B-048 — Seed runner doesn't set `provenance_principal_id` on Keycloak users after `/seed/principals` returns
 
-- **Fixed:** 2026-05-17 — [#PENDING](https://github.com/provenance-logic/provenance/pull/PENDING)
+- **Fixed:** 2026-05-17 — [#112](https://github.com/provenance-logic/provenance/pull/112)
 - **Severity:** was High (blocked smoke-test layer 2 and any flow that reads the `provenance_principal_id` JWT claim)
 - **Area:** Seed / Keycloak / JWT claims
 

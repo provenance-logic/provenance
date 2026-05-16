@@ -36,7 +36,7 @@ _(nothing actively in progress as of 2026-05-17. B-048 closed; demo-readiness ar
 
 | Date | PR | What |
 |---|---|---|
-| 2026-05-17 | #PENDING | Server-side `/seed/principals` Keycloak attribute write — B-048 (last OSR blocker) |
+| 2026-05-17 | #112 | Server-side `/seed/principals` Keycloak attribute write — B-048 (last OSR blocker) |
 | 2026-05-16 | #110 | Bootstrap prebuilds packages/types + smoke-test paths (`/api/` → `/api/v1/`) — B-047 + B-043 |
 | 2026-05-16 | #109 | **Phase 4 MCP server restored on dev after a 4+ week silent outage** — B-045 + B-046 |
 | 2026-05-16 | #108 | Smoke-test health path + `.env.example` SEED_* dedupe — B-043 + B-044 |
