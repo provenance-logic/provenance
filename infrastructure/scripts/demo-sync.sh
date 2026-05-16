@@ -50,8 +50,8 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans 
 # 3. Migrations
 # ---------------------------------------------------------------------------
 log "running flyway migrations"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm flyway migrate \
-  || fail "migrations" "flyway migrate failed — inspect 'flyway info'"
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm flyway-migrate \
+  || fail "migrations" "flyway-migrate run failed"
 
 # ---------------------------------------------------------------------------
 # 4. Keycloak realm import
@@ -63,12 +63,28 @@ KC_FRONTEND_URL="https://${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}" \
 
 # ---------------------------------------------------------------------------
 # 5. Seed
+#
+# `docker compose build` runs as root and creates root-owned files under
+# /opt/provenance/*/node_modules. Without this chown, the host-side pnpm
+# install below fails with EACCES on symlink creation. The seed CLI also
+# reads its config from process env (SEED_API_KEY, DATABASE_URL,
+# KEYCLOAK_ADMIN_CLIENT_SECRET) — source $ENV_FILE so those values land in
+# the subshell.
 # ---------------------------------------------------------------------------
+log "normalizing /opt/provenance ownership before host-side pnpm install"
+sudo chown -R ec2-user:ec2-user "$REPO_ROOT"
+
 log "running seed package"
 ( cd "$REPO_ROOT" && pnpm --filter @provenance/seed install --frozen-lockfile ) \
   || fail "seed-install" "pnpm install for @provenance/seed failed"
-( cd "$REPO_ROOT" && pnpm --filter @provenance/seed run seed ) \
-  || fail "seed" "seed run failed — check API and Keycloak logs"
+(
+  cd "$REPO_ROOT"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  pnpm --filter @provenance/seed run seed
+) || fail "seed" "seed run failed — check API and Keycloak logs"
 
 # ---------------------------------------------------------------------------
 # 6. Smoke test
