@@ -45,8 +45,8 @@ require jq
 # ---------------------------------------------------------------------------
 section "infrastructure"
 
-http_code=$(curl -sS -o /tmp/smoke-api-health.json -w "%{http_code}" "${BASE_URL}/api/health") \
-  || fail "infrastructure" "GET ${BASE_URL}/api/health failed to connect"
+http_code=$(curl -sS -o /tmp/smoke-api-health.json -w "%{http_code}" "${BASE_URL}/api/v1/health") \
+  || fail "infrastructure" "GET ${BASE_URL}/api/v1/health failed to connect"
 [ "$http_code" = "200" ] || fail "infrastructure" "API health returned $http_code (expected 200)"
 ok "API health returned 200 with valid TLS"
 
