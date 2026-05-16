@@ -81,9 +81,11 @@ resource "aws_security_group" "demo" {
   tags = { Name = "provenance-demo-sg" }
 }
 
-resource "aws_eip" "demo" {
-  domain = "vpc"
-  tags   = { Name = "provenance-demo-eip" }
+data "aws_eip" "demo" {
+  filter {
+    name   = "tag:Name"
+    values = [var.eip_name_tag]
+  }
 }
 
 resource "aws_instance" "demo" {
@@ -115,5 +117,5 @@ resource "aws_instance" "demo" {
 
 resource "aws_eip_association" "demo" {
   instance_id   = aws_instance.demo.id
-  allocation_id = aws_eip.demo.id
+  allocation_id = data.aws_eip.demo.id
 }
