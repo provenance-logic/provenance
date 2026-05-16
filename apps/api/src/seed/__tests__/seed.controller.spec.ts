@@ -58,14 +58,14 @@ describe('SeedController — POST /seed/principals (B-048 Keycloak attribute wri
             return {
               findOne: jest.fn().mockResolvedValue(null),
               create: jest.fn((dto: any) => dto),
-              save: jest.fn(async (entity: any) => ({ id: PRINCIPAL_ID, ...entity })),
+              save: jest.fn((entity: any) => ({ id: PRINCIPAL_ID, ...entity })),
             };
           }
           if (entity === RoleAssignmentEntity) {
             return {
               findOne: jest.fn().mockResolvedValue(null),
               create: jest.fn((dto: any) => dto),
-              save: jest.fn(async (entity: any) => entity),
+              save: jest.fn((entity: any) => entity),
             };
           }
           if (entity === DomainEntity) {
