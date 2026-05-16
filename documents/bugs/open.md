@@ -9,25 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-048 — Seed runner doesn't set `provenance_principal_id` on Keycloak users after `/seed/principals` returns
-
-- **Severity:** High (blocks smoke-test layer 2; blocks any agent flow that needs the principal_id claim)
-- **Status:** Open
-- **Area:** Seed / Keycloak / JWT claims
-- **Discovered:** 2026-05-16, during the post-#110 demo dry-run when `demo-smoke-test.sh` first reached layer 2 (auth).
-
-**Symptom.** Smoke-test layer 1 (infrastructure) now passes end-to-end. Layer 2 obtains a JWT successfully but immediately bails: `[smoke FAIL: auth] JWT missing claim: provenance_principal_id`. Decoding the JWT confirms — the payload has `provenance_org_id` and `provenance_principal_type` but is entirely missing `provenance_principal_id`. All three protocol mappers exist on the `provenance-web` Keycloak client (confirmed during `configure-keycloak-ec2.sh` output: each mapper reported "already exists — skipping"), so the claim should fire if the underlying user attribute were populated.
-
-**Root cause.** `packages/seed/src/runner.ts` creates Keycloak users with `attributes: { provenance_org_id, provenance_principal_type }` at user-create time — but the third attribute, `provenance_principal_id`, is the API-assigned UUID of the corresponding row in `identity.principals`, which doesn't exist yet at the moment of Keycloak user creation. The principal row is created next via `POST /api/v1/seed/principals`. The runner never goes back to the Keycloak user to set `provenance_principal_id = <principal id from the API response>`. So users boot with two of three `provenance_*` attributes set, and tokens carry two of three claims.
-
-**Proposed fix.** Add a follow-up `keycloak.updateUserAttributes(kc.id, { provenance_principal_id: principal.id })` call in the seed runner immediately after the `await ctx.api.post('/seed/principals', ...)` returns. The Keycloak admin helper already exists in `packages/seed/src/keycloak-client.ts` (used to create users). The update must follow the GET-merge-PUT pattern from R-004 to avoid clobbering required fields.
-
-**Why this matters.** Any agent or API flow that authenticates a JWT and reads `provenance_principal_id` will fail. The smoke test's layer 4 (agent) depends on this for the agent's `client_credentials` token; the API's RLS context propagation from `JwtStrategy` uses `provenance_principal_id` to populate `provenance.current_principal_id` in PostgreSQL.
-
-**Adjacent.** The `/api/v1/seed/principals` controller could instead do the Keycloak attribute write server-side (since it already takes `keycloakUserId` and creates the principal). That would centralize the responsibility and remove a class of "did the runner remember to update Keycloak?" bug. Worth considering when this gets implemented.
-
----
-
 ## B-029 — EC2 dev box: Vite HMR bind-mount staleness; `restart` not enough, `--force-recreate` needed
 
 - **Severity:** Low

@@ -21,6 +21,7 @@ import { TrustScoreModule } from '../trust-score/trust-score.module.js';
 import { SearchModule } from '../search/search.module.js';
 import { SeedController } from './seed.controller.js';
 import { SeedGuard } from './seed.guard.js';
+import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
 
 @Module({
   imports: [
@@ -47,6 +48,6 @@ import { SeedGuard } from './seed.guard.js';
     SearchModule,
   ],
   controllers: [SeedController],
-  providers: [SeedGuard],
+  providers: [SeedGuard, KeycloakAdminService],
 })
 export class SeedModule {}

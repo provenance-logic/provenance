@@ -34,6 +34,7 @@ import { LineageService } from '../lineage/lineage.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
 import { ProductIndexService } from '../search/product-index.service.js';
 import { OpaClient } from '../governance/opa/opa-client.js';
+import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
 import type {
   RoleType,
   PrincipalType,
@@ -228,6 +229,7 @@ export class SeedController {
     private readonly searchIndexingService: SearchIndexingService,
     private readonly productIndexService: ProductIndexService,
     private readonly opaClient: OpaClient,
+    private readonly keycloakAdmin: KeycloakAdminService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -296,7 +298,7 @@ export class SeedController {
   @Post('principals')
   @HttpCode(HttpStatus.OK)
   async principal(@Body() dto: SeedPrincipalDto): Promise<{ id: string }> {
-    return this.dataSource.transaction(async (em) => {
+    const principalId = await this.dataSource.transaction(async (em) => {
       const principalRepo = em.getRepository(PrincipalEntity);
       const roleRepo = em.getRepository(RoleAssignmentEntity);
       const domainRepo = em.getRepository(DomainEntity);
@@ -337,8 +339,32 @@ export class SeedController {
         }
       }
 
-      return { id: principal.id };
+      return principal.id;
     });
+
+    // Bind the three provenance_* attributes on the Keycloak user so subsequent
+    // tokens carry every claim the platform's JWT strategy expects. Mirrors the
+    // invitation-acceptance flow in InvitationsService.acceptInvitation. The
+    // runner sets two of the three attributes (org_id, principal_type) at user
+    // creation time, but cannot set principal_id because the principal row
+    // doesn't exist yet at that moment — so we write all three here once it
+    // does. Always-write (not first-create-only) so a partial failure on a
+    // prior run is repaired by re-seeding. Done outside the transaction so a
+    // Keycloak hiccup doesn't roll back the principal upsert.
+    try {
+      await this.keycloakAdmin.updateUserAttributes(dto.keycloakUserId, {
+        provenance_principal_id: principalId,
+        provenance_org_id: dto.orgId,
+        provenance_principal_type: 'human_user',
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Keycloak attribute write failed for ${dto.email} (${dto.keycloakUserId}): ` +
+          `${(err as Error).message} — principal row exists, re-seeding will retry`,
+      );
+    }
+
+    return { id: principalId };
   }
 
   private async upsertRole(
