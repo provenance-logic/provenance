@@ -6,6 +6,293 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-047 — Fresh `git clone` ships no `packages/types/dist/`, agent-query crash-loops on a fresh demo cycle
+
+- **Fixed:** 2026-05-16 — [#110](https://github.com/provenance-logic/provenance/pull/110)
+- **Severity:** was High (blocked demo-readiness end-to-end)
+- **Area:** Infrastructure / Docker / workspace build
+
+**Symptom.** First `terraform apply` of the demo terraform brought the stack up, but agent-query crash-looped with `TS2307: Cannot find module '@provenance/types'` on three caches/clients files. The earlier `kafkajs` resolution problem fixed in [B-045](#b-045) was gone — this was a different, deeper layer of the same class.
+
+**Root cause.** Multiple compose services (notably agent-query) bind-mount `packages/types` into the container and `import` from `@provenance/types`. Its `package.json` declares `"main": "./dist/index.js"` — so consumers need `dist/` to exist at the bind-mount target. `dist/` is a build artifact and isn't checked into git. The container Dockerfiles use `pnpm install --ignore-scripts`, deliberately skipping the root `postinstall` that would build it. The live dev box had a `dist/` only by historical accident (an older session had run a local pnpm install). A fresh `git clone` followed immediately by `docker compose up -d` has no `dist/` anywhere on disk, the bind mount exposes a directory without it, and the container crashes.
+
+**Fix.** `demo-bootstrap.sh` now runs `pnpm install --frozen-lockfile` at the workspace root *before* `docker compose up -d`. The root `postinstall` (`pnpm --filter @provenance/types build`) populates `dist/` on the host filesystem; the bind mount then exposes it to every service that needs it. Idempotent — pnpm short-circuits when the lockfile and node_modules are already in sync, so re-running bootstrap is cheap.
+
+**Pattern.** Treat `packages/types/dist/` as a host-side build dependency of the compose stack, not as something the containers build for themselves. Any new host-pnpm-driven workflow that wants to bring the stack up from scratch must run `pnpm install` at the root first. This is also why the live dev box had been getting by — the historical artifact masked a real ordering bug in the bootstrap flow.
+
+---
+
+## B-046 — `EncryptionService › fails to decrypt a tampered ciphertext` test flaked ~1.5% of CI runs
+
+- **Fixed:** 2026-05-16 — bonus-scope commit in [#109](https://github.com/provenance-logic/provenance/pull/109)
+- **Severity:** was Low (CI flake)
+- **Area:** API / encryption test
+
+**Symptom.** PR #109's CI failed with `Received promise resolved instead of rejected` on the tampered-ciphertext test. Same code passed on every other recent run on main.
+
+**Root cause.** The test built its "tampered" ciphertext as `envelope.ciphertext.replace(/.$/, '0')`. If the original ciphertext already ended in `'0'`, the replace was a no-op — the "tampered" envelope was byte-for-byte identical, decryption succeeded, and the assertion failed. With base64-ish ciphertexts, ~1/64 of runs trip this.
+
+**Fix.** Flip the last character to a value *guaranteed* to differ from the original: `last === '0' ? '1' : '0'`, prepended to `slice(0, -1)`.
+
+**Pattern.** A "make this distinct from X" test fixture must compute distinctness conditionally on X, not by replacing with a fixed value that might equal X.
+
+---
+
+## B-045 — Phase 4 MCP server silently broken on live dev for 4+ weeks
+
+- **Fixed:** 2026-05-16 — [#109](https://github.com/provenance-logic/provenance/pull/109)
+- **Severity:** was Blocker (a P0 deliverable was operationally down)
+- **Area:** API / agent-query / compose
+
+**Symptom.** While debugging an unrelated demo-cycle failure, ran `docker ps` on the live `dev.provenancelogic.com` EC2 and found `provenance-ec2-agent-query  Restarting (2) 39 seconds ago`. Container logs showed `TS2307: Cannot find module '@provenance/types'` on five distinct imports, plus `Cannot find module 'kafkajs'`. The 4-week-old image had been crash-looping silently the entire time. `https://dev.provenancelogic.com/mcp/*` had been non-functional for an unknown but non-trivial duration. `demo-bootstrap.sh` was reporting "Bootstrap complete" because it only waits for Keycloak readiness — never checked agent-query health.
+
+**Root cause.** Multi-layered, root-caused in order:
+
+1. The agent-query image was 4 weeks old. compose uses cached images and never rebuilt after `kafkajs` was added to `package.json`. The cached image's `node_modules` predated the dependency.
+2. Even after `docker compose build --no-cache agent-query` produced a fresh image, the running container still failed — because the anonymous volume `- /app/apps/agent-query/node_modules` is not refreshed when the underlying image is rebuilt. Volumes persist across `compose up --force-recreate` and even survive `compose rm -fsv` when other compose actions intervene.
+3. After explicit `docker volume rm <hash>`, the TypeScript errors disappeared — and were immediately replaced by a Zod env validation error: `MCP_API_KEY` and `DEFAULT_ORG_ID` are required non-empty strings (`z.string().min(1)`), but `.env.example` shipped both as bare `MCP_API_KEY=` / `DEFAULT_ORG_ID=`. With no `.env` file present, compose falls back to its `${VAR:-}` empty defaults and the container refuses to boot.
+
+**Fix.** Two pieces in PR #109:
+
+1. `.env.example`: give `MCP_API_KEY` and `DEFAULT_ORG_ID` non-empty placeholder values (`dev-mcp-key-change-me` and an all-zeros UUID). The JWT's `provenance_org_id` claim is the authoritative org for real traffic, so the fallback `DEFAULT_ORG_ID` just needs to parse.
+2. `docker-compose.ec2-dev.yml`: add `- ../../packages/types:/app/packages/types:cached` to the agent-query service volumes, mirroring the api side. Defense in depth — ensures the container sees current packages/types source even if the image is stale.
+
+Verified live: post-fix, agent-query is healthy on dev for the first time in weeks. Logs show `[MCP] Server initialized with 9 tools (Domain 12 enforcement: ENFORCING)`, kafkajs consumer joins the `connection_reference.state` topic, `curl http://localhost:3002/health` returns `{"status":"ok"}`.
+
+**Pattern.** Multiple meta-lessons:
+
+- "Phase X is complete" in the implementation status is a point-in-time claim, not a continuously-verified state. Without a live healthcheck somewhere that exercises the MCP path, a regression like this can hide for months.
+- Anonymous docker volumes that shadow workspace `node_modules` are a known footgun when adding workspace deps. Operator-side mitigation: `docker compose down -v` (with `-v`) to refresh, OR explicit `docker volume rm <hash>` for the targeted volume. Both are destructive of named volumes too, so reach for them deliberately.
+- `demo-bootstrap.sh` (and any future bootstrap-class script) should fail loudly when a critical service isn't healthy within a timeout, not silently report "Bootstrap complete" based on a single sentinel service. Tracked for follow-up.
+
+---
+
+## B-044 — `.env.example` had duplicate `SEED_API_KEY` / `SEED_ENABLED` entries
+
+- **Fixed:** 2026-05-16 — [#108](https://github.com/provenance-logic/provenance/pull/108)
+- **Severity:** was Low (foot-gun, not breakage)
+- **Area:** Infrastructure / env config
+
+**Symptom.** `grep -c SEED_API_KEY .env.example` returned 2. The original at line 58 (`dev-seed-token-change-me`) and a duplicate at line 103 (`seed-dev-service-token`) added by PR #107 without noticing the original. Both API container and seed CLI ended up using `seed-dev-service-token` by "last one wins" — functional, but confusing on read and a foot-gun for anyone editing one but not the other.
+
+**Fix.** Removed the dupe lines; the original block at lines 49–58 stays canonical.
+
+**Pattern.** When adding env documentation, grep first.
+
+---
+
+## B-043 — `demo-smoke-test.sh` used `/api/...` paths but the API mounts under `/api/v1`
+
+- **Fixed:** 2026-05-16 — health endpoint in [#108](https://github.com/provenance-logic/provenance/pull/108), remaining seven call sites in [#110](https://github.com/provenance-logic/provenance/pull/110)
+- **Severity:** was High (blocked every smoke-test layer 2+)
+- **Area:** Infrastructure / smoke test
+
+**Symptom.** Smoke test bailed at layer 1: `API health returned 404 (expected 200)`. Even after that one path was fixed in #108, the remaining seven call sites (`/api/organizations`, `/api/products`, `/api/lineage`, `/api/search`, `/api/governance`, `/api/products/.../trust-score`) would have 404'd at layer 3 once we got there.
+
+**Root cause.** NestJS API mounts under global prefix `/api/v1`. The smoke test was written against the wrong prefix at every call site.
+
+**Fix.** All eight `${BASE_URL}/api/...` repointed to `${BASE_URL}/api/v1/...`.
+
+**Pattern.** Smoke tests are URL strings — they cannot be unit-tested. Any change to the API's global prefix must update them in lockstep. Worth a CI step that lints smoke-test URLs against the OpenAPI spec; tracked as future work.
+
+---
+
+## B-042 — `SEED_API_KEY` / `SEED_ENABLED` not documented in `.env.example` for demo path
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was Medium (blocked demo seed step)
+- **Area:** Infrastructure / env config
+
+**Symptom.** Seed CLI errored with `SEED_API_KEY: Required` even after sourcing `.env.ec2`. The variable wasn't in the env file because it wasn't in `.env.example`.
+
+**Root cause.** Subsequently fixed twice — once added in #107 (then deduped in #108, see [B-044](#b-044)).
+
+**Fix.** Document `SEED_API_KEY` and the gating `SEED_ENABLED` flag with the constant-time-compare context from `apps/api/src/config.ts`.
+
+---
+
+## B-041 — `demo-sync.sh` seed step didn't source `.env.ec2`
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was High
+- **Area:** Infrastructure / demo sync
+
+**Symptom.** Seed CLI bailed with `SEED_API_KEY / DATABASE_URL / KEYCLOAK_ADMIN_CLIENT_SECRET: Required`. The env file had all three values; the script just never sourced them into the subshell that ran `pnpm seed`.
+
+**Fix.** Wrapped the seed run in `( cd $REPO_ROOT; set -a; source $ENV_FILE; set +a; pnpm --filter @provenance/seed run seed )`.
+
+**Pattern.** Any host-side CLI in a compose-orchestrated workflow needs to source the same env file the containers read from.
+
+---
+
+## B-040 — `/opt/provenance/*/node_modules` root-owned after `docker compose build`, breaks host-side pnpm install
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was High
+- **Area:** Infrastructure / file ownership
+
+**Symptom.** Host-side `pnpm install` died with `EACCES: permission denied, symlink ... -> /opt/provenance/apps/agent-query/node_modules/jest`. The directory existed but was owned by root.
+
+**Root cause.** `docker compose build` runs as root inside the build container, creating mount-point directories on the host as root. Subsequent host-side commands (running as `ec2-user`) can't write into them.
+
+**Fix.** `sudo chown -R ec2-user:ec2-user $REPO_ROOT` immediately before the host-side pnpm install in demo-sync.sh.
+
+**Pattern.** Whenever host-side and container-side processes both touch the same workspace tree, ownership has to be reconciled at handoff points.
+
+---
+
+## B-039 — Demo AL2023 AMI ships no Node/pnpm; `demo-sync.sh` seed step fails immediately
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / user-data
+
+**Symptom.** `[demo-sync FAIL: seed-install] pnpm install for @provenance/seed failed — pnpm: command not found`.
+
+**Root cause.** demo-sync.sh runs the seed CLI from the host (not inside a container). The Amazon Linux 2023 AMI's `dnf install -y docker git jq` step did not include Node. The project requires `engines.node >= 22.13`.
+
+**Fix.** Added Node 22 install via NodeSource + `corepack enable` to `user-data.sh.tpl`. Mirrors the existing docker-compose-plugin install pattern.
+
+---
+
+## B-038 — Demo bootstrap only overrode 2 of 8 dev-defaulted env vars
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / demo bootstrap
+
+**Symptom.** Keycloak realm came up configured for `auth.provenancelogic.com` (wrong frontend URL); API published dev URLs; Vite bundle pointed at the dev API host. End-to-end demo flow could not succeed because internal URLs didn't match the public hostnames.
+
+**Root cause.** [B-036](#b-036) shipped `PRIMARY_DOMAIN` / `AUTH_DOMAIN` for Caddy, but the compose file has SIX more env vars defaulting to dev hostnames: `KC_HOSTNAME`, `KC_FRONTEND_URL`, `KEYCLOAK_ISSUER_URL`, `APP_BASE_URL`, `VITE_API_BASE_URL`, `VITE_KEYCLOAK_URL`. Only the first two were overridden.
+
+**Fix.** demo-bootstrap.sh now writes all eight overrides to `.env.ec2`, idempotently (sed-strip then append).
+
+**Pattern.** When parameterizing a multi-environment compose file, audit every env var with a hostname-shaped default — not just the obvious ones.
+
+---
+
+## B-037 — `demo-sync.sh` referenced compose service `flyway`, but it's `flyway-migrate`
+
+- **Fixed:** 2026-05-16 — [#107](https://github.com/provenance-logic/provenance/pull/107)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / demo sync
+
+**Symptom.** `compose run --rm flyway migrate` failed with `no such service: flyway`.
+
+**Root cause.** The compose service is named `flyway-migrate` (one-shot, runs migrations then exits). demo-sync.sh was written against a stale service name.
+
+**Fix.** Service rename in demo-sync.sh: `flyway` → `flyway-migrate`. Drop the explicit `migrate` arg — the service's own command already runs `flyway migrate`.
+
+---
+
+## B-036 — Two Caddys fighting for `:80/:443` on a fresh demo cycle
+
+- **Fixed:** 2026-05-16 — [#106](https://github.com/provenance-logic/provenance/pull/106)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / TLS architecture
+
+**Symptom.** Compose stack on a fresh demo instance failed to start `provenance-ec2-caddy`: `driver failed programming external connectivity ... listen tcp4 0.0.0.0:443: bind: address already in use`. A native systemd Caddy installed by `demo-bootstrap.sh` (per PR #105) was already bound.
+
+**Root cause.** Two distinct Caddys both wanted port 443:
+1. demo-bootstrap.sh installed a native Caddy via systemd, with a hand-written Caddyfile pointing at the demo domains.
+2. docker-compose.ec2-dev.yml also defined a `caddy:2-alpine` container with its own Caddyfile (hardcoded to dev domains: `dev.provenancelogic.com`, `auth.provenancelogic.com`).
+
+Direct inspection of the live dev EC2 (via `ss -tlnp` + `systemctl is-active caddy`) confirmed the **containerized Caddy** was the canonical path: dev's systemd unit was inactive, the container was serving `https://dev.provenancelogic.com`. PR #105's native-Caddy install was the wrong direction.
+
+**Fix.** Removed the native Caddy install from `demo-bootstrap.sh` entirely (~50 lines deleted). Templatized `infrastructure/docker/config/caddy/Caddyfile` to use Caddy's `{$VAR:default}` env-var syntax (`{$PRIMARY_DOMAIN:dev.provenancelogic.com}` / `{$AUTH_DOMAIN:auth.provenancelogic.com}`). Defaults exactly match the prior hardcoded values, so the live dev box stays bit-identical when compose restarts. Added an `environment:` block to the caddy compose service passing the vars through; demo-bootstrap.sh writes demo-specific overrides into `.env.ec2`. One Caddyfile serves both dev and demo cleanly.
+
+**Pattern.** When you find duplicate-architecture code, check what's actually running in prod/dev before deciding which side to keep. Don't assume the most recently-written code is the canonical path.
+
+---
+
+## B-035 — `dnf install docker` on AL2023 ships buildx 0.12; compose plugin needs 0.17+ for `compose build`
+
+- **Fixed:** 2026-05-16 — [#105](https://github.com/provenance-logic/provenance/pull/105)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / user-data
+
+**Symptom.** `compose build` for the four custom-built images (api, web, agent-query, embedding) failed: `compose build requires buildx 0.17.0 or later`.
+
+**Root cause.** Amazon Linux 2023's `dnf install docker` installs Docker plus a buildx binary at 0.12.x. Recent docker-compose-plugin versions require buildx >= 0.17 for `compose build`. The user-data installed a fresh docker-compose plugin but didn't refresh buildx.
+
+**Fix.** user-data.sh.tpl now pulls the latest buildx release binary directly from `docker/buildx` releases, mirroring the existing compose-plugin install pattern.
+
+---
+
+## B-034 — `demo-bootstrap.sh` referenced `.env.ec2.example` template that does not exist
+
+- **Fixed:** 2026-05-16 — [#105](https://github.com/provenance-logic/provenance/pull/105)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / demo bootstrap
+
+**Symptom.** `[demo-bootstrap FATAL] no env template at /opt/provenance/infrastructure/docker/.env.ec2.example`.
+
+**Root cause.** Only `.env.example` exists in the repo. `.env.ec2.example` was a stale name in the script that was never created.
+
+**Fix.** Point `ENV_TEMPLATE` at the real `.env.example`. Runtime copy is still `.env.ec2` for separation from local-dev `.env`.
+
+---
+
+## B-033 — Upstream Caddy systemd unit hardcoded `/usr/bin/caddy`, install put it at `/usr/local/bin`
+
+- **Fixed:** 2026-05-16 — [#105](https://github.com/provenance-logic/provenance/pull/105) (later removed entirely by [#106](https://github.com/provenance-logic/provenance/pull/106))
+- **Severity:** was High
+- **Area:** Infrastructure (now obsolete — see [B-036](#b-036))
+
+**Symptom.** `caddy.service` failed to start: `Failed to locate executable /usr/bin/caddy: No such file or directory`.
+
+**Root cause.** The upstream `caddy.service` unit from `caddyserver/dist` hardcodes `ExecStart=/usr/bin/caddy`. PR #105's tarball extraction had put the binary at `/usr/local/bin/caddy`.
+
+**Fix.** Install binary directly to `/usr/bin/caddy` in #105. The whole native Caddy install was then removed in #106 in favor of containerized Caddy.
+
+---
+
+## B-032 — Caddy install via `dnf copr enable @caddy/caddy` fails on Amazon Linux 2023
+
+- **Fixed:** 2026-05-16 — [#105](https://github.com/provenance-logic/provenance/pull/105) (later removed entirely by [#106](https://github.com/provenance-logic/provenance/pull/106))
+- **Severity:** was Blocker
+- **Area:** Infrastructure (now obsolete)
+
+**Symptom.** `dnf copr enable -y @caddy/caddy` errored: `Repository 'amazonlinux-2023-x86_64' does not exist in project '@caddy/caddy'. Available repositories: 'fedora-42-aarch64', ...`.
+
+**Root cause.** The `@caddy/caddy` Copr project only publishes builds for Fedora and EPEL, not Amazon Linux 2023.
+
+**Fix.** Switched in #105 to the GitHub release tarball install path with a manual systemd unit. Subsequently obsoleted by #106's move to containerized Caddy.
+
+---
+
+## B-031 — Em dash in security group description made `terraform apply` fail at AWS
+
+- **Fixed:** 2026-05-16 — [#105](https://github.com/provenance-logic/provenance/pull/105)
+- **Severity:** was Blocker
+- **Area:** Infrastructure / terraform
+
+**Symptom.** `terraform apply` failed at the security group: `InvalidParameterValue: Value (Provenance demo instance — HTTP/HTTPS public, SSH restricted) for parameter GroupDescription is invalid. Character sets beyond ASCII are not supported.`
+
+**Root cause.** The terraform resource description contained an em dash (`—`, U+2014). AWS rejects non-ASCII in `GroupDescription`.
+
+**Fix.** Replaced with an ASCII hyphen.
+
+**Pattern.** The em-dash style used throughout this repo's docs and comments is fine in nearly all places EXCEPT AWS metadata fields. Worth a `grep -rn '—' infrastructure/terraform` pre-merge check for any future terraform changes.
+
+---
+
+## B-030 — Demo terraform assumed Route 53 ownership of `provenancelogic.com`; it's actually at Cloudflare
+
+- **Fixed:** 2026-05-16 — [#103](https://github.com/provenance-logic/provenance/pull/103) closed and superseded by [#104](https://github.com/provenance-logic/provenance/pull/104)
+- **Severity:** was Blocker (foundational design for the entire demo path)
+- **Area:** Infrastructure / DNS
+
+**Symptom.** During the very first end-to-end attempt at provisioning the demo environment, the planned approach (terraform manages an `aws_route53_record` pointing `demo.provenancelogic.com` at the new EIP) failed at `data "aws_route53_zone" "parent"` lookup. The IAM principal had Route 53 perms after a console fix, but `aws route53 list-hosted-zones` returned `[]` — there are no Route 53 zones in this AWS account.
+
+**Root cause.** `dig +short NS provenancelogic.com` revealed authoritative nameservers `naya.ns.cloudflare.com` / `alfred.ns.cloudflare.com`. The zone has always been at Cloudflare; the IAM `Route53FullAccess` policy attached during setup was useless for this purpose.
+
+**Fix.** PR #103 (terraform-managed Route 53 records) was closed without merging. Replacement PR #104 took a fundamentally different architectural shape: a **persistent Elastic IP** allocated once and tagged `Name=provenance-demo-eip`, paired with **Cloudflare A records** set once and never touched. Each demo cycle, terraform looks up the EIP by tag (`data "aws_eip"`) and attaches a fresh instance to it via `aws_eip_association`. DNS never has to change. Mirrors the same pattern the long-running `dev.provenancelogic.com` already uses.
+
+**Pattern.** Before designing infrastructure that "manages DNS for X," verify which DNS provider X actually lives at. `dig NS <domain>` is a 1-second check that would have saved a whole PR.
+
+---
+
 ## B-027 — F7.46 onboarding wizard: "Sample data" button not built
 
 - **Fixed:** 2026-05-15 — [#100](https://github.com/provenance-logic/provenance/pull/100)
