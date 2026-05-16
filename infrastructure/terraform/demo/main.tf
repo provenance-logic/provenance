@@ -88,11 +88,34 @@ data "aws_eip" "demo" {
   }
 }
 
+# Persistent EBS volume that holds Caddy's TLS cert state across demo cycles.
+# Looked up by Name tag (mirrors the EIP pattern) so terraform destroy never
+# removes it. The volume lives in us-east-1c, which means every demo instance
+# also has to launch in us-east-1c — EBS volumes can only attach within their
+# own AZ. The aws_subnet data source below pins the instance to the same AZ.
+data "aws_ebs_volume" "caddy_data" {
+  filter {
+    name   = "tag:Name"
+    values = [var.caddy_data_volume_name_tag]
+  }
+  most_recent = true
+}
+
+# Default subnet in the persistent volume's AZ. The default VPC has one default
+# subnet per AZ; we want the one whose AZ matches the EBS volume so the volume
+# attachment doesn't fail.
+data "aws_subnet" "demo" {
+  vpc_id            = data.aws_vpc.default.id
+  availability_zone = data.aws_ebs_volume.caddy_data.availability_zone
+  default_for_az    = true
+}
+
 resource "aws_instance" "demo" {
   ami                         = data.aws_ami.al2023.id
   instance_type               = "t3.xlarge"
   key_name                    = var.key_pair_name
   vpc_security_group_ids      = [aws_security_group.demo.id]
+  subnet_id                   = data.aws_subnet.demo.id
   associate_public_ip_address = true
 
   root_block_device {
@@ -118,4 +141,20 @@ resource "aws_instance" "demo" {
 resource "aws_eip_association" "demo" {
   instance_id   = aws_instance.demo.id
   allocation_id = data.aws_eip.demo.id
+}
+
+# Attach the persistent Caddy data volume. The volume itself is preserved
+# across terraform destroy; only this attachment is recreated each cycle.
+# /dev/sdf is what we ask for; AL2023's NVMe driver renames it under
+# /dev/nvme1n1 — user-data discovers the device by Linux symlink rather
+# than hardcoding /dev/sdf.
+resource "aws_volume_attachment" "caddy_data" {
+  device_name = "/dev/sdf"
+  volume_id   = data.aws_ebs_volume.caddy_data.id
+  instance_id = aws_instance.demo.id
+
+  # Without this, a terraform destroy hangs waiting for the OS to release the
+  # volume (it's mounted). Force-detach is safe because the instance itself is
+  # also being destroyed in the same plan.
+  force_detach = true
 }

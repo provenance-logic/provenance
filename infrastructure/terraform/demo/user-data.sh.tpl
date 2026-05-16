@@ -7,9 +7,54 @@ exec > /var/log/provenance-bootstrap.log 2>&1
 # the seed package. The smoke test is run separately by the operator after
 # DNS has propagated.
 
-dnf install -y docker git jq
+dnf install -y docker git jq e2fsprogs util-linux
 systemctl enable --now docker
 usermod -aG docker ec2-user
+
+# ---------------------------------------------------------------------------
+# Mount the persistent Caddy data EBS volume.
+#
+# Terraform attaches the volume tagged `provenance-demo-caddy-data` to this
+# instance at request-name /dev/sdf, which AL2023's NVMe driver exposes as
+# /dev/nvme1n1 (the second NVMe device — root is nvme0n1). The volume is
+# preserved across `terraform destroy` so Caddy's TLS cert files survive
+# every demo cycle, sidestepping Let's Encrypt's 5-cert-per-7-day rate limit
+# for the demo hostnames.
+#
+# Device discovery: find a 1 GB block device that is NOT the root device.
+# Wait up to 2 minutes for the attachment race (Terraform fires the attach
+# concurrent with user-data startup).
+# ---------------------------------------------------------------------------
+CADDY_DEV=""
+for i in $(seq 1 60); do
+  CADDY_DEV=$(lsblk -dnpo NAME,SIZE,TYPE | awk '$2 == "1G" && $3 == "disk" { print $1; exit }')
+  if [ -n "$CADDY_DEV" ]; then break; fi
+  sleep 2
+done
+
+if [ -z "$CADDY_DEV" ]; then
+  echo "user-data ERROR: persistent Caddy data EBS volume did not appear within 120s" >&2
+  exit 1
+fi
+
+# Format only on first cycle — every subsequent destroy/apply preserves the
+# filesystem and the cert files within. `blkid` returning non-zero means no
+# filesystem signature exists yet.
+if ! blkid "$CADDY_DEV" >/dev/null 2>&1; then
+  echo "user-data: no filesystem on $CADDY_DEV — formatting (first cycle)"
+  mkfs.ext4 -L caddy-data "$CADDY_DEV"
+fi
+
+mkdir -p /var/lib/caddy-data
+mount "$CADDY_DEV" /var/lib/caddy-data
+
+# Persist across reboots via UUID. Device names can shift on subsequent boots
+# if multiple EBS volumes are attached; UUID is stable. `nofail` so a missing
+# volume doesn't block boot to a degraded recoverable state.
+CADDY_UUID=$(blkid -s UUID -o value "$CADDY_DEV")
+if ! grep -q "$CADDY_UUID" /etc/fstab 2>/dev/null; then
+  echo "UUID=$CADDY_UUID /var/lib/caddy-data ext4 defaults,nofail 0 2" >> /etc/fstab
+fi
 
 # Node 22 + pnpm via corepack — demo-sync.sh runs the seed CLI from the host
 # (not inside a container), and the project requires Node >= 22.13.

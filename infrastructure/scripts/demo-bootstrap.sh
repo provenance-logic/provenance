@@ -25,8 +25,13 @@ REPO_ROOT="/opt/provenance"
 DEMO_DOMAIN="${DEMO_DOMAIN:-demo.provenancelogic.com}"
 AUTH_DEMO_DOMAIN="${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}"
 COMPOSE_FILE="${REPO_ROOT}/infrastructure/docker/docker-compose.ec2-dev.yml"
+COMPOSE_OVERRIDE="${REPO_ROOT}/infrastructure/docker/docker-compose.demo.yml"
 ENV_FILE="${REPO_ROOT}/infrastructure/docker/.env.ec2"
 ENV_TEMPLATE="${REPO_ROOT}/infrastructure/docker/.env.example"
+
+# The demo override redirects Caddy's `caddy_data` volume to a host bind-mount
+# at /var/lib/caddy-data, which user-data has mounted onto a persistent EBS
+# volume. Both files are passed in every compose invocation.
 
 log() {
   echo "[demo-bootstrap $(date '+%H:%M:%S')] $*"
@@ -112,7 +117,7 @@ sed -i \
 # ---------------------------------------------------------------------------
 log "bringing up docker compose stack"
 cd "$REPO_ROOT"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" up -d
 
 # ---------------------------------------------------------------------------
 # 3. Wait for Keycloak, then configure

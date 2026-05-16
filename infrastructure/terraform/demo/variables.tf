@@ -43,6 +43,12 @@ variable "eip_name_tag" {
   default     = "provenance-demo-eip"
 }
 
+variable "caddy_data_volume_name_tag" {
+  description = "Name tag of the pre-allocated EBS volume that persists Caddy's TLS cert store across demo cycles. The volume must already exist and carry tag Name=<this value>. Its AZ determines the AZ the demo instance launches in. See documents/runbooks/demo-environment.md for one-time provisioning steps."
+  type        = string
+  default     = "provenance-demo-caddy-data"
+}
+
 variable "github_org" {
   description = "GitHub organization that owns the repo cloned during user-data bootstrap."
   type        = string

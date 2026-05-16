@@ -17,8 +17,12 @@ set -euo pipefail
 REPO_ROOT="/opt/provenance"
 TARGET_SHA="${1:-main}"
 COMPOSE_FILE="${REPO_ROOT}/infrastructure/docker/docker-compose.ec2-dev.yml"
+COMPOSE_OVERRIDE="${REPO_ROOT}/infrastructure/docker/docker-compose.demo.yml"
 ENV_FILE="${REPO_ROOT}/infrastructure/docker/.env.ec2"
 DEMO_DOMAIN="${DEMO_DOMAIN:-demo.provenancelogic.com}"
+
+# Demo override redirects Caddy's caddy_data volume to /var/lib/caddy-data
+# (persistent EBS). Every compose invocation passes both files.
 
 log() {
   echo "[demo-sync $(date '+%H:%M:%S')] $*"
@@ -42,15 +46,15 @@ log "on commit $(git rev-parse --short HEAD)"
 # 2. Pull images and restart stack
 # ---------------------------------------------------------------------------
 log "pulling images"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull || fail "compose-pull" "docker compose pull failed"
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" pull || fail "compose-pull" "docker compose pull failed"
 log "restarting services"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans || fail "compose-up" "docker compose up failed"
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" up -d --remove-orphans || fail "compose-up" "docker compose up failed"
 
 # ---------------------------------------------------------------------------
 # 3. Migrations
 # ---------------------------------------------------------------------------
 log "running flyway migrations"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm flyway-migrate \
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" run --rm flyway-migrate \
   || fail "migrations" "flyway-migrate run failed"
 
 # ---------------------------------------------------------------------------
