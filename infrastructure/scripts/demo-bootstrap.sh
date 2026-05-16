@@ -64,13 +64,30 @@ else
   log "$ENV_FILE already present — leaving as-is"
 fi
 
-# Force the Caddy hostnames to the demo values regardless of what was in the
-# template (idempotent — overwrites prior demo lines, leaves other vars alone).
-log "writing demo Caddy hostnames into $ENV_FILE"
-sed -i '/^PRIMARY_DOMAIN=/d; /^AUTH_DOMAIN=/d' "$ENV_FILE"
+# Force every dev/auth-domain-shaped env var to demo values. The compose file
+# defaults all of these to the dev hostnames, so the demo path has to override
+# them explicitly. Idempotent — strips prior lines for these keys, then appends
+# fresh ones. Leaves all other vars in $ENV_FILE untouched.
+log "writing demo URL/hostname overrides into $ENV_FILE"
+sed -i \
+  -e '/^PRIMARY_DOMAIN=/d' \
+  -e '/^AUTH_DOMAIN=/d' \
+  -e '/^KC_HOSTNAME=/d' \
+  -e '/^KC_FRONTEND_URL=/d' \
+  -e '/^KEYCLOAK_ISSUER_URL=/d' \
+  -e '/^APP_BASE_URL=/d' \
+  -e '/^VITE_API_BASE_URL=/d' \
+  -e '/^VITE_KEYCLOAK_URL=/d' \
+  "$ENV_FILE"
 {
   echo "PRIMARY_DOMAIN=${DEMO_DOMAIN}"
   echo "AUTH_DOMAIN=${AUTH_DEMO_DOMAIN}"
+  echo "KC_HOSTNAME=${AUTH_DEMO_DOMAIN}"
+  echo "KC_FRONTEND_URL=https://${AUTH_DEMO_DOMAIN}"
+  echo "KEYCLOAK_ISSUER_URL=https://${AUTH_DEMO_DOMAIN}/realms/provenance"
+  echo "APP_BASE_URL=https://${DEMO_DOMAIN}"
+  echo "VITE_API_BASE_URL=https://${DEMO_DOMAIN}/api/v1"
+  echo "VITE_KEYCLOAK_URL=https://${AUTH_DEMO_DOMAIN}"
 } >> "$ENV_FILE"
 
 # ---------------------------------------------------------------------------

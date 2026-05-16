@@ -11,6 +11,12 @@ dnf install -y docker git jq
 systemctl enable --now docker
 usermod -aG docker ec2-user
 
+# Node 22 + pnpm via corepack — demo-sync.sh runs the seed CLI from the host
+# (not inside a container), and the project requires Node >= 22.13.
+curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+dnf install -y nodejs
+corepack enable
+
 COMPOSE_VERSION=$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest | jq -r '.tag_name')
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -fsSL \
