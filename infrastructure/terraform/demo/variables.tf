@@ -37,6 +37,12 @@ variable "auth_domain" {
   default     = "auth-demo.provenancelogic.com"
 }
 
+variable "eip_name_tag" {
+  description = "Name tag of the pre-allocated Elastic IP this module should attach to. The EIP must already exist and carry tag Name=<this value>. DNS records for demo_domain and auth_domain are expected to point at that EIP."
+  type        = string
+  default     = "provenance-demo-eip"
+}
+
 variable "github_org" {
   description = "GitHub organization that owns the repo cloned during user-data bootstrap."
   type        = string

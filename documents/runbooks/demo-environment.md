@@ -22,6 +22,24 @@ This is the procedural document. Read it at T-24h before a demo. Follow the numb
 
 ---
 
+## DNS and Elastic IP — one-time setup
+
+Demo DNS works the same way as `dev.provenancelogic.com`: a single Elastic IP is allocated once and tagged, Cloudflare A records point at that IP, and from that point on terraform attaches each newly-provisioned demo instance to the same EIP. DNS never has to change per demo cycle.
+
+**You only need to do this once per AWS account.** If `34.204.222.196` is already tagged and Cloudflare already has the records, skip this section.
+
+1. **Allocate an Elastic IP in `us-east-1`** (AWS console → EC2 → Elastic IPs → Allocate Elastic IP address), or reuse an existing unassociated one.
+2. **Tag it** with `Name=provenance-demo-eip`. This tag is how the demo terraform module finds it (`data "aws_eip" "demo"` in `main.tf`).
+3. **Add two A records at Cloudflare** for the `provenancelogic.com` zone:
+   - `demo` → the EIP, proxy mode **DNS only** (gray cloud)
+   - `auth-demo` → the EIP, proxy mode **DNS only** (gray cloud)
+
+   Both must be DNS-only (not proxied through Cloudflare) so Caddy can complete Let's Encrypt http-01 challenges directly on port 80.
+
+If you ever need to rotate the EIP, retag the new one with `Name=provenance-demo-eip`, update the two Cloudflare A records to the new IP, then `terraform apply` to re-associate the existing demo instance (or `terraform taint aws_eip_association.demo` first to force re-association).
+
+---
+
 ## T-24h Checklist
 
 Run this the day before the demo.
@@ -31,7 +49,8 @@ Run this the day before the demo.
 - [ ] Run `npm run seed:verify` locally against a dev database to confirm seed consistency
 - [ ] Confirm `infrastructure/terraform/demo/variables.tf` has the correct instance size and domain configuration
 - [ ] Confirm your AWS credentials are active: `aws sts get-caller-identity`
-- [ ] Confirm Route 53 hosted zone for `provenancelogic.com` is accessible
+- [ ] Confirm the persistent demo Elastic IP exists with tag `Name=provenance-demo-eip` (one-time setup; see "DNS and Elastic IP — one-time setup" below)
+- [ ] Confirm Cloudflare A records for `demo.provenancelogic.com` and `auth-demo.provenancelogic.com` both point at that EIP (one-time setup)
 - [ ] Run Terraform plan (Step 2 below) and verify no unexpected changes
 
 ---
@@ -42,14 +61,17 @@ Run this the day before the demo.
 cd infrastructure/terraform/demo
 terraform init
 terraform plan -out=demo.tfplan
-# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP, 1 Route 53 record.
+# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP association.
+# The Elastic IP itself is pre-allocated and looked up by tag — terraform does
+# not create or destroy it. DNS is also managed out-of-band at Cloudflare.
 terraform apply demo.tfplan
 ```
 
 Note the outputs:
-- `public_ip` - the instance IP
+- `public_ip` - the persistent demo Elastic IP
 - `instance_id` - needed for tear-down
-- `dns_name` - should be demo.provenancelogic.com
+- `dns_name` - `demo.provenancelogic.com` (already points at `public_ip` via Cloudflare)
+- `auth_dns_name` - `auth-demo.provenancelogic.com` (same)
 
 **Back up terraform.tfstate now:**
 ```bash
@@ -168,7 +190,7 @@ terraform destroy
 # Type 'yes' to confirm
 ```
 
-Verify destruction in the AWS console: EC2 instance terminated, EIP released, Route 53 record removed.
+Verify destruction in the AWS console: EC2 instance terminated, EIP detached (but **not** released — it is persistent and will be reused next cycle). Cloudflare DNS records stay in place (they still point at the persistent EIP).
 
 ---
 
