@@ -43,7 +43,7 @@ data "aws_ami" "al2023" {
 
 resource "aws_security_group" "demo" {
   name        = "provenance-demo"
-  description = "Provenance demo instance — HTTP/HTTPS public, SSH restricted"
+  description = "Provenance demo instance - HTTP/HTTPS public, SSH restricted"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {

@@ -28,7 +28,7 @@ DEMO_DOMAIN="${DEMO_DOMAIN:-demo.provenancelogic.com}"
 AUTH_DEMO_DOMAIN="${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}"
 COMPOSE_FILE="${REPO_ROOT}/infrastructure/docker/docker-compose.ec2-dev.yml"
 ENV_FILE="${REPO_ROOT}/infrastructure/docker/.env.ec2"
-ENV_TEMPLATE="${REPO_ROOT}/infrastructure/docker/.env.ec2.example"
+ENV_TEMPLATE="${REPO_ROOT}/infrastructure/docker/.env.example"
 
 log() {
   echo "[demo-bootstrap $(date '+%H:%M:%S')] $*"
@@ -52,9 +52,27 @@ command -v docker >/dev/null || fail "docker not installed — user-data should 
 # ---------------------------------------------------------------------------
 if ! command -v caddy >/dev/null; then
   log "installing Caddy"
-  sudo dnf install -y 'dnf-command(copr)'
-  sudo dnf copr enable -y @caddy/caddy
-  sudo dnf install -y caddy
+  # The @caddy/caddy Copr repo does not publish AmazonLinux 2023 builds (only
+  # Fedora + EPEL), so we install the static release binary from GitHub and
+  # wire up the systemd unit ourselves. This is the install path Caddy's own
+  # docs recommend for distros without a packaged build.
+  CADDY_VERSION=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+  log "installing Caddy ${CADDY_VERSION} from GitHub release"
+  TMPDIR_CADDY=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_CADDY"' EXIT
+  curl -fsSL -o "$TMPDIR_CADDY/caddy.tar.gz" \
+    "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+  sudo tar -xzf "$TMPDIR_CADDY/caddy.tar.gz" -C /usr/bin caddy
+  sudo chmod +x /usr/bin/caddy
+  sudo getent group caddy >/dev/null || sudo groupadd --system caddy
+  id caddy >/dev/null 2>&1 || sudo useradd --system --gid caddy \
+    --create-home --home-dir /var/lib/caddy --shell /usr/sbin/nologin \
+    --comment "Caddy web server" caddy
+  sudo mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
+  sudo chown -R caddy:caddy /var/lib/caddy /var/log/caddy
+  sudo curl -fsSL -o /etc/systemd/system/caddy.service \
+    https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service
+  sudo systemctl daemon-reload
 else
   log "caddy already installed"
 fi
