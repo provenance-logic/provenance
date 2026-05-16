@@ -6,6 +6,24 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-048 — Seed runner doesn't set `provenance_principal_id` on Keycloak users after `/seed/principals` returns
+
+- **Fixed:** 2026-05-17 — [#PENDING](https://github.com/provenance-logic/provenance/pull/PENDING)
+- **Severity:** was High (blocked smoke-test layer 2 and any flow that reads the `provenance_principal_id` JWT claim)
+- **Area:** Seed / Keycloak / JWT claims
+
+**Symptom.** Smoke-test layer 2 (auth) failed with `[smoke FAIL: auth] JWT missing claim: provenance_principal_id`. Decoding the seeded user's JWT showed `provenance_org_id` and `provenance_principal_type` populated but `provenance_principal_id` entirely absent. All three protocol mappers existed on the `provenance-web` Keycloak client, so the claim wasn't firing because the underlying user attribute wasn't set.
+
+**Root cause.** `packages/seed/src/runner.ts` writes two of the three `provenance_*` attributes on the Keycloak user at user-create time, but cannot write `provenance_principal_id` then — the platform principal row doesn't exist yet at that moment; it's created on the next call (`POST /api/v1/seed/principals`). The runner never went back to backfill the third attribute, so seeded users booted with two of three claims, and the JWT strategy's downstream fallbacks (DB-lookup keyed on `sub`) covered for the gap only on routes that re-resolve principal id from the DB. Routes that read the claim directly — including the smoke test's layer-2 contract — saw a missing value and bailed.
+
+**Fix.** Closed the gap server-side rather than in the runner, since the `/seed/principals` controller already receives `keycloakUserId` and returns `principal.id`. After the transactional upsert commits, the controller now calls `KeycloakAdminService.updateUserAttributes(keycloakUserId, { provenance_principal_id, provenance_org_id, provenance_principal_type: 'human_user' })` — mirroring the invitation-acceptance flow in `InvitationsService.acceptInvitation` (apps/api/src/organizations/invitations.service.ts:273). Always-write (not first-create-only) so a previous-run Keycloak hiccup is repaired on the next seed run. The Keycloak call sits outside the DB transaction so a Keycloak outage doesn't roll back the principal upsert; failures are logged at WARN and the endpoint still returns 200 (re-seeding repairs).
+
+Bonus scope flagged in the PR body: the runner was writing `provenance_principal_type: 'human'` rather than the canonical `'human_user'` used everywhere else in the codebase (invitations.service, JwtStrategy default, seed.controller's own principal-row write). The server-side overwrite from the fix corrects that as a side effect — every seeded user now carries the canonical type value, regardless of what the runner sent.
+
+**Pattern.** When a Keycloak attribute depends on a value the platform mints (a principal id, an agent id), bind that attribute server-side at the moment of creation rather than asking the client to make a second round-trip. It removes a "did the caller remember to follow up?" class of bug and centralizes the responsibility with the code that already has the data. `KeycloakAdminService.updateUserAttributes` follows the GET-merge-PUT discipline from R-004, so adding writes is safe.
+
+---
+
 ## B-047 — Fresh `git clone` ships no `packages/types/dist/`, agent-query crash-loops on a fresh demo cycle
 
 - **Fixed:** 2026-05-16 — [#110](https://github.com/provenance-logic/provenance/pull/110)
