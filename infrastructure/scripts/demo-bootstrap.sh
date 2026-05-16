@@ -44,6 +44,23 @@ fail() {
 [ -f "$COMPOSE_FILE" ] || fail "compose file missing: $COMPOSE_FILE"
 
 command -v docker >/dev/null || fail "docker not installed — user-data should have installed it"
+command -v pnpm >/dev/null || fail "pnpm not installed — user-data should have installed it via corepack"
+
+# ---------------------------------------------------------------------------
+# 0. Workspace install — builds packages/types/dist via root postinstall.
+#
+# Several services (notably agent-query) bind-mount packages/types into the
+# container and `import` from `@provenance/types` whose package.json points at
+# `./dist/index.js`. A fresh `git clone` ships no dist/, so the container will
+# crash-loop with "Cannot find module '@provenance/types'" if we bring up the
+# stack before the host has built it. `pnpm install` at the workspace root
+# triggers the root postinstall (`pnpm --filter @provenance/types build`).
+# Idempotent — pnpm short-circuits when the lockfile and node_modules are
+# already in sync, so re-running the bootstrap is cheap.
+# ---------------------------------------------------------------------------
+log "running pnpm install at workspace root (builds @provenance/types via postinstall)"
+( cd "$REPO_ROOT" && pnpm install --frozen-lockfile ) \
+  || fail "workspace install failed — check pnpm output above"
 
 # ---------------------------------------------------------------------------
 # 1. Env file from template + demo-specific overrides
