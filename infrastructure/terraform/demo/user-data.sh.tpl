@@ -46,14 +46,20 @@ if ! blkid "$CADDY_DEV" >/dev/null 2>&1; then
 fi
 
 mkdir -p /var/lib/caddy-data
-mount "$CADDY_DEV" /var/lib/caddy-data
+# `sync` mount option forces every write to be flushed to disk synchronously,
+# closing the ext4 dirty-page-cache window between Caddy writing a cert and
+# Terraform's force_detach yanking the volume. Performance cost is negligible
+# because Caddy's cert workload is bytes per renewal (every ~60 days). The
+# safety guarantee is worth more than the throughput.
+mount -o sync "$CADDY_DEV" /var/lib/caddy-data
 
 # Persist across reboots via UUID. Device names can shift on subsequent boots
 # if multiple EBS volumes are attached; UUID is stable. `nofail` so a missing
-# volume doesn't block boot to a degraded recoverable state.
+# volume doesn't block boot to a degraded recoverable state; `sync` mirrors
+# the mount above.
 CADDY_UUID=$(blkid -s UUID -o value "$CADDY_DEV")
 if ! grep -q "$CADDY_UUID" /etc/fstab 2>/dev/null; then
-  echo "UUID=$CADDY_UUID /var/lib/caddy-data ext4 defaults,nofail 0 2" >> /etc/fstab
+  echo "UUID=$CADDY_UUID /var/lib/caddy-data ext4 defaults,sync,nofail 0 2" >> /etc/fstab
 fi
 
 # Node 22 + pnpm via corepack — demo-sync.sh runs the seed CLI from the host
