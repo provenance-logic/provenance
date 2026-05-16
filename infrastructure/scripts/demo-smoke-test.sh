@@ -84,7 +84,7 @@ ok "JWT contains all expected provenance_* claims"
 
 me_code=$(curl -sS -o /tmp/smoke-me.json -w "%{http_code}" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/organizations/me")
+  "${BASE_URL}/api/v1/organizations/me")
 [ "$me_code" = "200" ] || fail "auth" "authenticated GET /organizations/me returned $me_code"
 ok "authenticated API call succeeded"
 
@@ -98,7 +98,7 @@ org_slug=$(jq -r '.slug // empty' /tmp/smoke-me.json)
 ok "seeded org present: ${org_slug}"
 
 PRODUCTS_JSON=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/products?limit=50")
+  "${BASE_URL}/api/v1/products?limit=50")
 count=$(echo "$PRODUCTS_JSON" | jq -r '.items | length // 0')
 [ "$count" -ge "$MIN_PRODUCTS" ] || fail "control-plane" "product count $count < minimum $MIN_PRODUCTS"
 ok "seeded products present: count=${count}"
@@ -106,7 +106,7 @@ ok "seeded products present: count=${count}"
 first_product_id=$(echo "$PRODUCTS_JSON" | jq -r '.items[0].id // empty')
 [ -n "$first_product_id" ] || fail "control-plane" "could not identify first product id"
 DETAIL=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/products/${first_product_id}")
+  "${BASE_URL}/api/v1/products/${first_product_id}")
 for field in schema ownership freshness accessStatus; do
   echo "$DETAIL" | jq -e ".enrichment.${field}" >/dev/null \
     || fail "control-plane" "product detail missing enrichment.${field}"
@@ -152,19 +152,19 @@ section "data-plane"
 [ -n "$MCP_API_KEY" ] || fail "data-plane" "MCP_API_KEY not set (service-to-service token required for data plane checks)"
 
 LINEAGE=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/lineage/smoke?productSlug=customer-360")
+  "${BASE_URL}/api/v1/lineage/smoke?productSlug=customer-360")
 echo "$LINEAGE" | jq -e '.edges | length > 0' >/dev/null \
   || fail "data-plane" "Neo4j returned no edges for customer-360"
 ok "Neo4j returned lineage edges for a seeded product"
 
 SEARCH=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/search/smoke?q=Customer%20360")
+  "${BASE_URL}/api/v1/search/smoke?q=Customer%20360")
 echo "$SEARCH" | jq -e '.semantic.hits > 0 and .keyword.hits > 0' >/dev/null \
   || fail "data-plane" "OpenSearch missing hits in one of the two indices"
 ok "OpenSearch returned hits from both data_products and provenance-products"
 
 RLS=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/governance/rls-probe?assumeOrg=beta-industries")
+  "${BASE_URL}/api/v1/governance/rls-probe?assumeOrg=beta-industries")
 echo "$RLS" | jq -e '.crossOrgRowCount == 0' >/dev/null \
   || fail "data-plane" "row-level security is not blocking cross-org reads"
 ok "PostgreSQL row-level security blocks cross-org reads"
@@ -175,7 +175,7 @@ ok "PostgreSQL row-level security blocks cross-org reads"
 section "observability"
 
 TRUST=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/products/${first_product_id}/trust-score")
+  "${BASE_URL}/api/v1/products/${first_product_id}/trust-score")
 echo "$TRUST" | jq -e '.score != null' >/dev/null \
   || fail "observability" "no trust score computed for first product"
 ok "trust score computed for at least one seeded product"
