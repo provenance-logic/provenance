@@ -39,7 +39,16 @@ describe('EncryptionService', () => {
 
   it('fails to decrypt a tampered ciphertext', async () => {
     const envelope = await svc.encrypt({ host: 'h' });
-    const tampered = { ...envelope, ciphertext: envelope.ciphertext.replace(/.$/, '0') };
+    // Flip the last char to *something different* — naively replacing with '0'
+    // is a no-op ~1/64 of the time when the ciphertext already ends in '0',
+    // which made this test flake on CI. Ensure the tampered string is always
+    // distinct from the original.
+    const last = envelope.ciphertext.slice(-1);
+    const replacement = last === '0' ? '1' : '0';
+    const tampered = {
+      ...envelope,
+      ciphertext: envelope.ciphertext.slice(0, -1) + replacement,
+    };
     await expect(svc.decrypt(tampered)).rejects.toThrow();
   });
 

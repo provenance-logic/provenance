@@ -690,6 +690,12 @@ services:
       CONNECTION_REFERENCE_ENFORCEMENT_ENABLED: "true"
     volumes:
       - ../../apps/agent-query:/app/apps/agent-query:cached
+      # `@provenance/types` is a workspace dep; without this bind mount the
+      # container only has packages/types/package.json (from the Dockerfile
+      # COPY), so its `main: ./dist/index.js` target does not exist and tsc
+      # fails to resolve every `from '@provenance/types'` import, crash-
+      # looping the container. Mirrors the same volume on the api service.
+      - ../../packages/types:/app/packages/types:cached
       - /app/apps/agent-query/node_modules
     ports:
       - "3002:3002"
