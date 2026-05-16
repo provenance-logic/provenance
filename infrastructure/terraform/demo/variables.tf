@@ -37,6 +37,18 @@ variable "auth_domain" {
   default     = "auth-demo.provenancelogic.com"
 }
 
+variable "route53_zone_name" {
+  description = "Route 53 hosted zone that owns demo_domain and auth_domain (trailing dot optional)."
+  type        = string
+  default     = "provenancelogic.com"
+}
+
+variable "dns_ttl" {
+  description = "TTL (seconds) for the demo DNS A records. Low value keeps re-pointing fast across demo cycles."
+  type        = number
+  default     = 60
+}
+
 variable "github_org" {
   description = "GitHub organization that owns the repo cloned during user-data bootstrap."
   type        = string

@@ -31,7 +31,7 @@ Run this the day before the demo.
 - [ ] Run `npm run seed:verify` locally against a dev database to confirm seed consistency
 - [ ] Confirm `infrastructure/terraform/demo/variables.tf` has the correct instance size and domain configuration
 - [ ] Confirm your AWS credentials are active: `aws sts get-caller-identity`
-- [ ] Confirm Route 53 hosted zone for `provenancelogic.com` is accessible
+- [ ] Confirm the IAM principal has Route 53 read + `ChangeResourceRecordSets` on the `provenancelogic.com` hosted zone (terraform manages the demo A records)
 - [ ] Run Terraform plan (Step 2 below) and verify no unexpected changes
 
 ---
@@ -42,14 +42,15 @@ Run this the day before the demo.
 cd infrastructure/terraform/demo
 terraform init
 terraform plan -out=demo.tfplan
-# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP, 1 Route 53 record.
+# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP, 1 EIP association, 2 Route 53 records.
 terraform apply demo.tfplan
 ```
 
 Note the outputs:
 - `public_ip` - the instance IP
 - `instance_id` - needed for tear-down
-- `dns_name` - should be demo.provenancelogic.com
+- `dns_name` - `demo.provenancelogic.com`
+- `auth_dns_name` - `auth-demo.provenancelogic.com`
 
 **Back up terraform.tfstate now:**
 ```bash

@@ -9,8 +9,13 @@ output "instance_id" {
 }
 
 output "dns_name" {
-  description = "Hostname that should resolve to the Elastic IP — set this in Route 53 before the demo."
-  value       = var.demo_domain
+  description = "Public hostname for the demo app (A record managed by this module)."
+  value       = aws_route53_record.demo.fqdn
+}
+
+output "auth_dns_name" {
+  description = "Public hostname for the demo Keycloak endpoint (A record managed by this module)."
+  value       = aws_route53_record.auth_demo.fqdn
 }
 
 output "ssh_command" {

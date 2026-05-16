@@ -26,6 +26,11 @@ data "aws_vpc" "default" {
   default = true
 }
 
+data "aws_route53_zone" "parent" {
+  name         = var.route53_zone_name
+  private_zone = false
+}
+
 data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
@@ -116,4 +121,24 @@ resource "aws_instance" "demo" {
 resource "aws_eip_association" "demo" {
   instance_id   = aws_instance.demo.id
   allocation_id = aws_eip.demo.id
+}
+
+resource "aws_route53_record" "demo" {
+  zone_id = data.aws_route53_zone.parent.zone_id
+  name    = var.demo_domain
+  type    = "A"
+  ttl     = var.dns_ttl
+  records = [aws_eip.demo.public_ip]
+
+  allow_overwrite = true
+}
+
+resource "aws_route53_record" "auth_demo" {
+  zone_id = data.aws_route53_zone.parent.zone_id
+  name    = var.auth_domain
+  type    = "A"
+  ttl     = var.dns_ttl
+  records = [aws_eip.demo.public_ip]
+
+  allow_overwrite = true
 }
