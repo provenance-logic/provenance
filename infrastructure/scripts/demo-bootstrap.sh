@@ -6,12 +6,10 @@
 #
 # Responsibilities:
 #   1. Verify the repo is cloned at /opt/provenance (user-data handles the clone)
-#   2. Install Caddy for TLS termination on demo.provenancelogic.com and
-#      auth-demo.provenancelogic.com
-#   3. Write Caddyfile and start Caddy under systemd
-#   4. Write .env.demo from the template if not already present
-#   5. Bring up the EC2 docker compose stack
-#   6. Wait for Keycloak health, then run configure-keycloak-ec2.sh
+#   2. Seed .env.ec2 from the template and pin Caddy hostnames to demo values
+#   3. Bring up the EC2 docker compose stack (Caddy runs as a container in
+#      the stack — see PRIMARY_DOMAIN / AUTH_DOMAIN in .env.ec2)
+#   4. Wait for Keycloak health, then run configure-keycloak-ec2.sh
 #
 # After this script, the operator runs demo-sync.sh <sha> to seed.
 #
@@ -48,60 +46,12 @@ fail() {
 command -v docker >/dev/null || fail "docker not installed — user-data should have installed it"
 
 # ---------------------------------------------------------------------------
-# 1. Caddy install
-# ---------------------------------------------------------------------------
-if ! command -v caddy >/dev/null; then
-  log "installing Caddy"
-  # The @caddy/caddy Copr repo does not publish AmazonLinux 2023 builds (only
-  # Fedora + EPEL), so we install the static release binary from GitHub and
-  # wire up the systemd unit ourselves. This is the install path Caddy's own
-  # docs recommend for distros without a packaged build.
-  CADDY_VERSION=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-  log "installing Caddy ${CADDY_VERSION} from GitHub release"
-  TMPDIR_CADDY=$(mktemp -d)
-  trap 'rm -rf "$TMPDIR_CADDY"' EXIT
-  curl -fsSL -o "$TMPDIR_CADDY/caddy.tar.gz" \
-    "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
-  sudo tar -xzf "$TMPDIR_CADDY/caddy.tar.gz" -C /usr/bin caddy
-  sudo chmod +x /usr/bin/caddy
-  sudo getent group caddy >/dev/null || sudo groupadd --system caddy
-  id caddy >/dev/null 2>&1 || sudo useradd --system --gid caddy \
-    --create-home --home-dir /var/lib/caddy --shell /usr/sbin/nologin \
-    --comment "Caddy web server" caddy
-  sudo mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
-  sudo chown -R caddy:caddy /var/lib/caddy /var/log/caddy
-  sudo curl -fsSL -o /etc/systemd/system/caddy.service \
-    https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service
-  sudo systemctl daemon-reload
-else
-  log "caddy already installed"
-fi
-
-# ---------------------------------------------------------------------------
-# 2. Caddyfile
-# ---------------------------------------------------------------------------
-CADDYFILE="/etc/caddy/Caddyfile"
-log "writing Caddyfile for ${DEMO_DOMAIN} and ${AUTH_DEMO_DOMAIN}"
-sudo tee "$CADDYFILE" >/dev/null <<CADDY
-${DEMO_DOMAIN} {
-  encode zstd gzip
-  reverse_proxy /api/* http://127.0.0.1:3001
-  reverse_proxy /mcp/* http://127.0.0.1:3002
-  reverse_proxy http://127.0.0.1:3000
-}
-
-${AUTH_DEMO_DOMAIN} {
-  encode zstd gzip
-  reverse_proxy http://127.0.0.1:8080
-}
-CADDY
-
-sudo systemctl enable --now caddy
-sudo systemctl reload caddy || sudo systemctl restart caddy
-log "caddy active"
-
-# ---------------------------------------------------------------------------
-# 3. Env file from template
+# 1. Env file from template + demo-specific overrides
+#
+# Caddy runs inside the compose stack (provenance-ec2-caddy, image
+# caddy:2-alpine). Its Caddyfile uses {$PRIMARY_DOMAIN:dev.provenancelogic.com}
+# / {$AUTH_DOMAIN:auth.provenancelogic.com} syntax — the defaults work for the
+# dev environment unchanged, and we override them here for demo.
 # ---------------------------------------------------------------------------
 if [ ! -f "$ENV_FILE" ]; then
   if [ -f "$ENV_TEMPLATE" ]; then
@@ -114,15 +64,24 @@ else
   log "$ENV_FILE already present — leaving as-is"
 fi
 
+# Force the Caddy hostnames to the demo values regardless of what was in the
+# template (idempotent — overwrites prior demo lines, leaves other vars alone).
+log "writing demo Caddy hostnames into $ENV_FILE"
+sed -i '/^PRIMARY_DOMAIN=/d; /^AUTH_DOMAIN=/d' "$ENV_FILE"
+{
+  echo "PRIMARY_DOMAIN=${DEMO_DOMAIN}"
+  echo "AUTH_DOMAIN=${AUTH_DEMO_DOMAIN}"
+} >> "$ENV_FILE"
+
 # ---------------------------------------------------------------------------
-# 4. Compose up
+# 2. Compose up
 # ---------------------------------------------------------------------------
 log "bringing up docker compose stack"
 cd "$REPO_ROOT"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
 # ---------------------------------------------------------------------------
-# 5. Wait for Keycloak, then configure
+# 3. Wait for Keycloak, then configure
 # ---------------------------------------------------------------------------
 log "waiting for Keycloak readiness"
 for i in $(seq 1 60); do

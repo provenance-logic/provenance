@@ -1,4 +1,4 @@
-dev.provenancelogic.com {
+{$PRIMARY_DOMAIN:dev.provenancelogic.com} {
 	# Caddy automatically obtains and renews TLS certificates from Let's Encrypt
 	# and redirects HTTP → HTTPS by default.
 
@@ -23,7 +23,7 @@ dev.provenancelogic.com {
 	}
 }
 
-auth.provenancelogic.com {
+{$AUTH_DOMAIN:auth.provenancelogic.com} {
 	# Caddy automatically obtains and renews TLS certificates from Let's Encrypt
 	# and redirects HTTP → HTTPS by default. Keycloak serves /realms/*,
 	# /resources/*, and /admin/* natively at root — no path handling needed.

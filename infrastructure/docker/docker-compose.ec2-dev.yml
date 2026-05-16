@@ -720,6 +720,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    environment:
+      # Domain names the Caddyfile binds. Defaults match the long-running dev
+      # environment so existing deployments keep working with no .env change.
+      # The demo bootstrap script overrides these in .env.ec2 to the
+      # demo/auth-demo hostnames.
+      PRIMARY_DOMAIN: ${PRIMARY_DOMAIN:-dev.provenancelogic.com}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:-auth.provenancelogic.com}
     ports:
       - "80:80"
       - "443:443"

@@ -88,7 +88,7 @@ Wait 2-3 minutes for the instance to fully initialize before proceeding.
 # SSH to the new instance
 ssh -i ~/.ssh/[your-key].pem ec2-user@demo.provenancelogic.com
 
-# Run bootstrap (installs Docker, clones repo, configures Caddy, creates .env)
+# Run bootstrap (seeds .env.ec2 with demo Caddy hostnames, brings up compose stack)
 bash infrastructure/scripts/demo-bootstrap.sh
 ```
 
