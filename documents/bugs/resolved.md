@@ -6,6 +6,33 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-051 — `demo-sync.sh` seed step crashes the api container (watch-mode + missing `procps`)
+
+- **Fixed:** 2026-05-17 — [#116](https://github.com/provenance-logic/provenance/pull/116)
+- **Severity:** was Medium (blocked `demo-sync.sh` end-to-end on every fresh demo cycle; demo-environment-only)
+- **Area:** Demo environment / api container image
+
+**Symptom.** `demo-sync.sh` reached "running seed package," printed `[INFO] seed: orgs`, then errored `[ERROR] other side closed`. The api container's restart count climbed by one on every demo-sync invocation. The api logs showed the previous process died with `errno: -2, code: 'ENOENT', syscall: 'spawn ps', path: 'ps', spawnargs: [ '-o', 'pid', '--no-headers', '--ppid', <pid> ]`.
+
+**Root cause — chain of three.**
+
+1. `apps/api/Dockerfile`'s `development` stage is `node:22-slim` (Debian, no `ps` by default — `agent-query`'s Alpine base has busybox `ps`, which is why this only bit the api).
+2. The ec2-dev compose target runs the api with `pnpm dev` → `nest start --watch`. Nest's watcher spawns `ps -o pid --no-headers --ppid <pid>` to find child PIDs to terminate before restart.
+3. `demo-sync.sh` runs `pnpm --filter @provenance/seed install --frozen-lockfile`. Even with `--filter`, pnpm fires the root postinstall (`pnpm --filter @provenance/types build`). `tsc` rewrites `packages/types/dist/*`, which is bind-mounted into the api container. Nest's watcher sees the change, tries to restart, `spawn ps` ENOENTs, the container dies mid-seed-call, and the seed CLI sees "other side closed."
+
+`demo-bootstrap.sh` doesn't hit this because it runs the types build *before* bringing the api container up — the api watch never observes a change. Previous demo cycles probably succeeded on timing luck.
+
+**Fix.** Defense in depth, two parts in one PR:
+
+1. **api Dockerfile, `development` stage:** install `procps` so the watcher's child-PID lookup works.
+2. **`demo-sync.sh`, seed-step install:** pass `--ignore-scripts` so no postinstall fires and no bind-mounted file changes during seed.
+
+Verified on the live demo box before merge — first end-to-end `[INFO] seed complete` of today's cycle, with smoke-test layers 1 + 2.1 + 2.2 passing (B-048 verified) and only the pre-existing B-050 failing as expected.
+
+**Pattern.** Watch-mode dev images and bind-mounted source trees are a footgun when paired with any host-side operation that touches the bind-mount path while the container is running. If a future feature touches the same surface, prefer (a) a production-mode image override for demo, (b) `--ignore-scripts` on any host-side install that doesn't need to rebuild, or (c) both. The same architectural smell surfaced as B-052 (vite host check) and B-053 (keycloak redirect URI) immediately after this fix landed — all three are flavors of "dev-mode defaults bite when the dev image is used to serve a demo URL."
+
+---
+
 ## B-049 — Each demo cycle issues fresh Let's Encrypt certs, burning the 5/week rate limit
 
 - **Fixed:** 2026-05-16 — [#113](https://github.com/provenance-logic/provenance/pull/113)

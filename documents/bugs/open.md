@@ -41,42 +41,6 @@ The longer-term answer (also flagged on B-051 and B-052) is that demo and dev sh
 
 ---
 
-## B-051 — `demo-sync.sh` seed step crashes the api container (watch-mode + missing `procps`)
-
-- **Severity:** Medium (blocks `demo-sync.sh` end-to-end on every fresh demo cycle; does *not* affect the dev EC2 box or local development, and does *not* gate OSR launch — this is demo-environment-only)
-- **Status:** Open
-- **Area:** Demo environment / api container image
-- **Discovered:** 2026-05-17, during the post-#113 demo verification cycle (cert landed; persistent EBS proved; seed step refused to complete).
-
-**Symptom.** `demo-sync.sh` reaches "running seed package," prints `[INFO] seed: orgs`, and immediately errors `[ERROR] other side closed`. The api container's restart count climbs by one on every demo-sync invocation. The api logs show the previous process died with:
-
-```
-errno: -2,
-code: 'ENOENT',
-syscall: 'spawn ps',
-path: 'ps',
-spawnargs: [ '-o', 'pid', '--no-headers', '--ppid', <pid> ]
-```
-
-**Root cause — chain of three.**
-
-1. `apps/api/Dockerfile`'s `development` stage is based on `node:22-slim` (Debian, no `ps` by default — `agent-query`'s Alpine base has busybox `ps` built in, which is why this only bites the api).
-2. The compose target for ec2-dev runs the api with `pnpm dev` → `nest start --watch`. Nest's watcher spawns `ps -o pid --no-headers --ppid <pid>` to find child PIDs to terminate before restart.
-3. `demo-sync.sh` runs `pnpm --filter @provenance/seed install --frozen-lockfile` host-side. Even with `--filter`, pnpm fires the root workspace's `postinstall`, which is `pnpm --filter @provenance/types build`. `tsc` rewrites `packages/types/dist/*` files. Those files are bind-mounted into the api container. Nest sees the change, tries to restart, spawn `ps` ENOENTs, the container dies in the middle of the seed call, and the seed CLI sees "other side closed."
-
-`demo-bootstrap.sh` doesn't hit this because it runs the types build *before* bringing the api container up — the api watch never observes a change. Previous demo cycles probably succeeded on timing luck (seed call finishing before the bind-mount file change propagated to the watcher).
-
-**Fix.** Defense in depth, two parts in one PR:
-
-1. **api Dockerfile, `development` stage:** install `procps` so `nest start --watch`'s child-PID lookup works on restart. This alone is not enough — restart-during-seed still kills the in-flight HTTP request — but it stops the container from crashing.
-2. **`demo-sync.sh`, seed-step install:** pass `--ignore-scripts` to the `pnpm --filter @provenance/seed install` call. The seed step doesn't need the types rebuild (bootstrap already built types; the source hasn't changed since). With scripts disabled, no bind-mounted files change, the watcher doesn't fire, the seed call lands on a stable api. Belt to the procps suspenders.
-
-**Verification path.** After both fixes land: `git pull && docker compose -f docker-compose.ec2-dev.yml -f docker-compose.demo.yml build api && docker compose ... up -d --force-recreate api` on the demo box, then `bash infrastructure/scripts/demo-sync.sh main`. Expect seed to complete and smoke-test layers 1 + (everything that doesn't trip B-050) to pass.
-
-**Longer-term consideration (deferred).** Running the api in watch mode on a "demo" environment is architecturally fragile — any file change in the bind-mounted source becomes a hard restart. A cleaner answer is a `docker-compose.demo.yml` override that runs the api in production-style (no watch). Not in scope for this fix because (a) it requires the demo image to ship `apps/api/dist` and (b) the two fixes above are sufficient to unstick demo-sync today.
-
----
-
 ## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
 
 - **Severity:** Low (smoke-test gap, not a product-surface bug)
