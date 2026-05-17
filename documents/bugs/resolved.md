@@ -6,6 +6,28 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-049 — Each demo cycle issues fresh Let's Encrypt certs, burning the 5/week rate limit
+
+- **Fixed:** 2026-05-16 — [#113](https://github.com/provenance-logic/provenance/pull/113)
+- **Severity:** was Medium (capped weekly demo throughput at ~5 cycles per identifier set; once exhausted, all external HTTPS access to the demo broke with `tls: internal error` until the rate-limit window rolled forward)
+- **Area:** Infrastructure / demo environment
+
+**Symptom.** During the post-B-048 verification cycle on 2026-05-16 (T+2 hours after merging #112), Caddy on the demo box could not obtain a TLS cert from Let's Encrypt and fell back to LE *staging* certs, which are signed by an untrusted CA. External `curl` against `https://demo.provenancelogic.com/api/v1/health` returned `TLS connect error: error:0A000438:SSL routines::tlsv1 alert internal error`; browsers showed a "Your connection is not private" warning. LE's response was `HTTP 429 urn:ietf:params:acme:error:rateLimited - too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2026-05-17 11:25:40 UTC`.
+
+**Root cause.** Caddy's cert store lived in a Docker named volume on the demo instance's root EBS, which is destroyed with every `terraform destroy`. So every `terraform apply` started Caddy with no cert state and forced it to ask Let's Encrypt for a fresh cert. LE's "Certificates per Registered Domain (extended: per exact set of identifiers)" rate limit caps fresh issuances at 5 per rolling 168-hour window. Yesterday's marathon (#104–#110) plus today's B-048 verification cycle pushed past the 5th issuance for both `demo.provenancelogic.com` and `auth-demo.provenancelogic.com`. The next eligible issuance unlocks one slot at a time as old certs age out of the rolling window — first one at 2026-05-17 ~11:25 UTC.
+
+This is structural — the demo's "on-demand teardown" model fundamentally fights LE's per-identifier rate limit if cert state isn't preserved. The week of yesterday's marathon plus today demonstrated the cap empirically: ~5 issuances exhausted the budget, and a dry-run / bug-fix / retry cycle can chew through cert slots fast.
+
+**Fix.** Pre-allocated 1 GB EBS volume tagged `provenance-demo-caddy-data` (one-time `aws ec2 create-volume`, currently `vol-0fd2383ae142d2c95` in us-east-1c). Terraform looks it up via a `data` block — same pattern as the persistent EIP — so `terraform destroy` never removes it. `user-data.sh.tpl` mounts it at `/var/lib/caddy-data` with the `sync` option (to avoid losing recent writes if `force_detach` yanks the volume mid-buffer). A new `docker-compose.demo.yml` override redirects Caddy's `caddy_data` named volume to a host bind-mount on that path. Caddy's cert files now survive every cycle.
+
+LE certs are valid 90 days and Caddy auto-renews ~30 days before expiry, so under normal demo cadence we hit LE about 4 times per year per hostname — nowhere near any rate limit.
+
+**Why the persistent EIP didn't already cover this.** The EIP made DNS records stable across cycles but did nothing for cert state — DNS pointing at a fresh server still meant Caddy on that fresh server had no cert and had to ask LE for one. Persistent EIP + ephemeral cert store + rate limit = exactly the trap we hit. Now both DNS *and* cert state are persistent across cycles; only ephemeral compute changes.
+
+**Pattern.** When an external API enforces a rate limit on a resource we mint (TLS certs, OAuth client credentials, etc.), the resource's storage must be at least as persistent as the rate-limit window. If it isn't, the rate limit eventually wins. Whenever a future Provenance feature integrates with a rate-limited external mint, check this constraint first.
+
+---
+
 ## B-048 — Seed runner doesn't set `provenance_principal_id` on Keycloak users after `/seed/principals` returns
 
 - **Fixed:** 2026-05-17 — [#112](https://github.com/provenance-logic/provenance/pull/112)

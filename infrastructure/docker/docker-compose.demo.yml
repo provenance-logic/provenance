@@ -1,0 +1,26 @@
+# docker-compose.demo.yml — demo-environment-only overrides
+#
+# Combined with `docker-compose.ec2-dev.yml` via `-f base.yml -f demo.yml`
+# in `demo-bootstrap.sh` and `demo-sync.sh`. The dev EC2 box never sees this
+# file — its Caddy keeps using the original anonymous-named volume.
+#
+# The single override here: redefine the top-level `caddy_data` volume as a
+# host bind-mount to /var/lib/caddy-data, which user-data mounts onto a
+# persistent EBS volume tagged `provenance-demo-caddy-data`. That way the
+# Let's Encrypt certificate files Caddy issues survive `terraform destroy`,
+# and every subsequent `terraform apply` reuses them instead of asking
+# Let's Encrypt for a fresh cert. Forever immune to the 5-certs-per-7-days
+# rate limit that bit us on 2026-05-16.
+
+services: {}
+
+volumes:
+  # Top-level `caddy_data` declared in docker-compose.ec2-dev.yml is replaced
+  # here. Caddy's compose service still references `caddy_data:/data` — the
+  # service stanza doesn't change, only what's behind the name.
+  caddy_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/lib/caddy-data
+      o: bind

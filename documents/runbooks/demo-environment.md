@@ -40,6 +40,37 @@ If you ever need to rotate the EIP, retag the new one with `Name=provenance-demo
 
 ---
 
+## Persistent Caddy data EBS volume — one-time setup
+
+Caddy's TLS cert store lives on a small EBS volume that survives `terraform destroy`, so each demo cycle reuses the existing valid Let's Encrypt cert instead of asking LE for a fresh one. This sidesteps LE's `5 certificates per 7-day rolling window per identifier set` rate limit — the constraint that bit us on 2026-05-16 (see [B-049](../bugs/resolved.md#b-049)). Without this volume, ~5 demo cycles per week is the hard cap, and a single bug-fix-retry loop can burn through that budget in an afternoon.
+
+**You only need to do this once per AWS account.** If `vol-0fd2383ae142d2c95` (or any volume tagged `Name=provenance-demo-caddy-data`) already exists in us-east-1c, skip this section.
+
+1. **Pick an availability zone.** The volume's AZ pins the demo instance's AZ — EBS can only attach to instances in the same AZ. We use `us-east-1c` because that's where the original demo instance happened to land. Any AZ in us-east-1 works; just be consistent.
+
+2. **Allocate a 1 GB gp3 EBS volume** in the chosen AZ:
+
+   ```bash
+   aws ec2 create-volume \
+     --availability-zone us-east-1c \
+     --size 1 --volume-type gp3 --encrypted \
+     --tag-specifications 'ResourceType=volume,Tags=[
+       {Key=Name,Value=provenance-demo-caddy-data},
+       {Key=Project,Value=Provenance},
+       {Key=Environment,Value=demo},
+       {Key=Lifecycle,Value=persistent}]'
+   ```
+
+3. **Done.** Terraform's `data "aws_ebs_volume" "caddy_data"` block (see `infrastructure/terraform/demo/main.tf`) looks up the volume by tag. Every `terraform apply` after this finds it and attaches it. `terraform destroy` removes the attachment but never the volume.
+
+4. **(Optional) Verify.** First `terraform apply` after creating the volume will detect "no filesystem" and run `mkfs.ext4` once. Subsequent applies skip the format step because the filesystem already exists.
+
+If you ever need to recreate the volume (data loss / corruption / deliberately starting fresh on cert state), `aws ec2 delete-volume --volume-id <old>` then recreate with the same tag. The next `terraform apply` will format the new volume on first mount.
+
+**Cost:** ~$0.10/month for a 1 GB gp3 volume. Negligible.
+
+---
+
 ## T-24h Checklist
 
 Run this the day before the demo.
@@ -49,8 +80,9 @@ Run this the day before the demo.
 - [ ] Run `npm run seed:verify` locally against a dev database to confirm seed consistency
 - [ ] Confirm `infrastructure/terraform/demo/variables.tf` has the correct instance size and domain configuration
 - [ ] Confirm your AWS credentials are active: `aws sts get-caller-identity`
-- [ ] Confirm the persistent demo Elastic IP exists with tag `Name=provenance-demo-eip` (one-time setup; see "DNS and Elastic IP — one-time setup" below)
+- [ ] Confirm the persistent demo Elastic IP exists with tag `Name=provenance-demo-eip` (one-time setup; see "DNS and Elastic IP — one-time setup" above)
 - [ ] Confirm Cloudflare A records for `demo.provenancelogic.com` and `auth-demo.provenancelogic.com` both point at that EIP (one-time setup)
+- [ ] Confirm the persistent Caddy data EBS volume exists with tag `Name=provenance-demo-caddy-data` in us-east-1c (one-time setup; see "Persistent Caddy data EBS volume — one-time setup" above). Without this, Let's Encrypt will eventually rate-limit and the demo will break in browsers.
 - [ ] Run Terraform plan (Step 2 below) and verify no unexpected changes
 
 ---
@@ -60,10 +92,14 @@ Run this the day before the demo.
 ```bash
 cd infrastructure/terraform/demo
 terraform init
-terraform plan -out=demo.tfplan
-# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP association.
-# The Elastic IP itself is pre-allocated and looked up by tag — terraform does
-# not create or destroy it. DNS is also managed out-of-band at Cloudflare.
+terraform plan -out=demo.tfplan \
+  -var "key_pair_name=provenance-demo" \
+  -var "your_ip_cidr=<your-public-ip>/32"
+# Review the plan. Expect: 1 EC2 instance, 1 security group, 1 EIP
+# association, 1 EBS volume attachment — four resources to add.
+# The Elastic IP and the Caddy-data EBS volume are pre-allocated and
+# looked up by tag — terraform does not create or destroy them. DNS is
+# also managed out-of-band at Cloudflare.
 terraform apply demo.tfplan
 ```
 
@@ -84,17 +120,20 @@ Wait 2-3 minutes for the instance to fully initialize before proceeding.
 
 ## Step 2 - Bootstrap the Instance
 
-```bash
-# SSH to the new instance
-ssh -i ~/.ssh/[your-key].pem ec2-user@demo.provenancelogic.com
+Bootstrap runs **automatically** as part of EC2 user-data — you do not need to SSH in and run it yourself. The `user-data.sh.tpl` installs Docker / Node / pnpm, clones the repo at the requested git SHA, mounts the persistent Caddy-data EBS volume at `/var/lib/caddy-data`, then invokes `demo-bootstrap.sh`. Total time ~5-8 minutes from `terraform apply` complete to "Bootstrap complete."
 
-# Run bootstrap (seeds .env.ec2 with demo Caddy hostnames, brings up compose stack)
-bash infrastructure/scripts/demo-bootstrap.sh
+To watch progress:
+
+```bash
+ssh -i ~/.ssh/[your-key].pem ec2-user@demo.provenancelogic.com
+sudo tail -f /var/log/provenance-bootstrap.log
 ```
 
-Bootstrap completes when you see: `Bootstrap complete. Ready for demo-sync.`
+The log ends with `Bootstrap complete. Ready for demo-sync.` followed by `user-data complete`. Wait for both lines before moving to Step 3.
 
-This takes approximately 5-8 minutes on first run.
+If user-data fails (rare — usually transient network issues during dnf install or git clone), look at `/var/log/cloud-init-output.log` for the underlying error; you can re-run `bash /opt/provenance/infrastructure/scripts/demo-bootstrap.sh` manually after fixing it, as bootstrap is idempotent.
+
+> **Compose override note.** Both `demo-bootstrap.sh` and `demo-sync.sh` invoke `docker compose` with two files: the base `docker-compose.ec2-dev.yml` plus the demo-specific `docker-compose.demo.yml` override. The override redirects Caddy's `caddy_data` named volume to a bind-mount on `/var/lib/caddy-data` — the persistent EBS mount. Don't drop the second `-f` flag if you run compose commands by hand, or Caddy will fall back to a fresh anonymous volume and forfeit cert persistence for that cycle.
 
 ---
 
@@ -190,7 +229,7 @@ terraform destroy
 # Type 'yes' to confirm
 ```
 
-Verify destruction in the AWS console: EC2 instance terminated, EIP detached (but **not** released — it is persistent and will be reused next cycle). Cloudflare DNS records stay in place (they still point at the persistent EIP).
+Verify destruction in the AWS console: EC2 instance terminated, EIP detached (but **not** released — it is persistent and will be reused next cycle), Caddy-data EBS volume detached (but **not** deleted — it is persistent and holds the cert state for the next cycle). Cloudflare DNS records stay in place (they still point at the persistent EIP).
 
 ---
 
