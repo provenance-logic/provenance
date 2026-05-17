@@ -9,38 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-053 — Keycloak `provenance-web` client rejects `https://demo.provenancelogic.com` redirect_uri
-
-- **Severity:** Medium (login is impossible from the demo URL; users land on Keycloak's "We are sorry... Invalid parameter: redirect_uri" page; does *not* gate OSR launch — demo-environment-only)
-- **Status:** In progress (fix open as PR pending)
-- **Area:** Keycloak realm configuration / demo environment
-- **Discovered:** 2026-05-17, immediately after B-052 was fixed and Matt clicked the login button on the demo site.
-
-**Symptom.** `https://auth-demo.provenancelogic.com/realms/provenance/protocol/openid-connect/auth?... redirect_uri=https%3A%2F%2Fdemo.provenancelogic.com%2F...` returns Keycloak's "We are sorry... Invalid parameter: redirect_uri" error page.
-
-**Root cause.** `infrastructure/docker/scripts/configure-keycloak-ec2.sh` hardcodes the `provenance-web` client's `redirectUris` and `webOrigins` arrays. The arrays contain `https://dev.provenancelogic.com` but not `https://demo.provenancelogic.com`. Demo runs the same Keycloak realm config script as dev (good for consistency) but the script was written before the demo hostname existed.
-
-**Fix.** Add `https://demo.provenancelogic.com/*` to `redirectUris` and `https://demo.provenancelogic.com` to `webOrigins` in the kcadm update block. Idempotent — `configure-keycloak-ec2.sh` rewrites the full arrays each run.
-
-The longer-term answer (also flagged on B-051 and B-052) is that demo and dev should not be sharing a redirectUris list defined inline in a shell script. Either drive from env vars (e.g. `KEYCLOAK_REDIRECT_URIS`) or keep dev and demo on separate realm-config scripts. Out of scope for this fix.
-
----
-
-## B-052 — Vite dev server rejects `demo.provenancelogic.com` Host header
-
-- **Severity:** Medium (web UI on the demo box returns a Vite "Blocked request" page for every URL; users cannot log in or click around at all; does *not* gate OSR launch — demo-environment-only)
-- **Status:** In progress (fix open as PR pending)
-- **Area:** Web container / Vite dev-server configuration
-- **Discovered:** 2026-05-17, immediately after B-051 was fixed and Matt browsed to `https://demo.provenancelogic.com`.
-
-**Symptom.** The web container serves `Blocked request. This host ("demo.provenancelogic.com") is not allowed. To allow this host, add "demo.provenancelogic.com" to server.allowedHosts in vite.config.js.` for every request, regardless of route or auth state.
-
-**Root cause.** `apps/web/vite.config.ts` sets `server.allowedHosts: ['dev.provenancelogic.com']` — the demo hostname was never added when the demo environment was stood up. Vite's dev server enforces Host header validation by default; only listed hosts (plus localhost) pass.
-
-**Fix.** Add `'demo.provenancelogic.com'` to the `allowedHosts` array. Same architectural smell as B-051 — running the dev-mode framework on a "demo" environment surfaces dev-only safeguards as user-visible failures. The longer-term answer is a production-mode web image for demo (or making `allowedHosts` env-driven so it can be extended per environment without code changes), but neither is needed today to unblock Matt.
-
----
-
 ## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
 
 - **Severity:** Low (smoke-test gap, not a product-surface bug)
