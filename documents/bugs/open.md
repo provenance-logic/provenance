@@ -9,42 +9,31 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-054 — Clicking access-request notification silently grants the access
+## B-055 — Access-request notification has no inline approve/deny *and* its title link is dead
 
-- **Severity:** High (correctness + governance; not UX. Approval is supposed to require explicit intent — this path produces a grant from a notification *read* action.)
-- **Status:** Open
-- **Area:** Notifications frontend or backend `mark-as-read` handler / access grant side-effect
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
-
-**Symptom.** A `marketing-lead@acme.example.com` notification listing a pending access request from `analyst@acme.example.com` for Customer 360. Maya clicks the notification with the intent of opening / dismissing it. The notification is consumed (presumably marked read), and Aiden's access request is **granted** — without Maya ever reaching an approval UI or pressing an Approve button.
-
-**Root cause hypothesis.** Either (a) the notification click handler in `apps/web/src/features/notifications/` is inadvertently calling the access-grant endpoint as a side effect of clicking/dismissing certain notification types, or (b) the backend route handling notification read/dismiss has a side effect on the underlying resource for `access_request_submitted` category notifications, or (c) the deep-link target route auto-actions the request on page load instead of waiting for an explicit user gesture. Likely (a) or (c).
-
-**Why this is High, not Medium.** The platform's value proposition (and the governance policy claims it makes — see ADR-005 through ADR-008, plus PRD Domain 7) all rest on "approval requires explicit, audited intent by a role-bearing principal." A notification *read* yielding an *approved grant* breaks that contract. The audit log will record an `access_granted` event with no corresponding human approval gesture. Worse: there is no way to distinguish, post-hoc, between a real Maya-clicked-Approve event and a Maya-skimmed-her-inbox event. This is the kind of bug that, in production, could fail a SOC 2 review on access control evidence.
-
-**Fix path.** Reproduce the click in dev tools network panel — identify which endpoint the click handler invokes. If it's the grants endpoint, separate "read notification" from "act on notification" — read should never write to the underlying resource. If the deep-link target auto-actions, add an explicit confirmation step on the approval page. Add a regression test: navigate to the notification deep link as the recipient principal, assert that no `access_grant` row is created without an explicit POST.
-
-**Impact today.** Blocks the investor demo script at Step 4 (the approval workflow beat). Sibling to [[b-055]] — both originate in the same notification → approval flow.
-
----
-
-## B-055 — Pending access-request notification has no inline approve/deny action
-
-- **Severity:** Medium (blocks demo beat; deep-link to approval UI is the acceptable MVP path — but B-054 currently breaks that deep link too)
+- **Severity:** Medium (blocks the demo's approval workflow beat — no usable path from "I see a pending request" to "I can act on it" from the notification surface)
 - **Status:** Open
 - **Area:** Notifications frontend — `apps/web/src/features/notifications/`
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough; **scope expanded 2026-05-17** after empirical reproduction confirmed both halves of the bug live in the same notification UI.
 
-**Symptom.** When `marketing-lead@acme.example.com` opens the notification center, the pending access request notification (from Aiden Chen for Customer 360) renders with a dismiss-only affordance. No Approve / Deny buttons inline, and no clearly-labeled deep link to the approval UI. The investor demo script (per `documents/demo-scripts/demo-asset-inventory.md` Section 8) calls for *"log in as `marketing-lead@acme.example.com` → Notifications → click the pending request from Aiden Chen → walk through the approval UI"* — that walk is currently a dead end.
+**Symptom.** When `marketing-lead@acme.example.com` opens the notification center, the `access_request_submitted` notification (e.g. from Aiden Chen for Campaign Attribution) has two distinct problems:
 
-**Root cause hypothesis.** Either (a) action buttons are not registered for the `access_request_submitted` notification category in the notification component's per-category renderer registry, or (b) the action buttons exist in code but a feature flag / role check is hiding them, or (c) the deep link is present but renders identically to a dismiss control. Most likely (a).
+1. **Dismiss-only actions.** No Approve / Deny buttons inline; the only action offered is Dismiss.
+2. **Dead title link.** The notification title is styled as a link but clicking it does nothing visible. The notification's `deepLink` field in the seed is `/publishing/<product-slug>/access-requests`, which doesn't match any frontend route. `resolve-destination.ts` falls through to its `/notifications` fallback — but the viewer is *already on* `/notifications`, so the click feels like a no-op. The viewer can't reach the approval surface.
 
-**Fix path.** Two acceptable MVPs:
+Empirically verified 2026-05-17 by submitting a Campaign Attribution request as `analyst@acme.example.com` and observing Maya's inbox: notification appears with dismiss-only actions, title link does nothing, and (critically) **clicking does *not* trigger any grant** — Aiden's view remained "Request Pending" after Maya's click. This is the test that retracted the originally-filed B-054 (silent-grant) hypothesis; B-054 is now in [resolved.md](./resolved.md#B-054) as misdiagnosed.
 
-1. **Add an Approve / Deny pair of buttons inline on the notification.** Requires action wiring + confirmation dialog. The cleaner UX but more code.
-2. **Make the notification a clear deep link to the approval UI for that request.** The notification's `deepLink` field already exists in the seed (`/publishing/customer-360/access-requests`); just render it as a primary CTA. Smaller diff. **Note: requires B-054 to be fixed first, otherwise the click itself grants the request.**
+**Root cause.** Both halves are in the same component: `apps/web/src/features/notifications/NotificationDrawer.tsx` (and equivalent rendering in `NotificationsPage.tsx`). The notification row has no per-category action registry — it renders the same `Mark read` / `Dismiss` controls for every category. The title link is a `<Link>` to `resolveNotificationDestination(notification.deepLink)`, but `resolve-destination.ts` has no rule for `/publishing/*` and `/publishing` isn't in the passthrough prefix list, so all `/publishing/*` deep links fall through to `/notifications`.
 
-**Impact.** Blocks the investor demo beat that pivots on "see the workflow approve in one click." Once both this and B-054 are fixed, the demo flow becomes natural again. Sibling to [[b-054]].
+**Fix path.** Two parts in one PR:
+
+1. **Add inline Approve / Deny buttons** when the notification category is `access_request_submitted` and the viewing principal is an owner-role principal who can act on the request. Clicking calls the existing `POST /access/requests/:requestId/approve` (or `/deny`) endpoint. Mark the notification read atomically on success.
+
+   The notification's payload already carries enough context (`productName`, `requesterName`, `justification`), but the request ID itself needs to be available — confirm whether `notification.payload.accessRequestId` or `notification.dedupKey` already carries it, or whether the notification trigger needs to be extended to include it. Likely a small addition to `access-notifications-trigger.worker.ts` and the `Notification.payload` type.
+
+2. **Either fix the deep link or remove the link styling on the title.** With inline actions in place, the title link is no longer load-bearing — the simplest move is to render the title as plain text (not a `<Link>`) for the `access_request_submitted` category. If a deep link to a "full request detail" page is wanted later, build the page first, then re-add the link.
+
+**Impact.** Blocks the demo's approval-workflow beat. After this lands, the natural demo flow ("Maya gets a notification, hits Approve, audit log records the explicit action") works end-to-end with cryptographically-recorded intent — which is exactly the platform's core value-prop moment.
 
 ---
 

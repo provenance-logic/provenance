@@ -6,6 +6,42 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-054 — *(MISDIAGNOSED — no code change)* — "Clicking access-request notification silently grants the access"
+
+- **Resolved:** 2026-05-17 — no fix commit; the originally-filed bug does not exist as a code defect. Retraction PR documents the investigation.
+- **Originally filed severity:** High (correctness + governance)
+- **Actual severity:** Not a bug
+- **Area:** Notifications / Access — investigated and cleared
+
+**Original symptom (as filed).** "Maya clicks the access-request notification with the intent of opening / dismissing it. The notification is consumed (presumably marked read), and Aiden's access request is granted — without Maya ever reaching an approval UI or pressing an Approve button."
+
+**Why it looked like a silent grant.** The investor-demo rehearsal walked the seeded Customer 360 path. The seed gives `analyst@acme.example.com` an active 30-day grant on Customer 360 already (granted 30 days ago, expires 30 days from now). During the rehearsal:
+
+1. Aiden opened Customer 360. The page showed the "Request Access" button despite Aiden already having an active grant — frontend grant-check was either stale/loading or there's a separate UI gating bug there. **(This is a real but distinct issue — see follow-up note below.)**
+2. Aiden clicked "Request Access" and submitted. The API correctly returned 409 (`access.service.ts:374-387` blocks duplicate-grant submissions) but the 409 was not clearly surfaced in the UI.
+3. Maya saw the *pre-existing seeded notification* about Customer 360 (from 30 days ago, `readDaysAgo: 29` in the seed) in her inbox.
+4. Maya clicked the notification. Per the click handler in `NotificationDrawer.tsx`, the click calls `markRead` (innocent — only updates `readAt`) and navigates to `resolveNotificationDestination(notification.deepLink)`, which falls through to `/notifications` because `/publishing/<product>/access-requests` is not a routable path. **No grant call. No state change to any access resource.**
+5. Aiden checked Customer 360 and saw he now has access. Matt attributed this to Maya's click — but the grant being shown was the always-present seeded grant from 30 days ago.
+
+**Empirical confirmation that retracted the bug.** 2026-05-17, with the demo box live in front of Matt:
+
+1. As Aiden, opened Campaign Attribution (a marketing-owned product Aiden does *not* have a seeded grant on). Page correctly showed "Request Access."
+2. Submitted a request. Page correctly updated to "Request Pending."
+3. Switched to Maya. New `access_request_submitted` notification visible in her inbox.
+4. Maya clicked the notification title. Notification got marked read; navigation went to `/notifications` fallback (no-op since already on that page).
+5. Switched back to Aiden and refreshed Campaign Attribution. **Status was still "Request Pending"** — Maya's click did not trigger a grant. Confirmed: no silent-grant mechanism exists in the code.
+
+**Real bugs surfaced by the investigation.** B-054 retracts but the rehearsal still exposed legitimate issues:
+
+- **B-055** (still open, scope expanded in same PR as this retraction): the notification has no Approve/Deny inline action, and its title link is dead. Both halves now captured in one entry.
+- **Possible follow-up** (not yet filed): the "Request Access" button on `ProductDetailPage` appears to render before the active-grant check resolves, or has a separate gating gap — Aiden saw "Request Access" on Customer 360 despite holding the seeded grant. Could be a load-state race. Lower priority; can be re-investigated against a fresh demo cycle.
+
+**Lesson worth keeping.** Bug reports written from live demo observation are *invaluable* — they catch what an audience sees — but the reporter is inferring mechanism from outcome. The reported mechanism ("clicking the notification caused the grant") was wrong; the *outcome* ("Aiden ended up with access without an explicit approval gesture") was technically true but caused by pre-existing seed state, not by any code path on the click. When the code investigation contradicts the bug report, the right move is to reproduce on the live environment *before* fixing — not to write a fix for a mechanism that doesn't exist. That's the path that led to this retraction; the alternative would have been a meaningless code change to "prevent" a side effect that never occurred.
+
+**Pattern for the bug ledger.** When a bug is filed and investigation shows the reported mechanism doesn't exist in code, retract with a full forensic note (like this one) rather than silently closing. The investigation is the value. Future contributors should be able to see what was checked, what was ruled out, and what *real* bugs surfaced alongside.
+
+---
+
 ## B-053 — Keycloak `provenance-web` client rejects `https://demo.provenancelogic.com` redirect_uri
 
 - **Fixed:** 2026-05-17 — [#118](https://github.com/provenance-logic/provenance/pull/118)
