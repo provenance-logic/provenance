@@ -20,6 +20,7 @@ import { NotificationsPage } from '../features/notifications/NotificationsPage.j
 import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 import { AgentsPage } from '../features/agents/AgentsPage.js';
 import { ConnectorsPage } from '../features/connectors/ConnectorsPage.js';
+import { PendingAccessRequestsPage } from '../features/access-requests/PendingAccessRequestsPage.js';
 
 function NotFoundPage() {
   return (
@@ -100,6 +101,10 @@ export function AppRouter() {
           {/* Notifications (Domain 11 — F11.4) */}
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="notifications/preferences" element={<NotificationPreferencesPage />} />
+
+          {/* Pending access requests — approver workflow surface
+              (replaces the prior "click notification to approve" flow per B-055). */}
+          <Route path="access-requests" element={<PendingAccessRequestsPage />} />
 
           <Route path="*" element={<NotFoundPage />} />
         </Route>

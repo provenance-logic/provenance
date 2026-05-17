@@ -11,6 +11,7 @@ const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/connectors', label: 'Connectors' },
   { to: '/marketplace', label: 'Marketplace' },
+  { to: '/access-requests', label: 'Access Requests' },
   { to: '/governance', label: 'Governance' },
   { to: '/agents', label: 'Agents' },
 ];

@@ -336,6 +336,13 @@ export class AccessService {
       productId?: string;
       requesterPrincipalId?: string;
       status?: string;
+      /**
+       * When set, restrict results to requests for products owned by this
+       * principal. The "approver queue" filter used by the Pending Requests
+       * page so a domain owner sees their own actionable workload instead
+       * of every request in the org. Joins data_products on product_id.
+       */
+      forApproverPrincipalId?: string;
       limit: number;
       offset: number;
     },
@@ -357,6 +364,14 @@ export class AccessService {
     }
     if (filters.status) {
       qb.andWhere('req.status = :status', { status: filters.status });
+    }
+    if (filters.forApproverPrincipalId) {
+      qb.innerJoin(
+        DataProductEntity,
+        'prod',
+        'prod.id = req.productId AND prod.owner_principal_id = :approver',
+        { approver: filters.forApproverPrincipalId },
+      );
     }
 
     const [items, total] = await qb.getManyAndCount();

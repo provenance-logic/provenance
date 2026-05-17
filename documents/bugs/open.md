@@ -9,34 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-055 — Access-request notification has no inline approve/deny *and* its title link is dead
-
-- **Severity:** Medium (blocks the demo's approval workflow beat — no usable path from "I see a pending request" to "I can act on it" from the notification surface)
-- **Status:** Open
-- **Area:** Notifications frontend — `apps/web/src/features/notifications/`
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough; **scope expanded 2026-05-17** after empirical reproduction confirmed both halves of the bug live in the same notification UI.
-
-**Symptom.** When `marketing-lead@acme.example.com` opens the notification center, the `access_request_submitted` notification (e.g. from Aiden Chen for Campaign Attribution) has two distinct problems:
-
-1. **Dismiss-only actions.** No Approve / Deny buttons inline; the only action offered is Dismiss.
-2. **Dead title link.** The notification title is styled as a link but clicking it does nothing visible. The notification's `deepLink` field in the seed is `/publishing/<product-slug>/access-requests`, which doesn't match any frontend route. `resolve-destination.ts` falls through to its `/notifications` fallback — but the viewer is *already on* `/notifications`, so the click feels like a no-op. The viewer can't reach the approval surface.
-
-Empirically verified 2026-05-17 by submitting a Campaign Attribution request as `analyst@acme.example.com` and observing Maya's inbox: notification appears with dismiss-only actions, title link does nothing, and (critically) **clicking does *not* trigger any grant** — Aiden's view remained "Request Pending" after Maya's click. This is the test that retracted the originally-filed B-054 (silent-grant) hypothesis; B-054 is now in [resolved.md](./resolved.md#B-054) as misdiagnosed.
-
-**Root cause.** Both halves are in the same component: `apps/web/src/features/notifications/NotificationDrawer.tsx` (and equivalent rendering in `NotificationsPage.tsx`). The notification row has no per-category action registry — it renders the same `Mark read` / `Dismiss` controls for every category. The title link is a `<Link>` to `resolveNotificationDestination(notification.deepLink)`, but `resolve-destination.ts` has no rule for `/publishing/*` and `/publishing` isn't in the passthrough prefix list, so all `/publishing/*` deep links fall through to `/notifications`.
-
-**Fix path.** Two parts in one PR:
-
-1. **Add inline Approve / Deny buttons** when the notification category is `access_request_submitted` and the viewing principal is an owner-role principal who can act on the request. Clicking calls the existing `POST /access/requests/:requestId/approve` (or `/deny`) endpoint. Mark the notification read atomically on success.
-
-   The notification's payload already carries enough context (`productName`, `requesterName`, `justification`), but the request ID itself needs to be available — confirm whether `notification.payload.accessRequestId` or `notification.dedupKey` already carries it, or whether the notification trigger needs to be extended to include it. Likely a small addition to `access-notifications-trigger.worker.ts` and the `Notification.payload` type.
-
-2. **Either fix the deep link or remove the link styling on the title.** With inline actions in place, the title link is no longer load-bearing — the simplest move is to render the title as plain text (not a `<Link>`) for the `access_request_submitted` category. If a deep link to a "full request detail" page is wanted later, build the page first, then re-add the link.
-
-**Impact.** Blocks the demo's approval-workflow beat. After this lands, the natural demo flow ("Maya gets a notification, hits Approve, audit log records the explicit action") works end-to-end with cryptographically-recorded intent — which is exactly the platform's core value-prop moment.
-
----
-
 ## B-056 — Logout from `/agents` returns raw JSON 404 instead of redirecting to login
 
 - **Severity:** Medium (UX + security-adjacent — exposes API error shapes to end users on logout)
