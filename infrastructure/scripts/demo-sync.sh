@@ -79,7 +79,14 @@ log "normalizing /opt/provenance ownership before host-side pnpm install"
 sudo chown -R ec2-user:ec2-user "$REPO_ROOT"
 
 log "running seed package"
-( cd "$REPO_ROOT" && pnpm --filter @provenance/seed install --frozen-lockfile ) \
+# --ignore-scripts: even with `--filter @provenance/seed`, pnpm runs the root
+# workspace's postinstall (`pnpm --filter @provenance/types build`). tsc
+# rewrites packages/types/dist/* in the bind-mounted source tree, which
+# fires the api container's nest watcher and restarts it mid-seed-call.
+# Bootstrap already builds types before bringing the stack up, and the seed
+# step is run on the *same* checkout — no source has changed since bootstrap,
+# so the postinstall rebuild is wasted work anyway. See B-051.
+( cd "$REPO_ROOT" && pnpm --filter @provenance/seed install --frozen-lockfile --ignore-scripts ) \
   || fail "seed-install" "pnpm install for @provenance/seed failed"
 (
   cd "$REPO_ROOT"
