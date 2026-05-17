@@ -26,6 +26,18 @@ export interface RegisterAgentRequest {
   org_id: string;
 }
 
+export interface ClassificationHistoryEntry {
+  classification_id: string;
+  agent_id: string;
+  classification: 'Observed' | 'Supervised' | 'Autonomous';
+  scope: string;
+  changed_by_principal_id: string;
+  changed_by_principal_type: string;
+  reason: string | null;
+  effective_from: string;
+  effective_until: string | null;
+}
+
 export const agentsApi = {
   list: (orgId: string) =>
     api.get<AgentResponse[]>(`/agents?orgId=${encodeURIComponent(orgId)}`),
@@ -33,4 +45,8 @@ export const agentsApi = {
     api.post<AgentResponse>('/agents', dto),
   get: (agentId: string) =>
     api.get<AgentResponse>(`/agents/${encodeURIComponent(agentId)}`),
+  classificationHistory: (agentId: string) =>
+    api.get<ClassificationHistoryEntry[]>(
+      `/agents/${encodeURIComponent(agentId)}/classification/history`,
+    ),
 };

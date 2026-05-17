@@ -139,9 +139,14 @@ function AgentTable({ agents }: { agents: AgentResponse[] }) {
             </tr>
           )}
           {agents.map((a) => (
-            <tr key={a.agent_id}>
+            <tr key={a.agent_id} className="hover:bg-slate-50">
               <Td>
-                <div className="font-medium text-slate-900">{a.display_name}</div>
+                <Link
+                  to={`/agents/${a.agent_id}`}
+                  className="font-medium text-slate-900 hover:text-brand-700"
+                >
+                  {a.display_name}
+                </Link>
                 <div className="text-xs text-slate-400 font-mono">{a.agent_id.slice(0, 8)}…</div>
               </Td>
               <Td>

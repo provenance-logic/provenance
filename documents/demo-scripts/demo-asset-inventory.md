@@ -209,7 +209,7 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 
 ### Audience A: Investor / non-technical (10 min)
 
-> **🚨 Rehearsal blockers (2026-05-17, updated as fixes land):** Step 4's approval workflow ✅ **fixed** (B-055 landed; B-054 retracted as misdiagnosed — see resolved.md). Steps 6 and 7 still trip B-057 (no agent detail page). Step 8 needs the finance-lead workaround for B-058 (trust-score-drop only seeded for finance-lead, not governance). Full bug details in `bugs/open.md`.
+> **🚨 Rehearsal blockers (2026-05-17, updated as fixes land):** Step 4's approval workflow ✅ **fixed** (B-055 landed; B-054 retracted as misdiagnosed — see resolved.md). Steps 6 and 7 ✅ **fixed** (B-057 landed — agent detail page at `/agents/:agentId` with Overview / Access Grants / Connection References / Classification History tabs). Step 8 needs the finance-lead workaround for B-058 (trust-score-drop only seeded for finance-lead, not governance). Full bug details in `bugs/open.md`.
 
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
@@ -218,15 +218,15 @@ The story is "**this is a coordination platform for the AI-agent era.**" Show, d
 3. **Click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."*
 4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Open **Access Requests** in the left nav (or click the notification — it deep-links to the same page). The pending request from Aiden is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."* (B-055 fix landed 2026-05-17 — replaced the prior workaround-via-notification path.)
 5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide. *"Approved means *usable*, not 'wait three days for IT.'"*
-6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."* **⚠️ B-057 workaround:** the rows aren't clickable and there's no detail page yet. Make the trust-classification + oversight-contact point verbally from the row content. Skip the "click into agent detail" beat.
-7. **(B-057-blocked — collapse into Step 6.)** Originally: open Marketing Copilot's audit trail and show the classification-change history. Until the agent detail page exists, narrate the audit-trail point without navigating: *"every agent action is provenanced — same word the company is named for."*
+6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
+7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The Classification History tab shows the observed → supervised transition with reason and approver. *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* (B-057 fix landed 2026-05-17.)
 8. **Open `governance@acme.example.com`.** Show the compliance drift signal on Customer 360. **⚠️ B-058 — script-vs-data mismatch:** the *original phrasing of this step* implied the trust-score-drop notification was in `governance@acme`'s inbox. It isn't — it's seeded for `finance-lead@acme.example.com` (which Section 6 of this file always correctly listed; the script step was the inconsistent one). **For the strongest demo moment, switch to `finance-lead@acme.example.com` for the trust-score beat** — the 0.91 → 0.78 notification is there. *"And the platform tells you when something is wrong before you ask."* Honest answer to the bug: governance roles arguably *should* see this notification too — that's the fix path documented in B-058.
 
 **What to avoid:** don't run the smoke test. Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
 
 ### Audience B: Technical colleague / data architect (15 min)
 
-> **🚨 Rehearsal blocker (2026-05-17):** Step 7 below (agent detail page) trips B-057 — the page doesn't exist. Collapse Steps 7 and 8 into a single beat where you point at the agent registry row and narrate the rest. Also note B-056 (logout from `/agents` returns raw JSON 404) — *don't log out from the agents tab*; navigate to `/` first.
+> **Status (2026-05-17):** B-057 ✅ fixed — agent detail page now ships. B-056 still open — *don't log out from `/agents` or `/agents/:agentId`*, navigate to `/` first to log out cleanly.
 
 The story is "**we made all the right architecture calls and there's evidence of each one in the running stack.**"
 
@@ -243,7 +243,7 @@ The story is "**we made all the right architecture calls and there's evidence of
 
 ### Audience C: Governance / compliance officer (12 min)
 
-> **🚨 Rehearsal blocker (2026-05-17):** Step 5 (click the Marketing Copilot agent) trips B-057 — there is no agent detail page. The classification-history beat has to be narrated rather than shown. The connection-reference surface for Domain 12 also has no UI today — make it a verbal point. Also, since this is the audience that cares most about audit-trail / approval-evidence integrity, **mention B-054 openly if it comes up** — "we found a notification-click side-effect bug in rehearsal; fix is in flight" is a better answer than dancing around it.
+> **Status (2026-05-17):** B-057 ✅ fixed — agent detail page lands the classification-history and connection-reference (Domain 12) beats with real UI surface, not narration.
 
 The story is "**we made your job a software problem.**"
 
@@ -265,7 +265,7 @@ The story is "**we made your job a software problem.**"
 - ✅ **B-054 (retracted) — misdiagnosed as silent grant; see [resolved.md](../bugs/resolved.md#B-054).** The "grant happened after clicking the notification" observation was the always-existing seeded grant on Customer 360, attributed to the click. No silent-grant mechanism exists in the code.
 - ✅ **B-055 (fixed 2026-05-17) — approval workflow has a proper home.** New page at `/access-requests` lists all pending requests the caller can approve, with inline Approve / Deny. Linked from the left nav as "Access Requests." Notification deep-links route here.
 - **B-056 (Medium) — logout from `/agents` returns a raw JSON 404.** NestJS error response leaks through to the browser. **Workaround:** before logging out, navigate to `/` (home). Then log out cleanly. **Never end a live demo by logging out from `/agents`** — the JSON error would be the audience's last impression.
-- **B-057 (Medium) — no agent detail page.** Agent registry rows are not clickable; the detail surface (access grants, connection references, audit trail, classification history) doesn't exist yet. **Workaround:** make the points verbally from the agent-registry row. Skip every "click into agent" / "open the audit-trail tab" beat in the scripts. This affects Section 10A Steps 6–7, Section 10B Step 7, Section 10C Step 5.
+- ✅ **B-057 (fixed 2026-05-17) — agent detail page now lives at `/agents/:agentId`.** Four-tab surface (Overview / Access Grants / Connection References / Classification History) backed by existing endpoints. The Domain 12 connection-reference story now has a real visible surface — first one in the UI. Rows in the agent registry are clickable links.
 - **B-058 (Low) — trust-score-drop notification not in `governance@acme` inbox.** The original Step 8 of the investor script (Section 10A) implied it would be; the seed only places it in `finance-lead@acme`. Section 6 of this file *correctly* lists it under finance-lead — the inconsistency was in the script step, not in Section 6. **Workaround for live demo:** switch to `finance-lead@acme.example.com` for the trust-score beat. **Fix path:** governance should arguably see this signal too — add `governance@acme` as a second recipient in `packages/seed/src/notifications/acme-corp-notifications.ts` using a distinct `seedKey` for idempotency.
 
 ### Pre-existing rough edges (still apply)

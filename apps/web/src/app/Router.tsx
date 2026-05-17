@@ -19,6 +19,7 @@ import { OrgRolesPage } from '../features/team/OrgRolesPage.js';
 import { NotificationsPage } from '../features/notifications/NotificationsPage.js';
 import { NotificationPreferencesPage } from '../features/notifications/NotificationPreferencesPage.js';
 import { AgentsPage } from '../features/agents/AgentsPage.js';
+import { AgentDetailPage } from '../features/agents/AgentDetailPage.js';
 import { ConnectorsPage } from '../features/connectors/ConnectorsPage.js';
 import { PendingAccessRequestsPage } from '../features/access-requests/PendingAccessRequestsPage.js';
 
@@ -96,6 +97,7 @@ export function AppRouter() {
           <Route path="governance/compliance" element={<ComplianceMonitorPage />} />
           <Route path="governance/exceptions" element={<ExceptionsPage />} />
           <Route path="agents" element={<AgentsPage />} />
+          <Route path="agents/:agentId" element={<AgentDetailPage />} />
           <Route path="connectors" element={<ConnectorsPage />} />
 
           {/* Notifications (Domain 11 — F11.4) */}
