@@ -9,6 +9,119 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-054 — Clicking access-request notification silently grants the access
+
+- **Severity:** High (correctness + governance; not UX. Approval is supposed to require explicit intent — this path produces a grant from a notification *read* action.)
+- **Status:** Open
+- **Area:** Notifications frontend or backend `mark-as-read` handler / access grant side-effect
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+
+**Symptom.** A `marketing-lead@acme.example.com` notification listing a pending access request from `analyst@acme.example.com` for Customer 360. Maya clicks the notification with the intent of opening / dismissing it. The notification is consumed (presumably marked read), and Aiden's access request is **granted** — without Maya ever reaching an approval UI or pressing an Approve button.
+
+**Root cause hypothesis.** Either (a) the notification click handler in `apps/web/src/features/notifications/` is inadvertently calling the access-grant endpoint as a side effect of clicking/dismissing certain notification types, or (b) the backend route handling notification read/dismiss has a side effect on the underlying resource for `access_request_submitted` category notifications, or (c) the deep-link target route auto-actions the request on page load instead of waiting for an explicit user gesture. Likely (a) or (c).
+
+**Why this is High, not Medium.** The platform's value proposition (and the governance policy claims it makes — see ADR-005 through ADR-008, plus PRD Domain 7) all rest on "approval requires explicit, audited intent by a role-bearing principal." A notification *read* yielding an *approved grant* breaks that contract. The audit log will record an `access_granted` event with no corresponding human approval gesture. Worse: there is no way to distinguish, post-hoc, between a real Maya-clicked-Approve event and a Maya-skimmed-her-inbox event. This is the kind of bug that, in production, could fail a SOC 2 review on access control evidence.
+
+**Fix path.** Reproduce the click in dev tools network panel — identify which endpoint the click handler invokes. If it's the grants endpoint, separate "read notification" from "act on notification" — read should never write to the underlying resource. If the deep-link target auto-actions, add an explicit confirmation step on the approval page. Add a regression test: navigate to the notification deep link as the recipient principal, assert that no `access_grant` row is created without an explicit POST.
+
+**Impact today.** Blocks the investor demo script at Step 4 (the approval workflow beat). Sibling to [[b-055]] — both originate in the same notification → approval flow.
+
+---
+
+## B-055 — Pending access-request notification has no inline approve/deny action
+
+- **Severity:** Medium (blocks demo beat; deep-link to approval UI is the acceptable MVP path — but B-054 currently breaks that deep link too)
+- **Status:** Open
+- **Area:** Notifications frontend — `apps/web/src/features/notifications/`
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+
+**Symptom.** When `marketing-lead@acme.example.com` opens the notification center, the pending access request notification (from Aiden Chen for Customer 360) renders with a dismiss-only affordance. No Approve / Deny buttons inline, and no clearly-labeled deep link to the approval UI. The investor demo script (per `documents/demo-scripts/demo-asset-inventory.md` Section 8) calls for *"log in as `marketing-lead@acme.example.com` → Notifications → click the pending request from Aiden Chen → walk through the approval UI"* — that walk is currently a dead end.
+
+**Root cause hypothesis.** Either (a) action buttons are not registered for the `access_request_submitted` notification category in the notification component's per-category renderer registry, or (b) the action buttons exist in code but a feature flag / role check is hiding them, or (c) the deep link is present but renders identically to a dismiss control. Most likely (a).
+
+**Fix path.** Two acceptable MVPs:
+
+1. **Add an Approve / Deny pair of buttons inline on the notification.** Requires action wiring + confirmation dialog. The cleaner UX but more code.
+2. **Make the notification a clear deep link to the approval UI for that request.** The notification's `deepLink` field already exists in the seed (`/publishing/customer-360/access-requests`); just render it as a primary CTA. Smaller diff. **Note: requires B-054 to be fixed first, otherwise the click itself grants the request.**
+
+**Impact.** Blocks the investor demo beat that pivots on "see the workflow approve in one click." Once both this and B-054 are fixed, the demo flow becomes natural again. Sibling to [[b-054]].
+
+---
+
+## B-056 — Logout from `/agents` returns raw JSON 404 instead of redirecting to login
+
+- **Severity:** Medium (UX + security-adjacent — exposes API error shapes to end users on logout)
+- **Status:** Open
+- **Area:** Auth flow + frontend router config
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+
+**Symptom.** Logged in at `/agents` as any persona. Click logout. Instead of landing on the Keycloak login page, the browser displays a raw JSON 404 body: `{"message":"Cannot GET /agents","statusCode":404,"error":"Not Found"}`. The response shape is NestJS — the request is reaching the NestJS API on port 3001, not the React app on port 3000.
+
+**Root cause hypothesis.** Two places to check:
+
+1. **Post-logout redirect URI** in the `provenance-web` Keycloak client. If the logout `redirect_uri` is unset or points at the wrong host, Keycloak doesn't redirect cleanly, and the browser ends up at whatever URL it was on before logout — but with no auth header.
+2. **Frontend route guard on `/agents`** — does the route have an auth guard that redirects to login when the user is unauthenticated, or does it fall through to a 404? Combined with the NestJS shape of the response, it suggests Caddy is proxying `/agents` to the API as a fallback when the frontend isn't authoritative for that path.
+
+**Fix path.** Set the Keycloak `provenance-web` client `frontchannelLogout.url` (or whatever the v24+ equivalent is) to redirect to `/` post-logout. On the frontend, add an auth guard at the route level so any authenticated path renders a "redirecting to login" component when unauthenticated, instead of falling through. Both fixes together; either alone leaves the other class of paths exposed.
+
+**Impact.** Worst possible last impression in a demo: a raw JSON error after the audience just saw a polished app. Workaround during a live demo: do not log out from `/agents`; navigate to `/` first, then log out.
+
+---
+
+## B-057 — Agent registry has no detail page; access grants and connection references are nowhere in the agent UI
+
+- **Severity:** Medium (major demo gap — affects all three audience scripts in the inventory; backend has the data, UI hasn't caught up)
+- **Status:** Open
+- **Area:** Agent UI — `apps/web/src/features/agents/`
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+
+**Symptom.** As `governance@acme.example.com`, navigate to Agent Registry. Marketing Copilot appears as a row with Display Name, Model, Classification, Oversight Contact, and Registered date. Clicking the row does not navigate anywhere — there is no agent detail page. As a result, there is no surface anywhere in the UI that shows:
+
+- Which products the agent has access to (active access grants where the agent is the principal)
+- The agent's active connection references (Domain 12 — required for any agent action)
+- The agent's audit trail / activity history
+- The agent's classification change history (which exists in `audit.audit_log` per the seed but has no UI)
+
+**Root cause hypothesis.** Agent list rows are not wired to a route, and the agent detail route + page component may not exist at all in the frontend (or it exists but is unlinked). Backend has the data — `GET /api/v1/agents/:agentId` returns the agent record, `/api/v1/access?principalId=...&principalType=ai_agent` returns the grants, the connection references endpoint exists from the Domain 12 work. UI just hasn't been built to assemble them.
+
+**Why this matters disproportionately.** This single missing surface affects the strongest moment in *every* audience demo script:
+
+- **Investor (Section 10A Steps 6–7):** "Click Marketing Copilot → show classification, oversight contact, audit trail" becomes "the agent list shows... names." The "agents are first-class participants" claim is supposed to be provable in one click. It currently isn't.
+- **Technical (Section 10B Step 7):** same problem; the trust-tier story has no visual anchor.
+- **Governance (Section 10C Step 5):** same problem; the federated-governance-for-agents story is also blunted.
+
+Plus the Domain 12 story (connection references + per-use-case consent) has no UI surface at all — it's a backend-only feature today.
+
+**Fix path.** Build the agent detail page. Minimum viable: identity fields (already in the row) + a tab strip with Access Grants, Connection References, Audit Trail tabs. Each tab is a simple table backed by the existing endpoints. Estimate: 1–2 days of frontend work given the data is all available; longer if the connection-reference list endpoint isn't yet wired through the agent-id filter.
+
+**Impact today.** All three demo scripts need partial rewrites. Workaround per the inventory: collapse the agent beat to "show the row, point at classification + oversight, narrate the audit story." Loses the visual punch.
+
+This entry **subsumes** what was originally written up as a separate "agent detail page missing access grants" bug — same root surface; once the detail page exists, that content becomes part of it. Tracked together here to avoid double-counting.
+
+---
+
+## B-058 — Trust-score-drop notification missing from `governance@acme.example.com` inbox
+
+- **Severity:** Low (seed data fix; trivial PR. Kills one specific demo beat but the workaround is identical-content for `finance-lead@acme.example.com`.)
+- **Status:** Open
+- **Area:** Seed — `packages/seed/src/notifications/acme-corp-notifications.ts`
+- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
+
+**Symptom.** As `governance@acme.example.com`, the notification inbox contains three items: Access Request SLA Breach, Compliance Drift Detected (unread), Classification Changed (read). The Daily Revenue Recognition trust-score drop notification (0.91 → 0.78) — listed in `documents/demo-scripts/demo-asset-inventory.md` Section 6 as a `governance@acme` signal — is absent.
+
+**Root cause.** The trust-score-drop notification is seeded only for `finance-lead@acme.example.com` (where it makes sense — the owner of the affected product). The asset inventory's Section 6 incorrectly lists it under the `governance@acme.example.com` signals; the seed itself never had a corresponding entry for the governance principal.
+
+**Fix path.** Two options:
+
+1. **Add a `governance@acme.example.com` recipient** to the trust-score-drop notification in `packages/seed/src/notifications/acme-corp-notifications.ts`. Honest defense: governance roles should be aware of significant trust-score regressions across all products in their org, not just the owning domain. Smallest diff. Use `seedKey: 'acme:governance:trust:revenue-daily'` to keep idempotency safe.
+2. **Correct the asset inventory** to remove the trust-score-drop signal from the `governance@acme` list and add a redirect to log in as `finance-lead` for that beat.
+
+Option 1 is the better answer — governance *should* see this — and it preserves the demo script as written.
+
+**Impact.** The investor demo's strongest single moment (per the inventory: *"the platform tells you something is wrong before you ask"*) requires switching personas. Workaround: log in as `finance-lead@acme.example.com` for that beat. No correctness implication.
+
+---
+
 ## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
 
 - **Severity:** Low (smoke-test gap, not a product-surface bug)
