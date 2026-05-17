@@ -9,6 +9,21 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-052 — Vite dev server rejects `demo.provenancelogic.com` Host header
+
+- **Severity:** Medium (web UI on the demo box returns a Vite "Blocked request" page for every URL; users cannot log in or click around at all; does *not* gate OSR launch — demo-environment-only)
+- **Status:** In progress (fix open as PR pending)
+- **Area:** Web container / Vite dev-server configuration
+- **Discovered:** 2026-05-17, immediately after B-051 was fixed and Matt browsed to `https://demo.provenancelogic.com`.
+
+**Symptom.** The web container serves `Blocked request. This host ("demo.provenancelogic.com") is not allowed. To allow this host, add "demo.provenancelogic.com" to server.allowedHosts in vite.config.js.` for every request, regardless of route or auth state.
+
+**Root cause.** `apps/web/vite.config.ts` sets `server.allowedHosts: ['dev.provenancelogic.com']` — the demo hostname was never added when the demo environment was stood up. Vite's dev server enforces Host header validation by default; only listed hosts (plus localhost) pass.
+
+**Fix.** Add `'demo.provenancelogic.com'` to the `allowedHosts` array. Same architectural smell as B-051 — running the dev-mode framework on a "demo" environment surfaces dev-only safeguards as user-visible failures. The longer-term answer is a production-mode web image for demo (or making `allowedHosts` env-driven so it can be extended per environment without code changes), but neither is needed today to unblock Matt.
+
+---
+
 ## B-051 — `demo-sync.sh` seed step crashes the api container (watch-mode + missing `procps`)
 
 - **Severity:** Medium (blocks `demo-sync.sh` end-to-end on every fresh demo cycle; does *not* affect the dev EC2 box or local development, and does *not* gate OSR launch — this is demo-environment-only)
