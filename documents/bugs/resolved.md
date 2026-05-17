@@ -6,6 +6,30 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-055 — Access-request notifications had no usable path to approval
+
+- **Resolved:** 2026-05-17 — fix PR pending (see commit hash on merge)
+- **Severity:** was Medium
+- **Area:** Access requests UI + Notifications routing
+
+**Symptom.** The `access_request_submitted` notification rendered with dismiss-only actions and a dead title link. The notification's seed-fixture `deepLink` was `/publishing/<product-slug>/access-requests`, which didn't match any frontend route; `resolve-destination.ts` fell through to `/notifications` (which is the page the viewer was usually already on, so the click felt like a no-op). Domain owners had no surface to act on pending requests directly from the notification.
+
+**Root-cause framing.** Matt's pushback during the fix design reframed the problem: *"isn't it clunky that one cannot simply look at a list of pending requests instead of having to go through notifications?"* He was right. The original B-055 fix path (add inline Approve/Deny to the notification component) was a workaround for not having the proper page. The cleaner architecture is: notifications are alerts, a dedicated page is the workload management surface.
+
+**Fix.** Three parts in one PR:
+
+1. **Backend** (`apps/api/src/access/`): extended `GET /access/requests` with a `forApprover=me` query parameter. Service-level filter joins `data_products` and restricts to rows where `products.owner_principal_id = caller`. The "approver queue" — a domain owner can ask the API for "requests I can act on" without needing to know which products they own.
+2. **Frontend** (`apps/web/src/features/access-requests/PendingAccessRequestsPage.tsx`): new page at `/access-requests`. Lists all pending requests the caller can approve, with inline Approve / Deny actions per row, justification visible, link to the product. Added to `NavShell` as "Access Requests."
+3. **Wire-through** (`resolve-destination.ts`): rewrites both legacy notification deep-link patterns (`/publishing/<slug>/access-requests` from older seed fixtures, and `/access/requests/<id>` from the live trigger at `access.service.ts:477`) to land on the new `/access-requests` page. Notifications now alert; the page is where the workflow happens.
+
+**Verification path.** As `analyst@acme.example.com`, submit a Campaign Attribution access request. As `marketing-lead@acme.example.com`, visit `/access-requests` directly (or click the notification — it now lands here). Approve. Audit log records the explicit action; the connection package is generated on the grant; the consumer sees the new grant on the product detail page.
+
+**Pattern.** When a UX feels clunky in review, the right fix is often *to build the right primary surface*, not to bolt actions onto whatever surface the user happened to land on first. Notifications-as-action-surface was the local optimum (it's where the user was looking); pending-requests-as-workload-page was the global optimum (it's where the work actually lives). Saved by Matt's "isn't it clunky" check before shipping a workaround disguised as a fix.
+
+**Bonus scope flagged in the PR.** Authorization on the *approve* and *deny* endpoints currently relies only on the controller-level `@Roles('org_admin', 'domain_owner')` decoration — it doesn't verify the caller actually owns the specific product. Any `domain_owner` in the org can approve any pending request. Not exploited in the seeded demo (all owners are friendly) but worth tightening in a follow-on PR; filed as a TODO in the service. The Pending Requests page itself is correctly scoped (only shows requests for products the caller owns).
+
+---
+
 ## B-054 — *(MISDIAGNOSED — no code change)* — "Clicking access-request notification silently grants the access"
 
 - **Resolved:** 2026-05-17 — no fix commit; the originally-filed bug does not exist as a code defect. Retraction PR documents the investigation.

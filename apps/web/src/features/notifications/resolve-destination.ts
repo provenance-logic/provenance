@@ -15,6 +15,7 @@ const PASSTHROUGH_PREFIXES = [
   '/governance',
   '/agents',
   '/notifications',
+  '/access-requests',
 ];
 
 interface RewriteRule {
@@ -23,10 +24,17 @@ interface RewriteRule {
 }
 
 const REWRITES: RewriteRule[] = [
-  // Access request detail — no requester-side detail page yet.
-  { match: (p) => p.startsWith('/access/requests/'),               to: '/notifications' },
-  // Approver-side access-request review — Command Center is the closest
-  // existing surface for governance-role principals.
+  // Approver-side access-request landing (per-product fixture pattern from
+  // older seed notifications — `/publishing/<slug>/access-requests`). Route
+  // to the Pending Requests page; the user can find the specific request
+  // there. Drop this rule once the seed notification format is harmonized.
+  { match: (p) => /^\/publishing\/[^/]+\/access-requests$/.test(p),  to: '/access-requests' },
+  // Per-request approver landing (emitted by the live trigger at
+  // `access.service.ts:477` — `/access/requests/<id>`). Route to the
+  // Pending Requests page; productId-level filtering is on the page itself.
+  { match: (p) => p.startsWith('/access/requests/'),               to: '/access-requests' },
+  // Approver-side SLA review for governance — still routes to /governance
+  // until a dedicated SLA queue page exists.
   { match: (p) => p.startsWith('/governance/access-requests/'),    to: '/governance' },
   // Product detail by id-only — the actual route is
   // /marketplace/:orgId/:productId, which the trigger doesn't have orgId

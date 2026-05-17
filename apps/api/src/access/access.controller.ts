@@ -108,6 +108,9 @@ export class AccessController {
     @Query('productId') productId?: string,
     @Query('requesterPrincipalId') requesterPrincipalId?: string,
     @Query('status') status?: string,
+    // forApprover=me filters to requests for products owned by the caller —
+    // the approver queue used by the Pending Requests page.
+    @Query('forApprover') forApprover?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): Promise<AccessRequestList> {
@@ -115,6 +118,7 @@ export class AccessController {
       ...(productId !== undefined && { productId }),
       ...(requesterPrincipalId !== undefined && { requesterPrincipalId }),
       ...(status !== undefined && { status }),
+      ...(forApprover === 'me' && { forApproverPrincipalId: ctx.principalId }),
       limit:  limit  ? parseInt(limit,  10) : 20,
       offset: offset ? parseInt(offset, 10) : 0,
     });
