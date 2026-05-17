@@ -133,9 +133,9 @@ if run_kcadm get realms/provenance &>/dev/null; then
   if [ -n "$CLIENT_ID" ]; then
     echo "Updating provenance-web client (id=$CLIENT_ID) redirectUris and webOrigins..."
     run_kcadm update "clients/$CLIENT_ID" -r provenance \
-      -s 'redirectUris=["http://localhost:3000/*","http://54.83.160.49:3000/*","https://dev.provenancelogic.com/*"]' \
-      -s 'webOrigins=["http://localhost:3000","http://54.83.160.49:3000","https://dev.provenancelogic.com"]'
-    echo "  provenance-web: added https://dev.provenancelogic.com to redirectUris and webOrigins"
+      -s 'redirectUris=["http://localhost:3000/*","http://54.83.160.49:3000/*","https://dev.provenancelogic.com/*","https://demo.provenancelogic.com/*"]' \
+      -s 'webOrigins=["http://localhost:3000","http://54.83.160.49:3000","https://dev.provenancelogic.com","https://demo.provenancelogic.com"]'
+    echo "  provenance-web: added https://dev.provenancelogic.com and https://demo.provenancelogic.com to redirectUris and webOrigins"
 
     # -----------------------------------------------------------------------
     # Ensure protocol mappers exist on provenance-web so access tokens carry
