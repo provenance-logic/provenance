@@ -29,6 +29,17 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 # Development stage — mounts source via volume, runs nest start --watch
 # ---------------------------------------------------------------------------
 FROM base AS development
+# procps for `ps`. nest start --watch's child-process restart path spawns
+# `ps -o pid --no-headers --ppid <pid>` to find PIDs to terminate when a
+# file change fires the watcher. node:22-slim does not ship `ps`, so without
+# this the container crashes with ENOENT mid-restart, which (in the demo
+# environment, where pnpm install during demo-sync rebuilds packages/types
+# in a bind-mounted source tree) kills the in-flight seed request and aborts
+# the cycle. See B-051. The production stage does not need procps because it
+# runs `node dist/...` directly with no watcher.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends procps \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY tsconfig.base.json ./
