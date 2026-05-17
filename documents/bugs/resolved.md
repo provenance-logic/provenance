@@ -6,6 +6,40 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-053 — Keycloak `provenance-web` client rejects `https://demo.provenancelogic.com` redirect_uri
+
+- **Fixed:** 2026-05-17 — [#118](https://github.com/provenance-logic/provenance/pull/118)
+- **Severity:** was Medium (login was impossible from the demo URL; users landed on Keycloak's "We are sorry... Invalid parameter: redirect_uri" page; demo-environment-only)
+- **Area:** Keycloak realm configuration / demo environment
+
+**Symptom.** Clicking the login button on `https://demo.provenancelogic.com` redirected to Keycloak, which then returned the "Invalid parameter: redirect_uri" error page instead of the login form.
+
+**Root cause.** `infrastructure/docker/scripts/configure-keycloak-ec2.sh` hardcoded the `provenance-web` client's `redirectUris` and `webOrigins` arrays with `https://dev.provenancelogic.com` but not the demo hostname. The script was written before the demo environment existed.
+
+**Fix.** Added `https://demo.provenancelogic.com/*` to `redirectUris` and `https://demo.provenancelogic.com` to `webOrigins`. Idempotent — `configure-keycloak-ec2.sh` rewrites the full arrays each run, so re-running the script picks up the change.
+
+Third sibling in the demo-environment paper-cut family caught during Matt's first demo browse (B-051 seed crash, B-052 vite host check, this one). All three share the same architectural smell: a dev-mode default (kcadm static array, vite `allowedHosts`, nest watch + missing `ps`) bites when the dev image is used to serve the demo URL.
+
+**Pattern + deferred follow-up.** The right long-term answer is env-driven host configuration across vite + keycloak + any future ingress, so `dev` / `demo` / future environments don't each need a code change. Tracked in the status board's "Deferred to post-launch" section under "Demo production-mode images hardening." Not OSR-blocking.
+
+---
+
+## B-052 — Vite dev server rejects `demo.provenancelogic.com` Host header
+
+- **Fixed:** 2026-05-17 — [#117](https://github.com/provenance-logic/provenance/pull/117)
+- **Severity:** was Medium (web UI on the demo box returned Vite's "Blocked request" page for every URL; users could not log in or click around; demo-environment-only)
+- **Area:** Web container / Vite dev-server configuration
+
+**Symptom.** Every request to `https://demo.provenancelogic.com` returned Vite's `Blocked request. This host ("demo.provenancelogic.com") is not allowed. To allow this host, add "demo.provenancelogic.com" to server.allowedHosts in vite.config.js.` page, regardless of route or auth state.
+
+**Root cause.** `apps/web/vite.config.ts` set `server.allowedHosts: ['dev.provenancelogic.com']` — only the dev hostname was in the list. Vite's dev server enforces Host header validation by default; only listed hosts (plus localhost) pass.
+
+**Fix.** Added `'demo.provenancelogic.com'` to the `allowedHosts` array. Container had to be recreated for vite to re-read the config.
+
+Sibling to B-051 and B-053 — same paper-cut family ("dev-mode defaults bite when the dev image serves a demo URL"). See B-053 for the deferred env-driven follow-up.
+
+---
+
 ## B-051 — `demo-sync.sh` seed step crashes the api container (watch-mode + missing `procps`)
 
 - **Fixed:** 2026-05-17 — [#116](https://github.com/provenance-logic/provenance/pull/116)
