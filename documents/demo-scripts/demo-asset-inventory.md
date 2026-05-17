@@ -8,6 +8,24 @@ This file does **not** prescribe a narrative or tone. That's the layer you'd tak
 
 **Demo URL:** https://demo.provenancelogic.com (live as of 2026-05-17). Everyone below logs in with password `DemoPass123!`.
 
+> **⚠️ Known issues from the 2026-05-17 investor-demo rehearsal.** The walkthrough turned up five bugs (B-054 through B-058) that affect the click paths in Section 10. Read **Section 11 ("Rough edges to avoid in live demo")** before walking any of the scripts — it has the specific workarounds. Most consequential: B-054 (clicking the access-request notification *silently grants* the access without the approval UI ever loading — do not click that notification on stage until B-054 lands).
+
+---
+
+## 0. Demo setup (before the live walk)
+
+A few things that are not bugs but bite the first time:
+
+**Multi-persona switching needs separate browser contexts.** Keycloak uses a domain-scoped session cookie. Logging in as a new persona in *any* tab logs *all* tabs into that persona. The "have three tabs open with three personas" mental model doesn't work in a single browser window. Three options, recommended first:
+
+1. **Chrome profiles (recommended).** Create one named Chrome profile per persona you'll demo (e.g. "Maya — Marketing", "Aiden — Analyst", "Gita — Governance"). Each profile keeps its own cookies. Log in once per profile, bookmark the starting URL. Persona-switching during the demo becomes a taskbar click.
+2. **Separate browsers.** Chrome + Firefox + Safari, one persona each. Works in a pinch.
+3. **Separate incognito / private windows.** Chrome incognito windows have isolated sessions per *window* (not per tab). Safari private windows share state across private windows — only one Safari private window at a time. Use Chrome incognito or Firefox private windows for this.
+
+**Have the demo box started before the demo.** Cold-start from `aws ec2 start-instances` takes ~2 min. Land the prep before audience joins.
+
+**Verify the state is pristine** before each new demo (the script in Section 10 relies on specific unread/pending signals being intact). Once the demo-reset workflow is verified (status board "Up next" item), run `bash infrastructure/scripts/demo-reset.sh --hard` between rehearsals.
+
 ---
 
 ## 1. Orgs
@@ -191,20 +209,24 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 
 ### Audience A: Investor / non-technical (10 min)
 
+> **🚨 Rehearsal blockers (2026-05-17):** Steps 4, 6, 7, and 8 below all hit bugs filed in the rehearsal walkthrough. Specifically: Step 4 trips B-054 (notification click silently grants — but no approval UI loads); Steps 6 and 7 trip B-057 (no agent detail page); Step 8 trips B-058 (trust-score-drop notification missing from governance inbox). **Do not run this script unmodified until B-054, B-055, B-057 land.** Workarounds below; full bug details in `bugs/open.md`.
+
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
 1. **Open marketplace** as `analyst@acme.example.com` (a non-owner consumer). One screen: 10 products across two orgs, with trust scores, owners, lifecycle states, freshness SLAs. *"This is what data looks like when it's a *product*, not a table."*
 2. **Click Customer 360** → show schema + ownership + lineage tab + trust score breakdown. *"Every product has a contract, an owner, a service level."*
 3. **Click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."*
-4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Notification bell already has a pending request. Click → approve. *"The compliant path is the easy path."*
+4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Notification bell shows the pending request. **⚠️ B-054 / B-055 workaround:** *do not click the notification* — it currently has no inline approve action and clicking it silently grants the request without loading any UI. Instead, navigate directly to the product's access-requests page (`/publishing/customer-360/access-requests`) and approve from there. *"The compliant path is the easy path."*
 5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide. *"Approved means *usable*, not 'wait three days for IT.'"*
-6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
-7. **Open the Marketing Copilot's audit trail.** Show the classification change history. *"Every agent action is provenanced — same word the company is named for."*
-8. **Open `governance@acme.example.com`.** Show the compliance drift signal on Customer 360 and the trust score drop on Daily Revenue Recognition. *"And the platform tells you when something is wrong before you ask."*
+6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."* **⚠️ B-057 workaround:** the rows aren't clickable and there's no detail page yet. Make the trust-classification + oversight-contact point verbally from the row content. Skip the "click into agent detail" beat.
+7. **(B-057-blocked — collapse into Step 6.)** Originally: open Marketing Copilot's audit trail and show the classification-change history. Until the agent detail page exists, narrate the audit-trail point without navigating: *"every agent action is provenanced — same word the company is named for."*
+8. **Open `governance@acme.example.com`.** Show the compliance drift signal on Customer 360. **⚠️ B-058 — script-vs-data mismatch:** the *original phrasing of this step* implied the trust-score-drop notification was in `governance@acme`'s inbox. It isn't — it's seeded for `finance-lead@acme.example.com` (which Section 6 of this file always correctly listed; the script step was the inconsistent one). **For the strongest demo moment, switch to `finance-lead@acme.example.com` for the trust-score beat** — the 0.91 → 0.78 notification is there. *"And the platform tells you when something is wrong before you ask."* Honest answer to the bug: governance roles arguably *should* see this notification too — that's the fix path documented in B-058.
 
 **What to avoid:** don't run the smoke test. Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
 
 ### Audience B: Technical colleague / data architect (15 min)
+
+> **🚨 Rehearsal blocker (2026-05-17):** Step 7 below (agent detail page) trips B-057 — the page doesn't exist. Collapse Steps 7 and 8 into a single beat where you point at the agent registry row and narrate the rest. Also note B-056 (logout from `/agents` returns raw JSON 404) — *don't log out from the agents tab*; navigate to `/` first.
 
 The story is "**we made all the right architecture calls and there's evidence of each one in the running stack.**"
 
@@ -221,6 +243,8 @@ The story is "**we made all the right architecture calls and there's evidence of
 
 ### Audience C: Governance / compliance officer (12 min)
 
+> **🚨 Rehearsal blocker (2026-05-17):** Step 5 (click the Marketing Copilot agent) trips B-057 — there is no agent detail page. The classification-history beat has to be narrated rather than shown. The connection-reference surface for Domain 12 also has no UI today — make it a verbal point. Also, since this is the audience that cares most about audit-trail / approval-evidence integrity, **mention B-054 openly if it comes up** — "we found a notification-click side-effect bug in rehearsal; fix is in flight" is a better answer than dancing around it.
+
 The story is "**we made your job a software problem.**"
 
 1. **Log in as `governance@acme.example.com`.** Notification center shows compliance drift + classification change. *"Continuous compliance monitoring is how the platform's day starts."*
@@ -236,12 +260,26 @@ The story is "**we made your job a software problem.**"
 
 ## 11. Rough edges to avoid in live demo
 
-- **B-050.** `demo-smoke-test.sh` layer 2 step 3 hits a non-existent `/organizations/me` route and returns 500. Don't run the smoke test in front of an audience. Use a fresh `demo-sync.sh main` cycle off-camera, then walk the UI directly.
+### Known bugs from the 2026-05-17 rehearsal (must read before walking)
+
+- **🚨 B-054 (High) — clicking the access-request notification silently grants the access.** Maya (or any owner) opens the notification center, sees Aiden's pending request, clicks it expecting to be routed to an approval UI. No UI loads. The request is granted anyway. The audit log records an `access_granted` with no human approval gesture. **Workaround for live demo:** do not click the access-request notification. Navigate directly to `/publishing/<product-slug>/access-requests` and approve from there. Talk through it as "I'm opening the product's access-requests view" rather than "I'm clicking the notification."
+- **B-055 (Medium) — no inline approve/deny on the notification.** Sibling to B-054. The notification has no Approve/Deny buttons inline; the seeded `deepLink` field exists but isn't rendered as a primary CTA. **Workaround:** same as B-054 — navigate to the access-requests page directly.
+- **B-056 (Medium) — logout from `/agents` returns a raw JSON 404.** NestJS error response leaks through to the browser. **Workaround:** before logging out, navigate to `/` (home). Then log out cleanly. **Never end a live demo by logging out from `/agents`** — the JSON error would be the audience's last impression.
+- **B-057 (Medium) — no agent detail page.** Agent registry rows are not clickable; the detail surface (access grants, connection references, audit trail, classification history) doesn't exist yet. **Workaround:** make the points verbally from the agent-registry row. Skip every "click into agent" / "open the audit-trail tab" beat in the scripts. This affects Section 10A Steps 6–7, Section 10B Step 7, Section 10C Step 5.
+- **B-058 (Low) — trust-score-drop notification not in `governance@acme` inbox.** The original Step 8 of the investor script (Section 10A) implied it would be; the seed only places it in `finance-lead@acme`. Section 6 of this file *correctly* lists it under finance-lead — the inconsistency was in the script step, not in Section 6. **Workaround for live demo:** switch to `finance-lead@acme.example.com` for the trust-score beat. **Fix path:** governance should arguably see this signal too — add `governance@acme` as a second recipient in `packages/seed/src/notifications/acme-corp-notifications.ts` using a distinct `seedKey` for idempotency.
+
+### Pre-existing rough edges (still apply)
+
+- **B-050.** `demo-smoke-test.sh` layer 2 step 3 hits a non-existent `/organizations/me` route and returns 500. Don't run the smoke test in front of an audience. Walk the UI directly.
 - **Fictional warehouse endpoints.** The `connectionDetails.endpoint` strings on products point at `warehouse.acme.example.com` and similar. They're illustrative. If you click an example client command, it won't connect. Mention "these are illustrative — the *contract* is what's enforced, the *endpoint* points at the domain's own infrastructure."
-- **Demo URL ≠ persistent.** Mention that `demo.provenancelogic.com` is provisioned per demo cycle and torn down after. The persistent EIP + EBS pattern is part of the demo runbook, not user-facing infrastructure.
-- **Agent Autonomous tier.** Don't promote any agent to Autonomous live — there's no UI workflow for it yet and it requires a governance role with a non-null reason. If asked, say "this is gated to manual intervention by design."
-- **Dev-mode banners.** The frontend is currently served by Vite in dev mode (B-052 was about exactly this) — there might be subtle dev-mode UI affordances. Production-mode demo image is a deferred follow-up.
+- **Demo URL ≠ persistent.** The demo box is stop/start lifecycle, not always-on. `demo.provenancelogic.com` resolves only when the instance is started; expect a 2-min warm-up.
+- **Agent Autonomous tier.** Don't try to promote any agent to Autonomous live — there's no UI workflow for it yet and it requires a governance role with a non-null reason. If asked, say "this is gated to manual intervention by design."
+- **Dev-mode UI affordances.** The frontend is currently served by Vite in dev mode. There may be subtle dev-mode banners or affordances visible. Production-mode demo image is a deferred follow-up (status board "Deferred to post-launch").
 - **Lineage time-travel and PNG export.** Not yet shipped (ADR-003 follow-ups). If someone asks "can you show this graph at last Friday's snapshot?" — answer "F5.17, on the roadmap, not in this build."
+
+### When to update this section
+
+Each of the B-054/55/56/57/58 entries above should move to a "Recently resolved" callout (and then disappear entirely) as the fixes land. The B-054 silence-on-fix would be especially worth noting: it's the strongest "show the platform is honest about its bugs" beat if asked by a governance-flavored audience.
 
 ---
 
