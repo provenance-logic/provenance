@@ -9,6 +9,23 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-053 — Keycloak `provenance-web` client rejects `https://demo.provenancelogic.com` redirect_uri
+
+- **Severity:** Medium (login is impossible from the demo URL; users land on Keycloak's "We are sorry... Invalid parameter: redirect_uri" page; does *not* gate OSR launch — demo-environment-only)
+- **Status:** In progress (fix open as PR pending)
+- **Area:** Keycloak realm configuration / demo environment
+- **Discovered:** 2026-05-17, immediately after B-052 was fixed and Matt clicked the login button on the demo site.
+
+**Symptom.** `https://auth-demo.provenancelogic.com/realms/provenance/protocol/openid-connect/auth?... redirect_uri=https%3A%2F%2Fdemo.provenancelogic.com%2F...` returns Keycloak's "We are sorry... Invalid parameter: redirect_uri" error page.
+
+**Root cause.** `infrastructure/docker/scripts/configure-keycloak-ec2.sh` hardcodes the `provenance-web` client's `redirectUris` and `webOrigins` arrays. The arrays contain `https://dev.provenancelogic.com` but not `https://demo.provenancelogic.com`. Demo runs the same Keycloak realm config script as dev (good for consistency) but the script was written before the demo hostname existed.
+
+**Fix.** Add `https://demo.provenancelogic.com/*` to `redirectUris` and `https://demo.provenancelogic.com` to `webOrigins` in the kcadm update block. Idempotent — `configure-keycloak-ec2.sh` rewrites the full arrays each run.
+
+The longer-term answer (also flagged on B-051 and B-052) is that demo and dev should not be sharing a redirectUris list defined inline in a shell script. Either drive from env vars (e.g. `KEYCLOAK_REDIRECT_URIS`) or keep dev and demo on separate realm-config scripts. Out of scope for this fix.
+
+---
+
 ## B-052 — Vite dev server rejects `demo.provenancelogic.com` Host header
 
 - **Severity:** Medium (web UI on the demo box returns a Vite "Blocked request" page for every URL; users cannot log in or click around at all; does *not* gate OSR launch — demo-environment-only)
