@@ -29,28 +29,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-058 — Trust-score-drop notification missing from `governance@acme.example.com` inbox
-
-- **Severity:** Low (seed data fix; trivial PR. Kills one specific demo beat but the workaround is identical-content for `finance-lead@acme.example.com`.)
-- **Status:** Open
-- **Area:** Seed — `packages/seed/src/notifications/acme-corp-notifications.ts`
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
-
-**Symptom.** As `governance@acme.example.com`, the notification inbox contains three items: Access Request SLA Breach, Compliance Drift Detected (unread), Classification Changed (read). The Daily Revenue Recognition trust-score drop notification (0.91 → 0.78) — listed in `documents/demo-scripts/demo-asset-inventory.md` Section 6 as a `governance@acme` signal — is absent.
-
-**Root cause.** The trust-score-drop notification is seeded only for `finance-lead@acme.example.com` (where it makes sense — the owner of the affected product). The asset inventory's Section 6 incorrectly lists it under the `governance@acme.example.com` signals; the seed itself never had a corresponding entry for the governance principal.
-
-**Fix path.** Two options:
-
-1. **Add a `governance@acme.example.com` recipient** to the trust-score-drop notification in `packages/seed/src/notifications/acme-corp-notifications.ts`. Honest defense: governance roles should be aware of significant trust-score regressions across all products in their org, not just the owning domain. Smallest diff. Use `seedKey: 'acme:governance:trust:revenue-daily'` to keep idempotency safe.
-2. **Correct the asset inventory** to remove the trust-score-drop signal from the `governance@acme` list and add a redirect to log in as `finance-lead` for that beat.
-
-Option 1 is the better answer — governance *should* see this — and it preserves the demo script as written.
-
-**Impact.** The investor demo's strongest single moment (per the inventory: *"the platform tells you something is wrong before you ask"*) requires switching personas. Workaround: log in as `finance-lead@acme.example.com` for that beat. No correctness implication.
-
----
-
 ## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
 
 - **Severity:** Low (smoke-test gap, not a product-surface bug)

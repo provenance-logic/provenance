@@ -145,6 +145,7 @@ This is what makes the demo feel *alive* — open the right login and there's al
 
 ### As `governance@acme.example.com`
 - **Compliance drift detected** on Customer 360 — PII completeness at 93.2% vs 95% policy floor. Deep links to `/governance/compliance`.
+- **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Same signal `finance-lead` sees, fanned out to governance because material trust regressions are governance-relevant across all domains. Deep links to `/marketplace/revenue-daily/trust`.
 - **Classification changed** for Marketing Copilot (observed → supervised). Already read but in history. Deep links to `/agents/marketing-copilot`.
 
 ### As `finance-lead@acme.example.com`
@@ -209,7 +210,7 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 
 ### Audience A: Investor / non-technical (10 min)
 
-> **🚨 Rehearsal blockers (2026-05-17, updated as fixes land):** Step 4's approval workflow ✅ **fixed** (B-055 landed; B-054 retracted as misdiagnosed — see resolved.md). Steps 6 and 7 ✅ **fixed** (B-057 landed — agent detail page at `/agents/:agentId` with Overview / Access Grants / Connection References / Classification History tabs). Step 8 needs the finance-lead workaround for B-058 (trust-score-drop only seeded for finance-lead, not governance). Full bug details in `bugs/open.md`.
+> **🚨 Rehearsal blockers (2026-05-17, updated as fixes land):** Step 4's approval workflow ✅ **fixed** (B-055 landed; B-054 retracted as misdiagnosed — see resolved.md). Steps 6 and 7 ✅ **fixed** (B-057 landed — agent detail page at `/agents/:agentId` with Overview / Access Grants / Connection References / Classification History tabs). Step 8 ✅ **fixed** (B-058 landed — governance@acme now receives the trust-score-drop notification, no persona switch needed). Full bug details in `bugs/open.md`.
 
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
@@ -220,7 +221,7 @@ The story is "**this is a coordination platform for the AI-agent era.**" Show, d
 5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide. *"Approved means *usable*, not 'wait three days for IT.'"*
 6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
 7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The Classification History tab shows the observed → supervised transition with reason and approver. *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* (B-057 fix landed 2026-05-17.)
-8. **Open `governance@acme.example.com`.** Show the compliance drift signal on Customer 360. **⚠️ B-058 — script-vs-data mismatch:** the *original phrasing of this step* implied the trust-score-drop notification was in `governance@acme`'s inbox. It isn't — it's seeded for `finance-lead@acme.example.com` (which Section 6 of this file always correctly listed; the script step was the inconsistent one). **For the strongest demo moment, switch to `finance-lead@acme.example.com` for the trust-score beat** — the 0.91 → 0.78 notification is there. *"And the platform tells you when something is wrong before you ask."* Honest answer to the bug: governance roles arguably *should* see this notification too — that's the fix path documented in B-058.
+8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score drop** on Daily Revenue Recognition (0.91 → 0.78, reconciliation match rate breached SLO twice this week). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."* (B-058 fix landed 2026-05-18 — same trust-score signal also reaches the owning domain at `finance-lead@acme.example.com`.)
 
 **What to avoid:** don't run the smoke test. Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
 
@@ -266,7 +267,7 @@ The story is "**we made your job a software problem.**"
 - ✅ **B-055 (fixed 2026-05-17) — approval workflow has a proper home.** New page at `/access-requests` lists all pending requests the caller can approve, with inline Approve / Deny. Linked from the left nav as "Access Requests." Notification deep-links route here.
 - **B-056 (Medium) — logout from `/agents` returns a raw JSON 404.** NestJS error response leaks through to the browser. **Workaround:** before logging out, navigate to `/` (home). Then log out cleanly. **Never end a live demo by logging out from `/agents`** — the JSON error would be the audience's last impression.
 - ✅ **B-057 (fixed 2026-05-17) — agent detail page now lives at `/agents/:agentId`.** Four-tab surface (Overview / Access Grants / Connection References / Classification History) backed by existing endpoints. The Domain 12 connection-reference story now has a real visible surface — first one in the UI. Rows in the agent registry are clickable links.
-- **B-058 (Low) — trust-score-drop notification not in `governance@acme` inbox.** The original Step 8 of the investor script (Section 10A) implied it would be; the seed only places it in `finance-lead@acme`. Section 6 of this file *correctly* lists it under finance-lead — the inconsistency was in the script step, not in Section 6. **Workaround for live demo:** switch to `finance-lead@acme.example.com` for the trust-score beat. **Fix path:** governance should arguably see this signal too — add `governance@acme` as a second recipient in `packages/seed/src/notifications/acme-corp-notifications.ts` using a distinct `seedKey` for idempotency.
+- ✅ **B-058 (fixed 2026-05-18) — trust-score-drop notification now fans out to `governance@acme` too.** Same signal `finance-lead@acme` sees, replicated under `seedKey: acme:governance:trust:revenue-daily` so re-seeding stays idempotent. Section 6 and Step 8 of the investor script now match. No live-demo workaround needed.
 
 ### Pre-existing rough edges (still apply)
 
