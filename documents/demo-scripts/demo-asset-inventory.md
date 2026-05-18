@@ -6,9 +6,9 @@ This file does **not** prescribe a narrative or tone. That's the layer you'd tak
 
 **Source of truth for everything below:** `packages/seed/src/`. If the seed changes, this file is stale — regenerate from current main.
 
-**Demo URL:** https://demo.provenancelogic.com (live as of 2026-05-17). Everyone below logs in with password `DemoPass123!`.
+**Demo URL:** https://demo.provenancelogic.com (live as of 2026-05-18, deployed on commit `01147d0`). Everyone below logs in with password `DemoPass123!`.
 
-> **⚠️ Known issues from the 2026-05-17 investor-demo rehearsal.** The walkthrough turned up five bugs (B-054 through B-058) that affect the click paths in Section 10. Read **Section 11 ("Rough edges to avoid in live demo")** before walking any of the scripts — it has the specific workarounds. Most consequential: B-054 (clicking the access-request notification *silently grants* the access without the approval UI ever loading — do not click that notification on stage until B-054 lands).
+> **✅ Rehearsal-bug cleanup complete (2026-05-18).** Every bug surfaced by the 2026-05-17 investor-demo rehearsal is closed: B-054 retracted, B-055/56/57/58/59 fixed. Section 11 ("Rough edges to avoid in live demo") still applies for older items (B-029 dev-box HMR, the "don't run the smoke test on stage" rule per B-060) — but the rehearsal-specific workarounds are no longer needed. The demo box is on current main with every fix from today deployed.
 
 ---
 
