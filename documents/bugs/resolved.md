@@ -6,6 +6,30 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-050 — Smoke-test layer 2 step 3 hit a non-existent `/api/v1/organizations/me` route
+
+- **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
+- **Severity:** was Low (smoke-test gap, not a product-surface bug; affected the operator pre-demo green-light check)
+- **Area:** `infrastructure/scripts/demo-smoke-test.sh`
+
+**Symptom.** Layer 2 step 3 of the smoke test called `GET /api/v1/organizations/me` with the user's JWT. The API has no `/me` route — `OrganizationsController` pattern-matches `me` as the `:orgId` path parameter, hands the literal string `"me"` to PostgreSQL as a UUID, and the DB throws `invalid input syntax for type uuid: "me"`. The exception bubbles up as a 500, the smoke test marks layer 2 failed, and layers 3–6 never run.
+
+**Root cause.** The smoke test was written against an API endpoint that doesn't ship and never did. Nothing in the actual product calls `/organizations/me` — the frontend reads the org id straight from the JWT's `provenance_org_id` claim, and so do agents. The only consumer of the missing endpoint was this single bash script.
+
+**Fix path chosen.** Path 1 from the bug doc: update the smoke test, not the API. The JWT already carries `provenance_org_id`; decoding it in bash and calling the existing `/api/v1/organizations/<orgId>` route is the smaller, more honest diff than adding a permanent API surface for a single bash caller.
+
+**Changes:**
+- Replaced the partial base64 decode + grep-based claim check with a padded base64 decode (JWT segments are base64url-encoded and may need padding to a multiple of 4 bytes) + jq-based `has(...)` claim check. Cleaner, fails loudly on a malformed token instead of silently passing.
+- Extracted `provenance_org_id` from the decoded payload with `jq -r`.
+- Replaced the `/organizations/me` curl with `/organizations/${ORG_ID}`.
+- Renamed the temp file from `smoke-me.json` to `smoke-org.json` and updated the downstream control-plane step (layer 3 step 1) that reads `.slug` from it.
+
+**Verification.** `bash -n` clean. End-to-end run pending against a live demo box.
+
+**Pattern.** When a smoke test calls an endpoint that doesn't exist, the gap is in the test, not the API — unless that endpoint has independent product value. `/me` shorthand endpoints often look tidy but add a permanent maintenance surface, and the JWT typically carries the answer the caller wants anyway. Prefer "decode the JWT and call the canonical route" over "add a `/me` route to make callers feel better." Worth the same examination any time a new pre-flight check is added: does this need a new API surface, or does the JWT already carry the answer?
+
+---
+
 ## B-056 — Logout from `/agents` returned a raw JSON 404 instead of redirecting to login
 
 - **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
