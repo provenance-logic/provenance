@@ -61,38 +61,6 @@ Either option needs:
 
 ---
 
-## B-057 — Agent registry has no detail page; access grants and connection references are nowhere in the agent UI
-
-- **Severity:** Medium (major demo gap — affects all three audience scripts in the inventory; backend has the data, UI hasn't caught up)
-- **Status:** Open
-- **Area:** Agent UI — `apps/web/src/features/agents/`
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
-
-**Symptom.** As `governance@acme.example.com`, navigate to Agent Registry. Marketing Copilot appears as a row with Display Name, Model, Classification, Oversight Contact, and Registered date. Clicking the row does not navigate anywhere — there is no agent detail page. As a result, there is no surface anywhere in the UI that shows:
-
-- Which products the agent has access to (active access grants where the agent is the principal)
-- The agent's active connection references (Domain 12 — required for any agent action)
-- The agent's audit trail / activity history
-- The agent's classification change history (which exists in `audit.audit_log` per the seed but has no UI)
-
-**Root cause hypothesis.** Agent list rows are not wired to a route, and the agent detail route + page component may not exist at all in the frontend (or it exists but is unlinked). Backend has the data — `GET /api/v1/agents/:agentId` returns the agent record, `/api/v1/access?principalId=...&principalType=ai_agent` returns the grants, the connection references endpoint exists from the Domain 12 work. UI just hasn't been built to assemble them.
-
-**Why this matters disproportionately.** This single missing surface affects the strongest moment in *every* audience demo script:
-
-- **Investor (Section 10A Steps 6–7):** "Click Marketing Copilot → show classification, oversight contact, audit trail" becomes "the agent list shows... names." The "agents are first-class participants" claim is supposed to be provable in one click. It currently isn't.
-- **Technical (Section 10B Step 7):** same problem; the trust-tier story has no visual anchor.
-- **Governance (Section 10C Step 5):** same problem; the federated-governance-for-agents story is also blunted.
-
-Plus the Domain 12 story (connection references + per-use-case consent) has no UI surface at all — it's a backend-only feature today.
-
-**Fix path.** Build the agent detail page. Minimum viable: identity fields (already in the row) + a tab strip with Access Grants, Connection References, Audit Trail tabs. Each tab is a simple table backed by the existing endpoints. Estimate: 1–2 days of frontend work given the data is all available; longer if the connection-reference list endpoint isn't yet wired through the agent-id filter.
-
-**Impact today.** All three demo scripts need partial rewrites. Workaround per the inventory: collapse the agent beat to "show the row, point at classification + oversight, narrate the audit story." Loses the visual punch.
-
-This entry **subsumes** what was originally written up as a separate "agent detail page missing access grants" bug — same root surface; once the detail page exists, that content becomes part of it. Tracked together here to avoid double-counting.
-
----
-
 ## B-058 — Trust-score-drop notification missing from `governance@acme.example.com` inbox
 
 - **Severity:** Low (seed data fix; trivial PR. Kills one specific demo beat but the workaround is identical-content for `finance-lead@acme.example.com`.)

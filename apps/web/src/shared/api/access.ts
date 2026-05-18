@@ -80,6 +80,31 @@ export const accessApi = {
       return api.get<AccessGrantList>(`${base(orgId)}/grants?${params.toString()}`);
     },
 
+    /**
+     * Generalized grant list. Pass `granteePrincipalId` to filter to a
+     * specific principal — for agents, the agent's `agentId` IS its
+     * principalId per the JWT issuer (jwt-auth.guard.ts:52).
+     */
+    list: (
+      orgId: string,
+      opts: {
+        granteePrincipalId?: string;
+        productId?: string;
+        activeOnly?: boolean;
+        limit?: number;
+        offset?: number;
+      } = {},
+    ): Promise<AccessGrantList> => {
+      const params = new URLSearchParams({
+        limit: String(opts.limit ?? 20),
+        offset: String(opts.offset ?? 0),
+        activeOnly: String(opts.activeOnly ?? true),
+      });
+      if (opts.granteePrincipalId) params.set('granteePrincipalId', opts.granteePrincipalId);
+      if (opts.productId) params.set('productId', opts.productId);
+      return api.get<AccessGrantList>(`${base(orgId)}/grants?${params.toString()}`);
+    },
+
     get: (orgId: string, grantId: string): Promise<AccessGrant> =>
       api.get<AccessGrant>(`${base(orgId)}/grants/${grantId}`),
   },

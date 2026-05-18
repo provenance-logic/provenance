@@ -6,6 +6,38 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-057 — Agent registry had no detail page; access grants, connection references, and classification history were not surfaced in the UI
+
+- **Resolved:** 2026-05-17 — fix PR pending (see commit hash on merge)
+- **Severity:** was Medium (major demo gap — affected all three audience demo scripts; backend had the data, UI hadn't caught up)
+- **Area:** Agent UI — `apps/web/src/features/agents/`
+
+**Symptom.** As any persona, navigating to the agent registry showed a row per agent (display name, model, classification, oversight contact, registered date) but the rows weren't clickable and no detail page existed. The "agents are first-class participants" claim — central to all three audience demo scripts — had no visible anchor: every Domain 12 connection-reference record, every classification change, every product access grant for an agent was hidden from the UI even though the backend exposed all of it.
+
+**Root cause.** Frontend simply hadn't been built. Backend endpoints all existed and were sufficient: `GET /agents/:agentId` (identity), `GET /agents/:agentId/classification/history` (trust-tier transitions), `GET /access/grants?granteePrincipalId=<agentId>` (product grants — note that an agent's `agentId` IS its `principalId` for access-grant joins per `jwt-auth.guard.ts:52`), `GET /consent/connection-references?agentId=<agentId>` (Domain 12 per-use-case consent records).
+
+**Fix.** New page at `/agents/:agentId` with a four-tab strip:
+
+1. **Overview** — identity fields including display name, classification badge, scope, last-change timestamp, reason, model, oversight contact, Keycloak client id, registered-by, registered-when.
+2. **Access Grants** — every product the agent has access to, with active / revoked / expired badges, granted-at and expires-at timestamps, scope when present, and links into the product detail page.
+3. **Connection References** — Domain 12 records with state badge, use-case category, purpose elaboration text, requested / approved / expires timestamps. The empty state explicitly explains the "no references = agent can't act against any product" semantic from ADR-006.
+4. **Classification History** — full trust-tier transition log: classification, scope, who changed it, principal type, reason, effective-from and effective-until timestamps.
+
+Frontend supporting work:
+- New API client `apps/web/src/shared/api/consent.ts` for the connection-references list / get endpoints (first frontend consumer of Domain 12 endpoints).
+- Extended `accessApi.grants` with a `list({ granteePrincipalId, productId, activeOnly, limit, offset })` method.
+- Extended `agentsApi` with `classificationHistory(agentId)`.
+- Agent registry rows on `AgentsPage` now link to the detail page.
+- Route registered in `Router.tsx` as `/agents/:agentId`.
+
+**No generic audit-trail tab** — there's no list endpoint for `audit.audit_log` today. Classification history covers the demo claim ("every agent action is provenanced") well enough until a queryable audit endpoint exists. Adding that endpoint is a clean follow-up.
+
+**Verification.** Typecheck (`pnpm --filter @provenance/web typecheck`) passes under Node 22. Page handles loading, error, and empty states on all four tabs. Supplementary queries use `Promise.allSettled` so a partial failure on one tab doesn't block the others.
+
+**Pattern.** When the backend ships the contracts (Phase 4 agent endpoints, Domain 12 connection-references) but the UI doesn't follow, the platform's claims become *theoretically true* — defensible in a code walkthrough, invisible in a UI walkthrough. The investor / technical / governance demo scripts kept tripping on this surface because the *story* depended on the UI making the contract visible. The lesson: at phase completion, audit *what's visible*, not just *what works at the API layer*.
+
+---
+
 ## B-055 — Access-request notifications had no usable path to approval
 
 - **Resolved:** 2026-05-17 — fix PR pending (see commit hash on merge)
