@@ -6,6 +6,27 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-058 — Trust-score-drop notification missing from `governance@acme.example.com` inbox
+
+- **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
+- **Severity:** was Low (seed data; affected one specific investor-demo beat)
+- **Area:** Seed — `packages/seed/src/notifications/acme-corp-notifications.ts`; demo asset inventory
+
+**Symptom.** As `governance@acme.example.com`, the Daily Revenue Recognition trust-score drop (0.91 → 0.78) — listed in the demo asset inventory's Section 6 as a governance signal — wasn't present in the inbox. The seed only placed it on `finance-lead@acme.example.com`.
+
+**Fix.** Added a second seeded notification entry with the same payload and `recipientEmail: governance@acme.example.com`, distinct `seedKey: acme:governance:trust:revenue-daily` for idempotency. Material trust regressions are governance-relevant across the org, not just the owning domain, so this is the right answer on the merits — not a script accommodation.
+
+Also updated `documents/demo-scripts/demo-asset-inventory.md`:
+- Section 6 governance@acme list now includes the trust-score-drop signal.
+- Section 10A Step 8 rewritten — no persona switch needed; both compliance drift and the trust-score drop are visible in one inbox.
+- Section 11 rehearsal-blockers list flips B-058 to ✅ fixed.
+
+**Verification.** `pnpm --filter @provenance/seed build` clean.
+
+**Pattern.** Demo seed data is a real product surface — the demo IS the product for an investor audience. When a script step depends on a specific notification existing in a specific inbox, the script and the seed have to agree. Section 6 of the asset inventory had been the source-of-truth-by-accident; the seed and the script step had drifted from it. Lesson: any time a demo script names a signal in a specific inbox, that signal needs an explicit seed entry, not "it should be there because role X is interested."
+
+---
+
 ## B-059 — Access-request approve/deny endpoints didn't verify the caller owns the product
 
 - **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)

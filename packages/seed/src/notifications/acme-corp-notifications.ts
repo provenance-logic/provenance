@@ -85,6 +85,22 @@ export const acmeCorpNotifications: SeedNotification[] = [
     seedKey: 'acme:finance:trust:revenue-daily',
     createdDaysAgo: 2,
   },
+  // Governance also receives the trust-score drop — material trust regressions
+  // are governance-relevant across all domains, not just the owning product
+  // team. Demo script Section 6 surfaces this as a governance@acme signal.
+  {
+    recipientEmail: 'governance@acme.example.com',
+    category: 'trust_score_significant_change',
+    payload: {
+      productName: 'Daily Revenue Recognition',
+      previousScore: 0.91,
+      currentScore: 0.78,
+      reason: 'Reconciliation match rate fell below the 99.5% SLO floor twice this week.',
+    },
+    deepLink: '/marketplace/revenue-daily/trust',
+    seedKey: 'acme:governance:trust:revenue-daily',
+    createdDaysAgo: 2,
+  },
 
   // supply-lead@acme — owns Daily Inventory Snapshot and Supplier Performance.
   {
