@@ -9,26 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-056 — Logout from `/agents` returns raw JSON 404 instead of redirecting to login
-
-- **Severity:** Medium (UX + security-adjacent — exposes API error shapes to end users on logout)
-- **Status:** Open
-- **Area:** Auth flow + frontend router config
-- **Discovered:** 2026-05-17, during the solo investor-demo rehearsal walkthrough.
-
-**Symptom.** Logged in at `/agents` as any persona. Click logout. Instead of landing on the Keycloak login page, the browser displays a raw JSON 404 body: `{"message":"Cannot GET /agents","statusCode":404,"error":"Not Found"}`. The response shape is NestJS — the request is reaching the NestJS API on port 3001, not the React app on port 3000.
-
-**Root cause hypothesis.** Two places to check:
-
-1. **Post-logout redirect URI** in the `provenance-web` Keycloak client. If the logout `redirect_uri` is unset or points at the wrong host, Keycloak doesn't redirect cleanly, and the browser ends up at whatever URL it was on before logout — but with no auth header.
-2. **Frontend route guard on `/agents`** — does the route have an auth guard that redirects to login when the user is unauthenticated, or does it fall through to a 404? Combined with the NestJS shape of the response, it suggests Caddy is proxying `/agents` to the API as a fallback when the frontend isn't authoritative for that path.
-
-**Fix path.** Set the Keycloak `provenance-web` client `frontchannelLogout.url` (or whatever the v24+ equivalent is) to redirect to `/` post-logout. On the frontend, add an auth guard at the route level so any authenticated path renders a "redirecting to login" component when unauthenticated, instead of falling through. Both fixes together; either alone leaves the other class of paths exposed.
-
-**Impact.** Worst possible last impression in a demo: a raw JSON error after the audience just saw a polished app. Workaround during a live demo: do not log out from `/agents`; navigate to `/` first, then log out.
-
----
-
 ## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
 
 - **Severity:** Low (smoke-test gap, not a product-surface bug)

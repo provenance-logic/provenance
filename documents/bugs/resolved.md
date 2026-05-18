@@ -6,6 +6,37 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-056 — Logout from `/agents` returned a raw JSON 404 instead of redirecting to login
+
+- **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
+- **Severity:** was Medium (UX + security-adjacent — exposed an internal API error shape on the worst possible page transition during a demo)
+- **Area:** Frontend dev server config — `apps/web/vite.config.ts`
+
+**Symptom.** Clicking "Sign out" from `/agents` or `/agents/:agentId` showed the user a raw NestJS-shaped JSON 404 (`{"message":"Cannot GET /agents","statusCode":404,"error":"Not Found"}`) instead of redirecting to the Keycloak login page. Logging out from any other page (`/products`, `/governance`, etc.) worked correctly.
+
+**Root cause — not the hypothesis in the bug doc.** The bug doc suggested either a Keycloak `post_logout_redirect_uri` misconfiguration or a missing frontend route guard. Neither was the actual cause. The actual cause was a stale entry in the Vite dev server proxy:
+
+```ts
+proxy: {
+  '/api':   { target: 'http://api:3001' },
+  '/agent': { target: 'http://api:3001' },  // ← the culprit
+}
+```
+
+Vite proxy keys are prefix matches. `/agent` matched `/agents` and silently forwarded the request to the NestJS API at `http://api:3001/agents` — but no controller is mounted at the top-level `/agents` path (the real agent endpoints all live under `/api/v1/agents/*`). Express returned its default 404 page (`Cannot GET /agents`), and Vite passed that response through to the browser.
+
+**Why only after logout?** While the user is signed in, all navigation inside `/agents` is client-side React Router state changes — the browser never sends a fresh `GET /agents` to the server. When `keycloak.logout()` runs with no explicit `redirectUri`, keycloak-js defaults to redirecting back to `window.location.href` — `/agents`. That redirect is a real browser navigation, hits Vite, matches the `/agent` proxy prefix, and the 404 leaks out. Logging out from `/products` falls through to Vite's SPA index.html fallback, React boots, the `onLoad: 'login-required'` Keycloak init kicks the user to the login page — the flow that was supposed to happen everywhere.
+
+The frontend route guard and Keycloak post-logout redirect were both already correct. The bug-doc hypothesis was a reasonable read of the symptom from outside; the actual cause was three lines of dev-server config nobody had touched in months.
+
+**Fix.** Removed the `/agent` proxy entry. Added a comment in `vite.config.ts` explaining the constraint: only `/api` proxies to NestJS; agent endpoints all live under `/api/v1/agents/*` and are already covered by the `/api` rule; the MCP / agent-query layer is server-to-server and never reached from the browser.
+
+**Demo asset inventory** updated: Section 11 rehearsal-blockers list flips B-056 to ✅, the Section 10B header note drops the "don't log out from /agents" warning.
+
+**Pattern.** Vite proxy keys are *prefix matches*, not exact matches. A `/agent` entry catches `/agents`, `/agent-query`, `/agent/anything`, and so on. When you add a route to the frontend whose path overlaps with a Vite proxy key, the proxy wins — silently, with no error in the dev console, and the failure mode only shows up on a real browser navigation (not on client-side route changes). Worth a `grep proxy apps/web/vite.config.ts` whenever you add a top-level frontend route, especially a short one. More broadly: when a symptom involves an API-shaped error on what should be a frontend page, check the dev-server proxy before the auth flow.
+
+---
+
 ## B-058 — Trust-score-drop notification missing from `governance@acme.example.com` inbox
 
 - **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
