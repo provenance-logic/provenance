@@ -9,6 +9,70 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-060 — Demo verification tooling drifted from the API surface; `softReset` and `demo-smoke-test.sh` layers 3–6 reference endpoints/columns that don't exist
+
+- **Severity:** Medium (operator-facing tooling functionally broken; the *platform* works, but the scripts that verify it can't)
+- **Status:** Open
+- **Area:** `packages/seed/src/reset.ts`, `infrastructure/scripts/demo-smoke-test.sh`
+- **Discovered:** 2026-05-18, during the Path 3 attempt to verify `demo-reset.sh --soft` after bringing the demo box to current main.
+
+**Symptom.**
+
+1. **`softReset` (`packages/seed/src/reset.ts`):** the function references five tables/columns; only one is correct.
+   - `audit.audit_log WHERE event_at` — column is `occurred_at` (V4 schema).
+   - `observability.trust_score_history WHERE computed_at` — correct ✅.
+   - `observability.observability_snapshots WHERE snapshot_at` — **table does not exist** in any migration.
+   - `lineage.emission_events WHERE emitted_at` — **table does not exist** in any migration.
+   - `access.access_requests WHERE created_at` — column is `requested_at` (V25 schema).
+   
+   The first DELETE throws `column "event_at" does not exist`, the transaction rolls back, soft reset reports failure. `softReset` has never actually worked. `bash demo-reset.sh --soft` exits non-zero every time it has ever been run.
+
+2. **`demo-smoke-test.sh` layers 3–6:** almost every authenticated API call references a flat top-level endpoint shape that the API doesn't expose. The real surface is org-scoped (`/organizations/:orgId/...`).
+   | Smoke test calls | What actually exists |
+   |---|---|
+   | `GET /api/v1/products?limit=50` | `/api/v1/organizations/:orgId/domains/:domainId/products` or `/api/v1/marketplace` |
+   | `GET /api/v1/products/:id` | `/api/v1/organizations/:orgId/domains/:domainId/products/:id` |
+   | `GET /api/v1/products/:id/trust-score` | `/api/v1/organizations/:orgId/products/:id/trust-score` |
+   | `GET /api/v1/lineage/smoke?productSlug=...` | `/api/v1/organizations/:orgId/lineage/...` (no `/smoke` subpath) |
+   | `GET /api/v1/search/smoke?q=...` | `/api/v1/internal/search` (no `/smoke` subpath) |
+   | `GET /api/v1/governance/rls-probe?assumeOrg=...` | `/api/v1/organizations/:orgId/governance/...` (no `/rls-probe`) |
+   
+   B-050's fix (PR #133) only touched layer 2 (`/organizations/me`). Layers 3–6 remain broken on a different axis — they don't even know the API is multi-tenant.
+
+**Root cause.** Both scripts were written against an earlier snapshot of the platform that has since evolved:
+- `softReset` against a planned-but-never-built schema (`observability_snapshots`, `emission_events`) with column names that were renamed before V4 / V25 shipped.
+- The smoke test against an earlier flat API design that was re-architected into the multi-tenant `/organizations/:orgId/...` shape (rationale obvious — RLS, federation, ADR-001). The smoke test never followed.
+
+Neither was ever end-to-end run after the underlying surfaces moved. This is the exact pattern the new CLAUDE.md rule **"a phase is not complete until every advertised capability has a user-visible surface"** is designed to catch — operator tooling is part of the surface a phase ships, and "the script exists" is not the same as "the script runs green."
+
+**Fix path.**
+
+1. **`softReset`** — three sub-tasks:
+   - Replace `event_at` → `occurred_at` for `audit.audit_log`.
+   - Replace `created_at` → `requested_at` for `access.access_requests`.
+   - Decide what to do with `observability_snapshots` and `emission_events`: were they renamed, dropped, or never built? Audit the resolved schema and either correct the references or delete those DELETE statements entirely.
+   - Add a smoke test for `softReset` itself — invoke it on a populated demo box and assert recent rows are gone.
+
+2. **`demo-smoke-test.sh` layers 3–6** — for each endpoint:
+   - Look up the real route in the corresponding controller (`grep -n "@Controller" apps/api/src/<area>/*.controller.ts`).
+   - Thread the org id (already extracted from the JWT in layer 2 per B-050's fix) into the path.
+   - For routes that need a domain id (products), resolve a domain id from a known org-domain via `/organizations/:orgId/domains` and use it.
+   - Decide whether the `/smoke` and `/rls-probe` subpaths should be *added* to the API as legitimate diagnostic endpoints (they're useful — they expose internals the smoke test specifically wants to verify) or whether the smoke test should be rewritten to use existing endpoints with appropriate assertions.
+
+3. **Independent of either:** add a CI job that runs `demo-smoke-test.sh` against a freshly-bootstrapped demo box. The only way to prevent re-drift is to actually run the script regularly.
+
+**Why split-able into multiple PRs.** softReset and the smoke test are different files with different fix approaches. Either can land independently. Both deserve resolved.md entries with the same "operator tooling drifted from the API surface; never end-to-end tested" pattern.
+
+**Impact today.**
+
+- The platform itself is functional. `demo.provenancelogic.com` is up on current main, all today's fixes deployed.
+- `bash demo-reset.sh --soft` cannot be used to freshen demo state between rehearsals. The fallback is `demo-sync.sh main` (which re-runs the seed idempotently) — that *does* work, as verified tonight.
+- The smoke test can verify layers 1–2 (infrastructure, auth — with B-050's fix). Layers 3–6 fail with 404s on phantom endpoints. The pre-demo green-light gate is still effectively broken at the layer that matters most.
+
+**Pattern.** Operator tooling is part of the surface a phase ships. Scripts that *exist* without being *run* are scripts that don't work. Both `softReset` and `demo-smoke-test.sh` were written, committed, and forgotten — neither ever exercised end-to-end after the underlying API/schema evolved. Add a recurring run of every operator script (smoke test, reset, sync) to catch drift the next time the API or schema moves.
+
+---
+
 ## B-029 — EC2 dev box: Vite HMR bind-mount staleness; `restart` not enough, `--force-recreate` needed
 
 - **Severity:** Low
