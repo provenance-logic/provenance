@@ -74,27 +74,39 @@ USER_TOKEN=$(curl -sS -X POST \
 [ -n "$USER_TOKEN" ] || fail "auth" "direct grant for ${SMOKE_USER_EMAIL} returned no access_token"
 ok "user ${SMOKE_USER_EMAIL} obtained JWT"
 
-# Decode payload (claim shape sanity check)
-PAYLOAD=$(echo "$USER_TOKEN" | awk -F. '{print $2}' | tr '_-' '/+' | base64 -d 2>/dev/null || true)
+# Decode the JWT payload. JWT segments are base64url-encoded and may need
+# padding to a multiple of 4 before standard base64 can parse them.
+PAYLOAD_B64=$(echo "$USER_TOKEN" | awk -F. '{print $2}' | tr '_-' '/+')
+case $(( ${#PAYLOAD_B64} % 4 )) in
+  2) PAYLOAD_B64="${PAYLOAD_B64}==" ;;
+  3) PAYLOAD_B64="${PAYLOAD_B64}=" ;;
+esac
+PAYLOAD_JSON=$(echo "$PAYLOAD_B64" | base64 -d 2>/dev/null) \
+  || fail "auth" "could not base64-decode JWT payload"
+
 for claim in provenance_org_id provenance_principal_id provenance_principal_type; do
-  echo "$PAYLOAD" | grep -q "\"$claim\"" \
+  echo "$PAYLOAD_JSON" | jq -e --arg c "$claim" 'has($c)' >/dev/null \
     || fail "auth" "JWT missing claim: $claim"
 done
 ok "JWT contains all expected provenance_* claims"
 
-me_code=$(curl -sS -o /tmp/smoke-me.json -w "%{http_code}" \
+# There is no /organizations/me endpoint — the JWT already carries the answer.
+# Resolve the caller's org id from the provenance_org_id claim and call the
+# existing /organizations/:orgId route directly. See B-050 in resolved.md.
+ORG_ID=$(echo "$PAYLOAD_JSON" | jq -r '.provenance_org_id')
+me_code=$(curl -sS -o /tmp/smoke-org.json -w "%{http_code}" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/v1/organizations/me")
-[ "$me_code" = "200" ] || fail "auth" "authenticated GET /organizations/me returned $me_code"
-ok "authenticated API call succeeded"
+  "${BASE_URL}/api/v1/organizations/${ORG_ID}")
+[ "$me_code" = "200" ] || fail "auth" "authenticated GET /organizations/${ORG_ID} returned $me_code"
+ok "authenticated API call succeeded (org resolved from JWT claim)"
 
 # ---------------------------------------------------------------------------
 # 3. Control plane
 # ---------------------------------------------------------------------------
 section "control-plane"
 
-org_slug=$(jq -r '.slug // empty' /tmp/smoke-me.json)
-[ -n "$org_slug" ] || fail "control-plane" "organizations/me returned no slug"
+org_slug=$(jq -r '.slug // empty' /tmp/smoke-org.json)
+[ -n "$org_slug" ] || fail "control-plane" "GET /organizations/${ORG_ID} returned no slug"
 ok "seeded org present: ${org_slug}"
 
 PRODUCTS_JSON=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \

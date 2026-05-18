@@ -9,28 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-050 — Smoke-test layer 2 step 3 hits a non-existent `/api/v1/organizations/me` route
-
-- **Severity:** Low (smoke-test gap, not a product-surface bug)
-- **Status:** Open
-- **Area:** Smoke test / API surface
-- **Discovered:** 2026-05-16, during the post-B-048 verification cycle when smoke-test layer 2 step 3 reached the authenticated API call check.
-
-**Symptom.** `demo-smoke-test.sh` layer 2 (auth) step 3 issues `curl -H "Authorization: Bearer $USER_TOKEN" $BASE_URL/api/v1/organizations/me`. The API returns HTTP 500. NestJS pattern-matches `me` as the `:orgId` path parameter of `/organizations/:orgId`, passes the literal string `"me"` to PostgreSQL as a UUID, and the DB throws `invalid input syntax for type uuid: "me"`. The exception bubbles up as the 500.
-
-**Root cause.** The smoke test was written against an API endpoint that doesn't ship. Routes on `OrganizationsController` (apps/api/src/organizations/organizations.controller.ts) are: `@Get()` (list), `@Get(':orgId')`, `@Get(':orgId/domains')`, `@Get(':orgId/domains/:domainId')`, `@Get(':orgId/members')`, `@Get(':orgId/domains/:domainId/members')`. No `/me` route.
-
-**Two fix paths:**
-
-1. **Update the smoke test.** Decode the JWT's `provenance_org_id` claim and call `/api/v1/organizations/$ORG_ID` directly. No API change. Smallest diff — and arguably more honest, since the JWT already carries the answer.
-2. **Add `/organizations/me` route to the API.** New controller action that reads the request principal's org from the JWT and returns the org row. Tiny addition, but adds a route table entry and a duplicated lookup path to maintain.
-
-Path 1 is the simpler choice unless `/me` is wanted as a convenience for other future smoke tests / client code.
-
-**Impact today.** None on B-048 verification (verified manually by decoding the JWT inside the demo box, bypassing the smoke test). Will need to be resolved before `demo-smoke-test.sh` can run end-to-end as a CI / pre-demo gate.
-
----
-
 ## B-029 — EC2 dev box: Vite HMR bind-mount staleness; `restart` not enough, `--force-recreate` needed
 
 - **Severity:** Low
