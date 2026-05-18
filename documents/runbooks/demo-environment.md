@@ -217,6 +217,8 @@ bash infrastructure/scripts/demo-reset.sh --soft
 
 Run the smoke test after the soft reset before proceeding to the next demo.
 
+> **⚠️ Currently blocked by [B-060](../bugs/open.md#B-060) (filed 2026-05-18).** `softReset` references columns/tables that don't exist in the schema (`event_at` on `audit.audit_log`, `created_at` on `access.access_requests`, plus `observability_snapshots` and `lineage.emission_events` which aren't in any migration). The first DELETE throws and the transaction rolls back; the command exits non-zero every time. Working fallback: `bash infrastructure/scripts/demo-sync.sh main` re-runs the seed idempotently against current main and is what was used to refresh the demo box on 2026-05-18. Remove this callout when B-060 lands.
+
 ---
 
 ## Step 5 - Tear Down After Final Demo
@@ -306,6 +308,6 @@ backend "s3" {
 | --- | --- |
 | `demo-bootstrap.sh` | Once per provisioned instance, immediately after Terraform apply |
 | `demo-sync.sh [sha]` | Once per demo, after bootstrap |
-| `demo-smoke-test.sh [base-url]` | After sync, after soft reset, any time you want to verify |
-| `demo-reset.sh --soft` | Between back-to-back demos on the same instance |
-| `demo-reset.sh --hard` | When recovering from a corrupted state |
+| `demo-smoke-test.sh [base-url]` | After sync, after soft reset, any time you want to verify. **B-060: layers 3–6 broken** (phantom endpoints). Layers 1–2 trustworthy; layer-3+ green-light gate unavailable until B-060 lands. |
+| `demo-reset.sh --soft` | Between back-to-back demos on the same instance. **B-060: currently broken** — use `demo-sync.sh main` as fallback. |
+| `demo-reset.sh --hard` | When recovering from a corrupted state. Not yet end-to-end verified, but `hardReset` may still work (TRUNCATE + re-seed doesn't depend on the column references that break `softReset`). |
