@@ -9,38 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-059 — Access-request approve/deny endpoints don't verify the caller owns the product
-
-- **Severity:** Medium (authorization gap, not a complete bypass — caller must already hold `domain_owner` or `org_admin` role, but within those roles the "you can only act on *your* products" boundary is missing)
-- **Status:** Open
-- **Area:** Access service — `apps/api/src/access/access.service.ts` and the controller decorators
-- **Discovered:** 2026-05-17, surfaced as bonus-scope while building B-055's Pending Access Requests page (PR [#127](https://github.com/provenance-logic/provenance/pull/127)). Not exploited in the seeded demo.
-
-**Symptom.** The `POST /api/v1/organizations/:orgId/access/requests/:requestId/approve` and `…/:requestId/deny` endpoints carry `@Roles('org_admin', 'domain_owner')` on the controller. The service method (`approveRequest`, `denyRequest` in `access.service.ts`) checks that the request exists and is pending, then resolves it — but **never verifies the calling principal owns the data product the request is for.** Any `domain_owner` in the org can approve any pending request on any product, regardless of which domain they own.
-
-Concrete walkthrough: in the seeded demo, Maya is the `domain_owner` of the marketing domain. Samuel is the `domain_owner` of supply-chain. Per current behavior, Samuel could `curl -X POST .../access/requests/<id>/approve` against a pending request for Maya's Customer 360 product, and the API would approve it — generating a grant with `granted_by_principal_id = samuel`. The audit log would record Samuel as the approver of a product he doesn't own.
-
-**Why this is Medium, not High.** The bypass requires the caller to already hold a role-bearing principal (`domain_owner` or `org_admin`); it isn't an unauthenticated or guest-accessible defect. The exposure is "inside the org, cross-domain authority is wider than the data-mesh model intends." The Pending Access Requests page (PR [#127](https://github.com/provenance-logic/provenance/pull/127)) is correctly scoped via `forApprover=me` (joins `data_products.owner_principal_id = caller`), so the *UI* won't surface other domains' requests. But a direct API call bypasses the UI scope.
-
-**Why it isn't Low.** Federated data mesh governance is *the* differentiator. The platform's claim is "domain teams own their data products end-to-end, including who gets access" (PRD Domain 1, federated computational governance). A cross-domain authority leak undermines that claim. A SOC 2 access-control review would flag this as a least-privilege violation even if no one had exploited it.
-
-**Fix path.** Two options, both at the service layer (not the controller — controller-level Guards can't see the request's product without an extra DB lookup):
-
-1. **Inline ownership check in `approveRequest` / `denyRequest`.** After loading the request, load the product, and reject if `product.ownerPrincipalId !== approvedByPrincipalId` *unless* the caller holds `org_admin` role. The `org_admin` carve-out keeps the existing "platform admin can act anywhere" semantic intact.
-
-2. **Compose a `ProductOwnershipGuard`.** A Nest guard that runs after `RolesGuard`, reads `:requestId` from the route param, loads the request → product, and asserts ownership. Cleaner separation, more reusable, but more plumbing for a single endpoint pair.
-
-Either option needs:
-- A `RoleAssignmentService.hasRole(principalId, 'org_admin')` lookup (probably already exists for `RolesGuard`).
-- A regression test in `access.service.spec.ts` that proves a non-owning domain_owner gets 403.
-- Audit-log entry on the rejection so attempted cross-domain approval attempts are visible.
-
-**Impact today.** None operationally — the seed has friendly tenants and the UI naturally scopes the queue. But it's a real defect that gates a "federated governance is real" claim. Should land before the next external demo where someone could ask "what stops domain A from approving domain B's requests?"
-
-**Pattern.** Anywhere the platform makes a federation claim (this product is owned by this domain, this org is isolated from that org), the corresponding *enforcement* must live below the role guard, in the service layer where the resource identity is resolvable. Role guards say "you're allowed to *act*"; ownership/scope checks say "*on this specific thing*." Easy to miss both halves when the controller decoration looks complete.
-
----
-
 ## B-056 — Logout from `/agents` returns raw JSON 404 instead of redirecting to login
 
 - **Severity:** Medium (UX + security-adjacent — exposes API error shapes to end users on logout)

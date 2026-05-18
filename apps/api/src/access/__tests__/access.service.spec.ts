@@ -33,6 +33,8 @@ const mockRepo = () => ({
   findAndCount: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
+  // approve/deny scope-violation audit row goes through repo.manager.query.
+  manager: { query: jest.fn().mockResolvedValue(undefined) },
 });
 
 const mockTemporalClient = () => ({
@@ -543,17 +545,20 @@ describe('AccessService', () => {
   // -------------------------------------------------------------------------
 
   describe('approveRequest()', () => {
+    // Existing flow tests use ['org_admin'] so the ownership check (B-059) is
+    // bypassed — the assertions here cover state transitions and notifications,
+    // not the cross-domain ownership boundary which has its own tests.
     it('throws NotFoundException when request does not exist', async () => {
       requestRepo.findOne.mockResolvedValue(null);
       await expect(
-        service.approveRequest('org-1', 'missing', {}, 'principal-1'),
+        service.approveRequest('org-1', 'missing', {}, 'principal-1', ['org_admin']),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('throws ConflictException when request is not pending', async () => {
       requestRepo.findOne.mockResolvedValue(makeRequest({ status: 'denied' }));
       await expect(
-        service.approveRequest('org-1', 'request-1', {}, 'principal-1'),
+        service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['org_admin']),
       ).rejects.toThrow(ConflictException);
     });
 
@@ -567,7 +572,7 @@ describe('AccessService', () => {
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent({ action: 'approved' }));
 
-      const result = await service.approveRequest('org-1', 'request-1', { note: 'OK' }, 'principal-1');
+      const result = await service.approveRequest('org-1', 'request-1', { note: 'OK' }, 'principal-1', ['org_admin']);
 
       expect(requestRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'approved' }),
@@ -586,7 +591,7 @@ describe('AccessService', () => {
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent());
 
-      await service.approveRequest('org-1', 'request-1', {}, 'principal-1');
+      await service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['org_admin']);
 
       expect(temporalClient.workflow.getHandle).toHaveBeenCalledWith('approval-request-1');
     });
@@ -601,7 +606,7 @@ describe('AccessService', () => {
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent({ action: 'approved' }));
 
-      await service.approveRequest('org-1', 'request-1', { note: 'OK' }, 'principal-1');
+      await service.approveRequest('org-1', 'request-1', { note: 'OK' }, 'principal-1', ['org_admin']);
 
       expect(notificationsService.enqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -611,6 +616,38 @@ describe('AccessService', () => {
           dedupKey: 'access_request_approved:request-1',
         }),
       );
+    });
+
+    it('B-059: domain_owner of a different domain is rejected with 403 and a scope-violation audit row', async () => {
+      requestRepo.findOne.mockResolvedValue(makeRequest());
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }));
+
+      await expect(
+        service.approveRequest('org-1', 'request-1', {}, 'different-domain-owner', ['domain_owner']),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(grantRepo.save).not.toHaveBeenCalled();
+      expect(requestRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit.audit_log'),
+        expect.arrayContaining([
+          'access_request.approve_blocked_scope_violation',
+          'different-domain-owner',
+        ]),
+      );
+    });
+
+    it('B-059: domain_owner who owns the product is allowed through', async () => {
+      requestRepo.findOne.mockResolvedValue(makeRequest());
+      requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }));
+      grantRepo.create.mockReturnValue(makeGrant());
+      grantRepo.save.mockResolvedValue(makeGrant());
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent());
+
+      const result = await service.approveRequest('org-1', 'request-1', {}, 'owner-1', ['domain_owner']);
+
+      expect(result.request.status).toBe('approved');
     });
   });
 
@@ -626,7 +663,7 @@ describe('AccessService', () => {
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent({ action: 'denied' }));
 
-      const result = await service.denyRequest('org-1', 'request-1', { note: 'Policy violation' }, 'principal-1');
+      const result = await service.denyRequest('org-1', 'request-1', { note: 'Policy violation' }, 'principal-1', ['org_admin']);
 
       expect(result.status).toBe('denied');
       expect(result.resolvedBy).toBe('principal-1');
@@ -635,8 +672,26 @@ describe('AccessService', () => {
     it('throws ConflictException when request is not pending', async () => {
       requestRepo.findOne.mockResolvedValue(makeRequest({ status: 'approved' }));
       await expect(
-        service.denyRequest('org-1', 'request-1', {}, 'principal-1'),
+        service.denyRequest('org-1', 'request-1', {}, 'principal-1', ['org_admin']),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('B-059: domain_owner of a different domain is rejected with 403 and a scope-violation audit row', async () => {
+      requestRepo.findOne.mockResolvedValue(makeRequest());
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }));
+
+      await expect(
+        service.denyRequest('org-1', 'request-1', {}, 'different-domain-owner', ['domain_owner']),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(requestRepo.save).not.toHaveBeenCalled();
+      expect(requestRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit.audit_log'),
+        expect.arrayContaining([
+          'access_request.deny_blocked_scope_violation',
+          'different-domain-owner',
+        ]),
+      );
     });
 
     it('enqueues access_request_denied notification to the requester (F11.8)', async () => {
@@ -646,7 +701,7 @@ describe('AccessService', () => {
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent({ action: 'denied' }));
 
-      await service.denyRequest('org-1', 'request-1', { note: 'Insufficient justification' }, 'principal-1');
+      await service.denyRequest('org-1', 'request-1', { note: 'Insufficient justification' }, 'principal-1', ['org_admin']);
 
       expect(notificationsService.enqueue).toHaveBeenCalledWith(
         expect.objectContaining({

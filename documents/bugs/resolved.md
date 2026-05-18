@@ -6,6 +6,37 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-059 — Access-request approve/deny endpoints didn't verify the caller owns the product
+
+- **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
+- **Severity:** was Medium (authorization gap inside `domain_owner` role — cross-domain authority wider than the federated data-mesh model intends)
+- **Area:** Access service — `apps/api/src/access/access.service.ts`, `access.controller.ts`
+
+**Symptom.** `POST /api/v1/organizations/:orgId/access/requests/:requestId/{approve,deny}` carried `@Roles('org_admin', 'domain_owner')` on the controller. The service then checked existence and pending status but never verified the caller owned the underlying product. Any `domain_owner` could resolve any pending request on any product in the org. The UI was scoped correctly via `forApprover=me`, but a direct API call bypassed that scope.
+
+**Root cause.** The role guard answered "this principal is allowed to *act*"; nothing answered "*on this specific thing*." That's the federation half — it has to live in the service layer where the resource is resolvable.
+
+**Fix.** Service-layer ownership check inside `approveRequest` / `denyRequest`, threading the caller's roles through from the controller's `RequestContext`:
+
+- `org_admin` short-circuits the check — platform-wide authority preserved.
+- Otherwise the product is loaded and `product.ownerPrincipalId === callerPrincipalId` is required.
+- On failure, an audit row goes into `audit.audit_log` with action `access_request.{approve|deny}_blocked_scope_violation` (carries product id, owner, caller roles in metadata) before `ForbiddenException` is thrown — cross-domain authority probes are visible to governance review even when denied.
+
+The bug doc suggested adding a `RoleAssignmentService.hasRole(...)` lookup. Not needed — `RolesGuard` reads roles off `RequestContext.roles` (already on the JWT-derived ctx), so the controller passes `ctx.roles` into the service. One less injection.
+
+**Regression coverage.** Five new tests across `access.service.spec.ts` and `__tests__/access.service.spec.ts`:
+- Domain owner who *owns* the product approves/denies successfully.
+- `org_admin` resolves without an ownership lookup.
+- Cross-domain `domain_owner` → 403 + scope-violation audit row written (asserts on the row).
+- Same for `deny`.
+- Idempotency / Temporal / notification tests updated to pass the new `callerRoles` arg.
+
+All 71 tests green under `pnpm --filter @provenance/api test -- --testPathPattern=access.service`.
+
+**Pattern.** Federation claims need two checks, in two layers: role guard at the controller ("you can act"), ownership check at the service ("on this thing"). When only one half lands, the other half stays silently open. The fix path generalizes: any future endpoint making a per-resource federation claim (per-domain, per-product, per-org-tenant) needs both. The controller decoration is necessary but not sufficient.
+
+---
+
 ## B-057 — Agent registry had no detail page; access grants, connection references, and classification history were not surfaced in the UI
 
 - **Resolved:** 2026-05-17 — fix PR pending (see commit hash on merge)

@@ -33,6 +33,9 @@ const mockRepo = () => ({
   findAndCount: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
+  // The ownership-scope audit row in approve/deny goes through
+  // requestRepo.manager.query — share a single mock so the spec can assert on it.
+  manager: { query: jest.fn().mockResolvedValue(undefined) },
 });
 
 const mockTemporalClient = () => ({
@@ -252,10 +255,14 @@ describe('AccessService', () => {
   // -------------------------------------------------------------------------
 
   describe('approveRequest()', () => {
-    it('domain owner can approve a pending request — creates a grant with the specified expiration', async () => {
+    it('domain owner who owns the product can approve a pending request — creates a grant with the specified expiration', async () => {
       const request = makeRequest();
       requestRepo.findOne.mockResolvedValue(request);
       requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      // Caller owns the product → ownership check passes.
+      productRepo.findOne.mockResolvedValue(
+        makeProduct({ ownerPrincipalId: 'domain-owner-1' }),
+      );
       const grant = makeGrant({ approvalRequestId: 'request-1', expiresAt: future });
       grantRepo.create.mockReturnValue(grant);
       grantRepo.save.mockResolvedValue(grant);
@@ -267,6 +274,7 @@ describe('AccessService', () => {
         'request-1',
         { note: 'Approved by domain owner', expiresAt: future.toISOString() },
         'domain-owner-1',
+        ['domain_owner'],
       );
 
       expect(requestRepo.save).toHaveBeenCalledWith(
@@ -278,7 +286,7 @@ describe('AccessService', () => {
       expect(result.grant.expiresAt).toBe(future.toISOString());
     });
 
-    it('org admin can approve a pending request', async () => {
+    it('org admin can approve a pending request for a product they do not own (platform-wide authority)', async () => {
       const request = makeRequest();
       requestRepo.findOne.mockResolvedValue(request);
       requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
@@ -292,19 +300,49 @@ describe('AccessService', () => {
         'request-1',
         {},
         'org-admin-1',
+        ['org_admin'],
       );
 
       expect(result.request.status).toBe('approved');
       expect(result.grant).toBeDefined();
+      // org_admin short-circuits the ownership check — no product lookup needed.
+      expect(productRepo.findOne).not.toHaveBeenCalled();
     });
 
-    it.todo('any other role attempting approval returns 403 — role enforcement is handled at the controller layer (RolesGuard), not in the service');
+    it('B-059: domain_owner of a different domain gets 403 when approving — writes scope-violation audit row and does not create a grant', async () => {
+      requestRepo.findOne.mockResolvedValue(makeRequest());
+      // Product is owned by some *other* principal; the caller is a domain_owner
+      // of a different domain. The role guard at the controller already passed
+      // (caller holds domain_owner), but the cross-domain authority must be denied.
+      productRepo.findOne.mockResolvedValue(
+        makeProduct({ ownerPrincipalId: 'maya-marketing-owner' }),
+      );
+
+      await expect(
+        service.approveRequest(
+          'org-1',
+          'request-1',
+          {},
+          'samuel-supply-chain-owner',
+          ['domain_owner'],
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(grantRepo.save).not.toHaveBeenCalled();
+      expect(requestRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit.audit_log'),
+        expect.arrayContaining([
+          'access_request.approve_blocked_scope_violation',
+          'samuel-supply-chain-owner',
+        ]),
+      );
+    });
 
     it('throws ConflictException when attempting to approve an already-resolved request', async () => {
       requestRepo.findOne.mockResolvedValue(makeRequest({ status: 'approved' }));
 
       await expect(
-        service.approveRequest('org-1', 'request-1', {}, 'principal-1'),
+        service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['domain_owner']),
       ).rejects.toThrow(ConflictException);
 
       expect(grantRepo.save).not.toHaveBeenCalled();
@@ -314,12 +352,14 @@ describe('AccessService', () => {
       const request = makeRequest({ temporalWorkflowId: 'approval-request-1' });
       requestRepo.findOne.mockResolvedValue(request);
       requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      // Caller owns the product (default ownerPrincipalId is 'principal-1').
+      productRepo.findOne.mockResolvedValue(makeProduct());
       grantRepo.create.mockReturnValue(makeGrant());
       grantRepo.save.mockResolvedValue(makeGrant());
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent());
 
-      await service.approveRequest('org-1', 'request-1', {}, 'principal-1');
+      await service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['domain_owner']);
 
       expect(temporalClient.workflow.getHandle).toHaveBeenCalledWith('approval-request-1');
       expect(temporalClient.workflow.getHandle('approval-request-1').signal).toHaveBeenCalled();
@@ -327,10 +367,11 @@ describe('AccessService', () => {
   });
 
   describe('denyRequest()', () => {
-    it('transitions request to denied and records a denied event without creating a grant', async () => {
+    it('product owner can deny and the denied event is recorded without creating a grant', async () => {
       const request = makeRequest();
       requestRepo.findOne.mockResolvedValue(request);
       requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      productRepo.findOne.mockResolvedValue(makeProduct());
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent({ action: 'denied' }));
 
@@ -339,6 +380,7 @@ describe('AccessService', () => {
         'request-1',
         { note: 'Policy violation' },
         'principal-1',
+        ['domain_owner'],
       );
 
       expect(result.status).toBe('denied');
@@ -346,11 +388,37 @@ describe('AccessService', () => {
       expect(grantRepo.save).not.toHaveBeenCalled();
     });
 
+    it('B-059: domain_owner of a different domain gets 403 when denying — writes scope-violation audit row', async () => {
+      requestRepo.findOne.mockResolvedValue(makeRequest());
+      productRepo.findOne.mockResolvedValue(
+        makeProduct({ ownerPrincipalId: 'maya-marketing-owner' }),
+      );
+
+      await expect(
+        service.denyRequest(
+          'org-1',
+          'request-1',
+          { note: 'overstepping' },
+          'samuel-supply-chain-owner',
+          ['domain_owner'],
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(requestRepo.save).not.toHaveBeenCalled();
+      expect(requestRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit.audit_log'),
+        expect.arrayContaining([
+          'access_request.deny_blocked_scope_violation',
+          'samuel-supply-chain-owner',
+        ]),
+      );
+    });
+
     it('throws ConflictException when attempting to deny an already-resolved request', async () => {
       requestRepo.findOne.mockResolvedValue(makeRequest({ status: 'approved' }));
 
       await expect(
-        service.denyRequest('org-1', 'request-1', {}, 'principal-1'),
+        service.denyRequest('org-1', 'request-1', {}, 'principal-1', ['domain_owner']),
       ).rejects.toThrow(ConflictException);
     });
   });
@@ -367,16 +435,17 @@ describe('AccessService', () => {
         .mockResolvedValueOnce(request)                          // first findOne → pending
         .mockResolvedValueOnce(makeRequest({ status: 'approved' })); // second findOne → already resolved
       requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      productRepo.findOne.mockResolvedValue(makeProduct());
       grantRepo.create.mockReturnValue(makeGrant());
       grantRepo.save.mockResolvedValue(makeGrant());
       eventRepo.create.mockImplementation((d: any) => d);
       eventRepo.save.mockResolvedValue(makeEvent());
 
-      await service.approveRequest('org-1', 'request-1', {}, 'principal-1');
+      await service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['domain_owner']);
 
       // Second approval attempt must be rejected.
       await expect(
-        service.approveRequest('org-1', 'request-1', {}, 'principal-1'),
+        service.approveRequest('org-1', 'request-1', {}, 'principal-1', ['domain_owner']),
       ).rejects.toThrow(ConflictException);
 
       // The grant was saved exactly once across both calls.
