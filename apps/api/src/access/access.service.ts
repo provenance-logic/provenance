@@ -35,6 +35,7 @@ import type {
   ApprovalEventList,
   ApprovalEventAction,
   ConnectionPackage,
+  RoleType,
 } from '@provenance/types';
 
 @Injectable()
@@ -509,6 +510,7 @@ export class AccessService {
     requestId: string,
     dto: ApproveAccessRequestRequest,
     approvedByPrincipalId: string,
+    approvedByRoles: RoleType[],
   ): Promise<AccessRequestApprovalResult> {
     const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
@@ -517,6 +519,15 @@ export class AccessService {
         `Access request is not pending (current status: ${request.status})`,
       );
     }
+
+    await this.assertCallerCanResolve(
+      orgId,
+      request.productId,
+      requestId,
+      approvedByPrincipalId,
+      approvedByRoles,
+      'approve',
+    );
 
     const now = new Date();
     request.status = 'approved';
@@ -577,6 +588,7 @@ export class AccessService {
     requestId: string,
     dto: DenyAccessRequestRequest,
     deniedByPrincipalId: string,
+    deniedByRoles: RoleType[],
   ): Promise<AccessRequest> {
     const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
@@ -585,6 +597,15 @@ export class AccessService {
         `Access request is not pending (current status: ${request.status})`,
       );
     }
+
+    await this.assertCallerCanResolve(
+      orgId,
+      request.productId,
+      requestId,
+      deniedByPrincipalId,
+      deniedByRoles,
+      'deny',
+    );
 
     request.status = 'denied';
     request.resolvedAt = new Date();
@@ -674,6 +695,54 @@ export class AccessService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Enforces the federated-governance ownership boundary on approve/deny.
+   * `RolesGuard` confirms the caller holds `domain_owner` or `org_admin`; this
+   * adds the missing "on *this* product" half. `org_admin` keeps platform-wide
+   * authority. Other callers must own the underlying product. Scope-violation
+   * attempts land in the audit log before the 403 is thrown so cross-domain
+   * authority probes are visible to governance review. See B-059.
+   */
+  private async assertCallerCanResolve(
+    orgId: string,
+    productId: string,
+    requestId: string,
+    callerPrincipalId: string,
+    callerRoles: RoleType[],
+    attemptedAction: 'approve' | 'deny',
+  ): Promise<void> {
+    if (callerRoles.includes('org_admin')) return;
+
+    const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
+    if (!product) {
+      throw new NotFoundException(`Data product ${productId} not found`);
+    }
+    if (product.ownerPrincipalId === callerPrincipalId) return;
+
+    await this.requestRepo.manager.query(
+      `INSERT INTO audit.audit_log
+         (org_id, principal_id, principal_type, action, resource_type, resource_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6::uuid, $7)`,
+      [
+        orgId,
+        callerPrincipalId,
+        'human',
+        `access_request.${attemptedAction}_blocked_scope_violation`,
+        'access_request',
+        requestId,
+        JSON.stringify({
+          productId,
+          productOwnerPrincipalId: product.ownerPrincipalId,
+          callerRoles,
+        }),
+      ],
+    );
+
+    throw new ForbiddenException(
+      'Only the product owner or an org_admin may resolve this access request',
+    );
+  }
 
   private async recordEvent(
     orgId: string,

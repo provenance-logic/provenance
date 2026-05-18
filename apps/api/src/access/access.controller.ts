@@ -148,7 +148,13 @@ export class AccessController {
     @Param('requestId') requestId: string,
     @Body() dto: ApproveAccessRequestRequest = {},
   ): Promise<AccessRequestApprovalResult> {
-    return this.accessService.approveRequest(ctx.orgId, requestId, dto, ctx.principalId);
+    return this.accessService.approveRequest(
+      ctx.orgId,
+      requestId,
+      dto,
+      ctx.principalId,
+      ctx.roles,
+    );
   }
 
   @Post('requests/:requestId/deny')
@@ -158,7 +164,13 @@ export class AccessController {
     @Param('requestId') requestId: string,
     @Body() dto: DenyAccessRequestRequest = {},
   ): Promise<AccessRequest> {
-    return this.accessService.denyRequest(ctx.orgId, requestId, dto, ctx.principalId);
+    return this.accessService.denyRequest(
+      ctx.orgId,
+      requestId,
+      dto,
+      ctx.principalId,
+      ctx.roles,
+    );
   }
 
   @Post('requests/:requestId/withdraw')
