@@ -227,7 +227,7 @@ The story is "**this is a coordination platform for the AI-agent era.**" Show, d
 
 ### Audience B: Technical colleague / data architect (15 min)
 
-> **Status (2026-05-17):** B-057 ✅ fixed — agent detail page now ships. B-056 still open — *don't log out from `/agents` or `/agents/:agentId`*, navigate to `/` first to log out cleanly.
+> **Status (2026-05-18):** B-057 ✅ fixed — agent detail page now ships. B-056 ✅ fixed — logout from `/agents` redirects to login cleanly.
 
 The story is "**we made all the right architecture calls and there's evidence of each one in the running stack.**"
 
@@ -265,7 +265,7 @@ The story is "**we made your job a software problem.**"
 
 - ✅ **B-054 (retracted) — misdiagnosed as silent grant; see [resolved.md](../bugs/resolved.md#B-054).** The "grant happened after clicking the notification" observation was the always-existing seeded grant on Customer 360, attributed to the click. No silent-grant mechanism exists in the code.
 - ✅ **B-055 (fixed 2026-05-17) — approval workflow has a proper home.** New page at `/access-requests` lists all pending requests the caller can approve, with inline Approve / Deny. Linked from the left nav as "Access Requests." Notification deep-links route here.
-- **B-056 (Medium) — logout from `/agents` returns a raw JSON 404.** NestJS error response leaks through to the browser. **Workaround:** before logging out, navigate to `/` (home). Then log out cleanly. **Never end a live demo by logging out from `/agents`** — the JSON error would be the audience's last impression.
+- ✅ **B-056 (fixed 2026-05-18) — logout from `/agents` now redirects to login cleanly.** Root cause was a stale `/agent` entry in the Vite dev server proxy (prefix-matched `/agents`, forwarded post-logout reloads to NestJS, surfacing Express's `Cannot GET /agents` 404). Not a Keycloak or route-guard issue as originally hypothesized. See [resolved.md](../bugs/resolved.md#B-056).
 - ✅ **B-057 (fixed 2026-05-17) — agent detail page now lives at `/agents/:agentId`.** Four-tab surface (Overview / Access Grants / Connection References / Classification History) backed by existing endpoints. The Domain 12 connection-reference story now has a real visible surface — first one in the UI. Rows in the agent registry are clickable links.
 - ✅ **B-058 (fixed 2026-05-18) — trust-score-drop notification now fans out to `governance@acme` too.** Same signal `finance-lead@acme` sees, replicated under `seedKey: acme:governance:trust:revenue-daily` so re-seeding stays idempotent. Section 6 and Step 8 of the investor script now match. No live-demo workaround needed.
 
