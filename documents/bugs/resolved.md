@@ -6,6 +6,61 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-061 — Cross-org information leak: the JWT auth guard did not check the URL `:orgId` against the token's claim
+
+- **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)
+- **Severity:** was High (cross-tenant information leak, OSR-blocking)
+- **Area:** `apps/api/src/auth/jwt-auth.guard.ts`
+
+**Symptom.** Authenticated as `admin@acme.example.com` (JWT `provenance_org_id = <Acme>`), calling `/api/v1/organizations/<Beta>/...` returned HTTP 200 with **Beta's** data on three confirmed endpoints:
+
+- `GET /governance/dashboard` — leaked counts (`totalPublished: 4` for Beta, vs Acme's 12)
+- `GET /governance/effective-policies` — leaked actual rows (response items carried `orgId = <Beta>`)
+- `GET /products/<beta-product>/trust-score` — leaked the score; a mismatched call (own orgId + foreign product UUID) appeared to commit a cross-org **write** (response payload claimed `org_id = <Acme>` for a Beta product, suggesting a new `observability.trust_score_history` row mis-attributed to the caller's tenant)
+
+Other endpoints (`/access/grants`, `/access/requests`, `/marketplace/products`) handled the same swap correctly — they ignored the URL `:orgId` mismatch and returned the caller's own data — so the gap was per-controller, not platform-wide.
+
+**Root cause.** Two controller patterns coexisted: safe controllers used `ctx.orgId` (resolved from the JWT) while leaky ones passed `@Param('orgId')` (the URL value) straight through to the service. The `JwtAuthGuard` enforced that the JWT carried a non-empty `provenance_org_id` claim, but not that it matched the URL. The `OrgContextMiddleware` set `provenance.current_org_id` for RLS, but it used `set_config(..., is_local=true)` on a transient pool connection that released before the service-layer query acquired a fresh one — so the RLS layer wasn't catching the gap either.
+
+**Fix.** Extended `JwtAuthGuard.canActivate` with a final check: when `request.params.orgId` is present and `request.user.orgId` is non-empty, throw `ForbiddenException` on mismatch. One control point, applies to every route already protected by the guard (i.e. every tenant-scoped controller — they all use `@UseGuards(JwtAuthGuard)`). The MCP service-account bypass earlier in the same guard short-circuits before this check, preserving the privileged inter-service path. `@AllowNoOrg` routes don't carry `:orgId` in their URLs, so the check is a no-op there.
+
+**Test added.** Five new unit tests in `apps/api/src/auth/jwt-auth.guard.spec.ts`:
+- URL/JWT mismatch → 403
+- URL/JWT match → pass
+- Route without `:orgId` param → pass
+- MCP service-account path with empty user.orgId → pass (privileged bypass preserved)
+- Agent JWT targeting a different org — pinned as "currently passes" to document the boundary; the MCP key path returns true before the new check runs, so the cross-org enforcement on the agent-via-MCP path is part of the B-062 follow-up
+
+Plus a new step in `infrastructure/scripts/demo-smoke-test.sh` layer 5 — picks a foreign org id from the marketplace listing and asserts `/governance/dashboard` and `/governance/effective-policies` return 403. Regression check that fails loud the next time someone introduces a guard bypass.
+
+**Verification.** Restarted the API container with the change and re-ran the original B-061 probe against the local stack:
+
+```
+== B-061 cross-org probe after fix ==
+-- own org (Acme) — should still PASS --
+  /governance/dashboard:           HTTP 200
+  /governance/effective-policies:  HTTP 200
+-- foreign org (Beta) — should now 403 --
+  /governance/dashboard:           HTTP 403
+  /governance/effective-policies:  HTTP 403
+  /products/<beta>/trust-score:    HTTP 403
+-- previously safe endpoints (regression check) --
+  /access/grants (own org):        HTTP 200
+  /marketplace/products (global):  HTTP 200
+```
+
+Error body on the 403:
+
+```
+{"message":"Org scope mismatch: token is scoped to a different organization than the URL targets","error":"Forbidden","statusCode":403}
+```
+
+**What's still open.** The structural defense-in-depth — making RLS actually defend the surface, not just the controller-layer guard — is a separate, larger refactor tracked as [B-062](open.md#B-062). With the guard in place, the leak is closed and the platform is safe **as long as the guard is correct on every org-scoped route**. B-062 is the work that makes the platform safe even if the guard ever has a bypass.
+
+**Pattern.** Same shape as the B-060 family: the affected surface (here, the URL parameter) was a security boundary the codebase wasn't treating like one. The fix is one extra line of comparison at the existing boundary check — it just had to be written down. Worth doing the same audit any time a new path parameter shows up in a controller: is it being checked against the token, or just used?
+
+---
+
 ## B-060 (part 2) — `demo-smoke-test.sh` layers 3–6 targeted flat endpoints the API never exposed
 
 - **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)

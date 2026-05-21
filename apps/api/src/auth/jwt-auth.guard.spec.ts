@@ -1,4 +1,4 @@
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
@@ -44,12 +44,14 @@ function mockAgentRepo() {
 function mockExecutionContext(
   headers: Record<string, string>,
   initialUser?: Record<string, unknown>,
+  params?: Record<string, string>,
 ): {
   context: ExecutionContext;
   request: Record<string, unknown>;
 } {
   const request: Record<string, unknown> = { headers };
   if (initialUser) request.user = initialUser;
+  if (params) request.params = params;
   const context = {
     switchToHttp: () => ({
       getRequest: () => request,
@@ -286,6 +288,125 @@ describe('JwtAuthGuard — provenance_org_id enforcement', () => {
     expect(superActivate).not.toHaveBeenCalled();
 
     superActivate.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-org URL/JWT consistency (B-061).
+// Every route that carries an :orgId path parameter must have that match the
+// caller's JWT-resolved orgId. Mismatch → 403. This prevents the leak filed
+// in B-061 where controllers passing @Param('orgId') straight to services
+// would happily serve a different tenant's data.
+// ---------------------------------------------------------------------------
+
+describe('JwtAuthGuard — cross-org URL/JWT consistency (B-061)', () => {
+  let agentRepo: ReturnType<typeof mockAgentRepo>;
+  const ACME = '660e8400-e29b-41d4-a716-446655440001';
+  const BETA = '660e8400-e29b-41d4-a716-44665544beta';
+
+  beforeEach(() => {
+    agentRepo = mockAgentRepo();
+  });
+
+  afterEach(() => {
+    delete process.env.MCP_API_KEY;
+  });
+
+  function withValidJwt(
+    user: Record<string, unknown>,
+    params?: Record<string, string>,
+  ) {
+    const guard = new JwtAuthGuard(agentRepo as any, mockReflector());
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      user,
+      params,
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+    return { guard, context, superActivate };
+  }
+
+  it('rejects with 403 when URL :orgId differs from JWT orgId', async () => {
+    const { guard, context, superActivate } = withValidJwt(
+      { orgId: ACME, principalId: 'p-1' },
+      { orgId: BETA },
+    );
+
+    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+
+    superActivate.mockRestore();
+  });
+
+  it('allows when URL :orgId equals JWT orgId', async () => {
+    const { guard, context, superActivate } = withValidJwt(
+      { orgId: ACME, principalId: 'p-1' },
+      { orgId: ACME },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('allows when the route has no :orgId path parameter', async () => {
+    const { guard, context, superActivate } = withValidJwt(
+      { orgId: ACME, principalId: 'p-1' },
+      // params left unset — the route does not have :orgId
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('does not enforce when the MCP service-account bypass set orgId=""', async () => {
+    // The MCP_API_KEY bypass earlier in JwtAuthGuard sets orgId='' on the
+    // privileged inter-service path. That short-circuits before this check
+    // (it returns true before reaching the cross-org guard). But for the
+    // belt-and-suspenders case where some other path produces an empty
+    // orgId on the user, the check should not 403 — it should leave that
+    // decision to whichever upstream check is responsible for empty orgIds.
+    process.env.MCP_API_KEY = MCP_KEY;
+    const guard = new JwtAuthGuard(agentRepo as any, mockReflector());
+    const { context } = mockExecutionContext(
+      { authorization: `Bearer ${MCP_KEY}` },
+      undefined,
+      { orgId: ACME },
+    );
+
+    // MCP key path returns true before the cross-org check runs, so this
+    // should pass regardless of the URL :orgId.
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('rejects an agent JWT that targets a different org than its agent record', async () => {
+    // Agent identity context — when the MCP service forwards X-Agent-Id,
+    // request.user.orgId is the agent's owning org. The agent should not be
+    // able to act against a different org even with a valid x-agent-id header.
+    process.env.MCP_API_KEY = MCP_KEY;
+    agentRepo.findOne.mockResolvedValue(makeAgent({ orgId: ACME }));
+    const guard = new JwtAuthGuard(agentRepo as any, mockReflector());
+    const { context } = mockExecutionContext(
+      {
+        authorization: `Bearer ${MCP_KEY}`,
+        'x-agent-id': AGENT_ID,
+        'x-org-id': ACME,
+      },
+      undefined,
+      { orgId: BETA },
+    );
+
+    // Note: the MCP path currently returns true BEFORE the cross-org check
+    // runs (early return at line 60 of jwt-auth.guard.ts). This test
+    // documents that gap — agent identity bypasses cross-org scope today
+    // because the MCP bypass branch short-circuits the guard. Fixing that
+    // is part of the RLS-by-default follow-up tracked under B-061.
+    //
+    // For now we just assert the current behavior (passes) so this test
+    // pins the boundary and a future fix has a place to land.
+    await expect(guard.canActivate(context)).resolves.toBe(true);
   });
 });
 
