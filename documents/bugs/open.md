@@ -20,17 +20,7 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 1. **`softReset` (`packages/seed/src/reset.ts`):** ~~the function references five tables/columns; only one is correct.~~ **RESOLVED 2026-05-21.** softReset now matches the live schema (V4 `occurred_at`, V7 `requested_at`, V9 `emission_log`, V11 `computed_at`); the phantom `observability_snapshots` DELETE was dropped (no such table exists). A new CLI verifier (`seed:verify:soft-reset`) inserts sentinel rows on both sides of the 24h cutoff, runs softReset, and asserts the right rows were deleted; verified end-to-end on back-to-back invocations.
 
-2. **`demo-smoke-test.sh` layers 3–6:** almost every authenticated API call references a flat top-level endpoint shape that the API doesn't expose. The real surface is org-scoped (`/organizations/:orgId/...`).
-   | Smoke test calls | What actually exists |
-   |---|---|
-   | `GET /api/v1/products?limit=50` | `/api/v1/organizations/:orgId/domains/:domainId/products` or `/api/v1/marketplace` |
-   | `GET /api/v1/products/:id` | `/api/v1/organizations/:orgId/domains/:domainId/products/:id` |
-   | `GET /api/v1/products/:id/trust-score` | `/api/v1/organizations/:orgId/products/:id/trust-score` |
-   | `GET /api/v1/lineage/smoke?productSlug=...` | `/api/v1/organizations/:orgId/lineage/...` (no `/smoke` subpath) |
-   | `GET /api/v1/search/smoke?q=...` | `/api/v1/internal/search` (no `/smoke` subpath) |
-   | `GET /api/v1/governance/rls-probe?assumeOrg=...` | `/api/v1/organizations/:orgId/governance/...` (no `/rls-probe`) |
-   
-   B-050's fix (PR #133) only touched layer 2 (`/organizations/me`). Layers 3–6 remain broken on a different axis — they don't even know the API is multi-tenant.
+2. **`demo-smoke-test.sh` layers 3–6:** ~~almost every authenticated API call references a flat top-level endpoint shape that the API doesn't expose.~~ **RESOLVED 2026-05-21.** Rewrote layers 3, 5, 6 against the real org-scoped routes — see [resolved.md](./resolved.md#B-060-part-2-demo-smoke-testsh-layers-3-6-targeted-flat-endpoints-the-api-never-exposed) for the full mapping. The `/smoke` and `/rls-probe` phantom subpaths were dropped in favor of behavioral checks against existing endpoints (B-050-style). Layer 4 (MCP) was untouched — it was already correct.
 
 **Root cause.** Both scripts were written against an earlier snapshot of the platform that has since evolved:
 - `softReset` against a planned-but-never-built schema (`observability_snapshots`, `emission_events`) with column names that were renamed before V4 / V25 shipped.
@@ -42,13 +32,15 @@ Neither was ever end-to-end run after the underlying surfaces moved. This is the
 
 1. **`softReset`** — ✅ **DONE 2026-05-21.** Fixed: `event_at`→`occurred_at`, `created_at`→`requested_at`, `emission_events`→`emission_log` (the table was renamed, not dropped — V9), and `observability_snapshots` DELETE removed entirely (table never existed). New `seed:verify:soft-reset` CLI command runs as the smoke test for `softReset` itself.
 
-2. **`demo-smoke-test.sh` layers 3–6** — for each endpoint:
-   - Look up the real route in the corresponding controller (`grep -n "@Controller" apps/api/src/<area>/*.controller.ts`).
-   - Thread the org id (already extracted from the JWT in layer 2 per B-050's fix) into the path.
-   - For routes that need a domain id (products), resolve a domain id from a known org-domain via `/organizations/:orgId/domains` and use it.
-   - Decide whether the `/smoke` and `/rls-probe` subpaths should be *added* to the API as legitimate diagnostic endpoints (they're useful — they expose internals the smoke test specifically wants to verify) or whether the smoke test should be rewritten to use existing endpoints with appropriate assertions.
+2. **`demo-smoke-test.sh` layers 3–6** — ✅ **DONE 2026-05-21.** Rewrote against real routes:
+   - Layer 3 list → `GET /api/v1/marketplace/products` (global, JWT-auth, also exercises BM25 index).
+   - Layer 3 detail → `GET /api/v1/marketplace/products/:id`; assertions remapped to the flat `columnSchema` / `owner` / `freshness` / `accessStatus` shape the response actually has (no `enrichment.*` wrapper).
+   - Layer 5 lineage → `GET /api/v1/organizations/:orgId/lineage/products/:productId/upstream` (productNodeId = postgres product UUID; confirmed by probing the cypher).
+   - Layer 5 search → `POST /api/v1/internal/search/semantic` with `{query, org_id, limit}` body, JWT-auth.
+   - Layer 5 RLS probe → replaced with a behavioral tenant-isolation check (global marketplace returns multi-org list AND org-scoped `/access/grants` returns only caller's-org rows). The `/rls-probe` and `/smoke` phantom subpaths were not added to the API — adding them would have replicated the B-050 `/me` anti-pattern.
+   - Layer 6 trust score → `GET /api/v1/organizations/:orgId/products/:productId/trust-score`.
 
-3. **Independent of either:** add a CI job that runs `demo-smoke-test.sh` against a freshly-bootstrapped demo box. The only way to prevent re-drift is to actually run the script regularly.
+3. **Independent of either:** add a CI job that runs `demo-smoke-test.sh` against a freshly-bootstrapped demo box. The only way to prevent re-drift is to actually run the script regularly. **Remaining as the last open piece of B-060.**
 
 **Why split-able into multiple PRs.** softReset and the smoke test are different files with different fix approaches. Either can land independently. Both deserve resolved.md entries with the same "operator tooling drifted from the API surface; never end-to-end tested" pattern.
 
