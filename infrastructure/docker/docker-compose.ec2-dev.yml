@@ -543,6 +543,14 @@ services:
       # @provenance/seed package's runner. Production must NEVER set this true.
       SEED_ENABLED: ${SEED_ENABLED:-true}
       SEED_API_KEY: ${SEED_API_KEY:-dev-seed-token-change-me}
+      # Local-dev connector credentials (B-063). When a connector's
+      # credentialArn is set to "local-env:VARNAME", SecretsManagerService
+      # reads VARNAME from the api container's environment instead of AWS.
+      # The env vars below are the named slots the compose file knows how
+      # to pass through; add more here when wiring new connectors for
+      # local testing. Production deploys leave these unset and rely on
+      # real Secrets Manager ARNs.
+      DATABRICKS_DEV_TOKEN: ${DATABRICKS_DEV_TOKEN:-}
       # Sample-data button (B-027). When true, an org_admin can populate
       # their org with a small demo workspace via POST /organizations/:orgId/sample-data.
       # Production deploys must keep this false.
