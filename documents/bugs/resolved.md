@@ -6,6 +6,111 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-063 Layer 4 — Databricks lineage projection from Unity Catalog → Neo4j
+
+- **Resolved:** 2026-05-21 (partial — B-063 itself remains Open as the 9 other connector types are still register-only)
+- **PR:** [#146](https://github.com/provenance-logic/provenance/pull/146)
+- **Severity:** part of B-063 (Blocker)
+- **Area:** `apps/api/src/connectors/probe/connector-probe.service.ts`, `apps/api/src/connectors/connectors.service.ts`
+
+**What shipped.** `walkDatabricksLineage()` pulls upstream + downstream edges per discovered table from Unity Catalog's Lineage Tracking API (`GET /api/2.0/lineage-tracking/table-lineage?table_name=X`), deduplicates edges seen from both endpoints, and treats 404 ("no lineage tracked") as zero edges rather than an error. Network/5xx errors on individual table calls are collected in `tablesWithErrors` so the walk continues with partial coverage.
+
+The orchestration in `crawlConnector` calls `walkDatabricksLineage` after sources + snapshots are persisted, then for each discovered edge emits via the existing `LineageService.emitEvent` with `source_node` / `target_node` as `Source` nodes keyed by Databricks full name (`catalog.schema.table`), `edge_type='DERIVES_FROM'`, `emitted_by='databricks-discovery-crawl'` (the `system-discovered` marker), and a deterministic `idempotency_key` so re-crawls don't duplicate. Counts persisted to `discovery_crawl_events.metadata`: `lineageEdgesEmitted`, `lineageEdgesSkipped`, `lineageEdgesFailed`, `tablesWithLineageErrors`.
+
+**Live verification.** Against Matt's workspace: 9 lineage edges discovered, all synced to Neo4j, queryable via the existing `GET /lineage/products/.../downstream` endpoint with no new UI work. The discovered edges revealed two real patterns: gold-layer consolidation (multiple `workspace.gold.*` feeding `mro_work_enriched`) and cross-catalog publish (`workspace.gold.* → navy_readiness.*`). Idempotent re-crawl: 0 emitted, 9 skipped.
+
+**What's still open within Layer 4.** Column-level lineage (Layer 4b) via `/api/2.0/lineage-tracking/column-lineage`. Lineage delta detection across crawls (today re-crawl is "skip if seen"). First-class `system-discovered` column on `emission_log` (we use `emitted_by` today).
+
+**Pattern.** Reusing the existing `LineageService.emitEvent` for system-discovered lineage means discovered edges land alongside SDK-emitted edges with the same trust-score recompute + Neo4j sync + idempotency semantics. **No new graph code, no new UI code.** The right shape for the future connector types' lineage projection.
+
+---
+
+## B-063 Layer 3b — Capability manifests + auto-crawl on connector registration
+
+- **Resolved:** 2026-05-21 (partial)
+- **PR:** [#145](https://github.com/provenance-logic/provenance/pull/145)
+- **Area:** `apps/api/migrations/V31__create_capability_manifests.sql`, `apps/api/src/connectors/capability-manifest.{service,controller}.ts`, `apps/api/src/connectors/connectors.service.ts`
+
+**What shipped.** Migration V31 creates `connectors.capability_manifests` — the storage CLAUDE.md described as "immutable per version" but no migration ever created. Schema includes `supports_probe`, `supports_schema_inference`, `supports_discovery_crawl`, `supports_lineage_emission`, `supports_lineage_discovery`, `discovery_granularity` (`asset_level | column_level`), `re_crawl_interval_hours_default`, plus a `capabilities_doc` JSONB for richer per-category metadata (e.g. CLAUDE.md's metadata-category coverage levels). `GRANT SELECT, INSERT` only; `REVOKE UPDATE, DELETE` at the role level — that's the structural guarantee of the immutability rule. Seeded with the Databricks 1.0.0 manifest matching what Layers 1–3a actually ship.
+
+`CapabilityManifestService` exposes `listManifests()`, `getLatestForType()`, `getLatestForTypeOrThrow()` and **nothing else**. A unit test pins this with a method-name regex (`expect(name).not.toMatch(/^(update|delete|remove|save|create)/i)`) so a future regression fails loudly. New manifests land via Flyway migrations only.
+
+`GET /api/v1/connector-capability-manifests` and `GET .../:type` endpoints; mounted at platform level because manifests are facts about the platform, not per-tenant state.
+
+**Auto-crawl on registration.** In `ConnectorsService.registerConnector`, after the probe completes with `validation_status='valid'`, look up the capability manifest. If `supportsDiscoveryCrawl` is true, `void this.crawlConnector(...).catch(log)` — fire-and-forget so the registration response returns immediately. Crawl outcomes land on the `discovery_crawl_events` history.
+
+**Live verification.** Registration returned in 392ms; 4 seconds later the discovery_crawl_events table had 1 succeeded row, 10 source registrations, and 10 schema snapshots — all credited to the registering user. The "register a Databricks connector, watch your medallion architecture appear" demo moment works.
+
+**Not Temporal yet.** Fire-and-forget is non-durable across api restarts. Layer 3c will replace it with a durable workflow.
+
+---
+
+## B-063 Layer 3a — Databricks discovery crawl
+
+- **Resolved:** 2026-05-21 (partial)
+- **PR:** [#144](https://github.com/provenance-logic/provenance/pull/144)
+- **Area:** `apps/api/migrations/V30__create_discovery_crawl_events.sql`, `apps/api/src/connectors/entities/discovery-crawl-event.entity.ts`, `apps/api/src/connectors/connectors.service.ts`, `apps/api/src/connectors/probe/connector-probe.service.ts`
+
+**What shipped.** `walkDatabricksWorkspace()` walks Unity Catalog three levels deep (catalogs → schemas → tables) with `next_page_token` pagination support and a 50-page safety cap. Optional `catalogScope` parameter limits the walk. `information_schema` schema explicitly skipped.
+
+`ConnectorsService.crawlConnector()` orchestrates: walk the workspace, look up existing sources by `(connector_id, sourceRef)` for idempotency, create source registrations for new tables, capture a schema snapshot for each via Layer 2's `introspectDatabricks`, persist counts to the new `connectors.discovery_crawl_events` row.
+
+New endpoints: `POST /connectors/:id/crawl` and `GET /connectors/:id/crawl-events`.
+
+**Discovery_crawl_events table.** Per-row crawl audit: status (`running | succeeded | partial | failed`), counts (catalogs/schemas/tables walked, sources created/skipped, snapshots captured/failed), error message, JSONB metadata. RLS enabled.
+
+**Live verification.** First crawl against Matt's workspace: 10 tables discovered across bronze/silver/gold + default schemas (information_schema correctly skipped), 10 source registrations + 10 schema snapshots created, 1.63s elapsed. Idempotent re-crawl: 0 created, 10 skipped.
+
+**Caught while developing: a TypeORM gotcha.** Entity registered in `TypeOrmModule.forFeature` on the module isn't enough — the entity must ALSO be in `TypeOrmModule.forRoot`'s `entities[]` array in `DatabaseModule`. Otherwise `EntityMetadataNotFoundError` at first repository injection.
+
+---
+
+## B-063 Layer 2 — Databricks schema inference via Unity Catalog REST
+
+- **Resolved:** 2026-05-21 (partial)
+- **PR:** [#143](https://github.com/provenance-logic/provenance/pull/143)
+- **Area:** `apps/api/src/connectors/probe/connector-probe.service.ts`
+
+**What shipped.** `introspectDatabricks()` calls `GET /api/2.1/unity-catalog/tables/{catalog}.{schema}.{table}` with bearer auth. Source ref must be a three-part name; two-part (no catalog) is explicitly rejected at the boundary to avoid silently hiding misconfigured sources — that's the exact "phantom endpoint" anti-pattern B-060 caught the project doing previously.
+
+Response is normalized: columns sorted by position, mapped to `{name, type, nullable, position, comment}`. Type sourced from `type_text` with fallback to `type_name`. Nullable defaults to true if absent (matches Databricks's own default). `schemaDefinition` also carries table-level metadata (`tableType`, `dataSourceFormat`, `comment`) from the top-level UC response. `rowEstimate: null` — UC doesn't expose row counts cheaply, deferred.
+
+**Live verification.** `workspace.silver.mro_clean` → 27 columns (matched the direct UC API byte-for-byte). Bad source ref (`silver.mro_clean`, missing catalog) returned a clean error via the api logs.
+
+---
+
+## B-063 Layer 1 — Real Databricks connectivity probe + `local-env:` credential sentinel
+
+- **Resolved:** 2026-05-21 (partial)
+- **PR:** [#142](https://github.com/provenance-logic/provenance/pull/142)
+- **Area:** `apps/api/src/connectors/probe/connector-probe.service.ts`, `apps/api/src/connectors/probe/secrets-manager.service.ts`, `apps/api/src/connectors/probe/raw-credential-guard.ts`
+
+**What shipped (probe).** `probeDatabricks()` hits `GET /api/2.0/preview/scim/v2/Me` with bearer auth and a 5s AbortController timeout. Maps HTTP status to `HealthStatus`: 200 → `healthy`, 401/403 → `credential_error`, 504/408 → `timeout`, other 4xx/5xx → `unreachable`. Network errors → `unreachable`. AbortError → `timeout`.
+
+**What shipped (sentinel — bonus scope, flagged in the PR body).** The `raw-credential-guard` correctly blocks plaintext credentials in `connectionConfig` (CLAUDE.md security rule), which meant before this PR there was no way to provide credentials for *any* connector in local dev without real AWS Secrets Manager. Added a `local-env:VARNAME` sentinel: when `credentialArn` matches that pattern, `SecretsManagerService.getSecretValue` reads `process.env[VARNAME]` and parses as JSON instead of calling AWS. Production deploys never hit this branch — env vars unset → fails closed. `isValidCredentialArn` extended to accept the sentinel alongside real AWS ARNs.
+
+One example env var (`DATABRICKS_DEV_TOKEN`) wired through `docker-compose.ec2-dev.yml`'s api environment block; new connectors follow the same pattern. `.env.example` documents the workflow.
+
+**Live verification against Matt's workspace.** Happy path: 200 + identity in ~300ms → `healthy`. Negative path: deliberately bad PAT → real workspace 403 → `credential_error`. Both confirmed.
+
+**Pattern that unlocked the rest of B-063.** The `local-env:` sentinel is what makes the entire connector framework testable end-to-end on a laptop without AWS. Without it, every subsequent layer would have needed a real Secrets Manager secret to verify.
+
+---
+
+## B-063 filed — Connector framework is register-only beyond PG/S3; Databricks integration sketch written
+
+- **Filed:** 2026-05-21
+- **PR:** [#141](https://github.com/provenance-logic/provenance/pull/141)
+- **Outcome:** elevated to **Blocker** at end of session after Matt's correction. Tracked as the central open item for the 2026-05-24 weekend PRD overhaul.
+
+**What this PR did.** Filed B-063 in `open.md` documenting the gap surfaced by "how do I test registering a Databricks connector?": 12 connector types declared, 2 (postgresql, s3) had real implementations, the other 10 returned synthetic-healthy. Zero discovery crawlers existed. Capability manifest / discovery_crawl_events / discovery_coverage_scores tables CLAUDE.md referenced didn't exist in any migration. Phase 3 PRD claim of "✅ Complete" did not match the codebase.
+
+Also wrote `documents/architecture/databricks-integration-sketch.md` — five-layer breakdown (probe → schema → discovery crawl → lineage projection → push side) with per-layer lift estimates (central: ~8–10 days for Databricks alone, ~8–16 weeks for all four PRD priority connectors).
+
+**This filing teed up the Layers 1–4 implementation arc that landed in PRs #142–#146 the same night.** B-063 itself remains Open — the sketch covered Databricks only; the other 9 register-only connector types are unchanged.
+
+---
+
 ## B-061 — Cross-org information leak: the JWT auth guard did not check the URL `:orgId` against the token's claim
 
 - **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)

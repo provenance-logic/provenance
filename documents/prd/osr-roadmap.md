@@ -1,8 +1,10 @@
 # Open Source Readiness Roadmap
 
-**Last updated:** 2026-05-14 (Stage 4 closed; only Stage 5 polish remains)
+> **⚠️ Stale as of 2026-05-21.** This roadmap was built around the assumption that all OSR blockers were closed and only Stage 5 polish remained. That framing didn't survive the 2026-05-21 session — [B-063](../bugs/open.md#B-063) (connector framework is register-only for 9 of 12 advertised types) is the new sole OSR Blocker, and the whole "2–3 days remaining" / "v0.1.0-osr in 2 weeks" framing below is wrong. **The full PRD is going back to the drawing board on the 2026-05-24 weekend.** This document survives below for context only; expect it to be replaced or substantially restructured after that conversation. Until then, the truthful current state is in [`status-board.md`](../status-board.md).
+
+**Last updated:** 2026-05-14 (Stage 4 closed; only Stage 5 polish remains) — content unchanged below this banner; staleness flagged 2026-05-21.
 **Authoritative blocker list:** [implementation-status.md](./implementation-status.md)
-**Target definition:** Provenance functions properly without weird workarounds. Not full enterprise-ready (SOC 2, etc.) — that is Phase 6.
+**Target definition (preserved from before the 2026-05-21 correction):** Provenance functions properly without weird workarounds. Not full enterprise-ready (SOC 2, etc.) — that is Phase 6. **What "functions properly" actually requires now:** every advertised connector type works, not just the demo path. The 2026-05-24 weekend conversation will reconcile.
 
 This document sequences the remaining Open Source Readiness work into discrete, checkpoint-able stages. Each stage is one or more PRs with a clear scope and a verification gate before moving to the next.
 
