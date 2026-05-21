@@ -44,9 +44,9 @@ export class ConnectorProbeService {
 
   /**
    * Connects to the external system and infers the source schema.
-   * Today: PostgreSQL (column introspection via information_schema) and
-   * S3 (object listing). Databricks schema inference (Unity Catalog) is
-   * a follow-up layer; see B-063.
+   * Today: PostgreSQL (information_schema), S3 (object listing), and
+   * Databricks (Unity Catalog REST). See B-063 for the remaining
+   * connector types' implementation status.
    */
   async inferSchema(
     connector: ConnectorEntity,
@@ -57,6 +57,8 @@ export class ConnectorProbeService {
         return this.introspectPostgres(connector, source);
       case 's3':
         return this.introspectS3(connector, source);
+      case 'databricks':
+        return this.introspectDatabricks(connector, source);
       default:
         return { schemaDefinition: {}, columnCount: null, rowEstimate: null };
     }
@@ -332,6 +334,101 @@ export class ConnectorProbeService {
     }
     return null;
   }
+
+  /**
+   * Schema inference via the Unity Catalog REST API.
+   * GET /api/2.1/unity-catalog/tables/{catalog}.{schema}.{table} returns
+   * column metadata including type, nullability, and (often) a comment.
+   *
+   * sourceRef must be a three-part name: catalog.schema.table. Two-part
+   * (schema.table without catalog) is not accepted — Databricks tables
+   * are always three-part in Unity Catalog, and defaulting the catalog
+   * here would silently hide a misconfigured source registration.
+   *
+   * Row estimates are not returned: Unity Catalog doesn't expose them
+   * cheaply, and the only path that would (running a count query through
+   * a SQL Warehouse) is heavyweight and would require warehouse
+   * configuration on the connector. Deferred to a later layer if
+   * operators ask for it.
+   */
+  private async introspectDatabricks(
+    connector: ConnectorEntity,
+    source: SourceRegistrationEntity,
+  ): Promise<SchemaInferenceResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error(
+        'Databricks connector requires connection_config.host (the workspace URL)',
+      );
+    }
+    const token = await this.resolveDatabricksToken(connector);
+    if (!token) {
+      throw new Error(
+        'Databricks connector requires a credentialArn pointing at a secret with shape {"token":"dapi..."}',
+      );
+    }
+    const parts = source.sourceRef.split('.');
+    if (parts.length !== 3 || parts.some((p) => p.length === 0)) {
+      throw new Error(
+        `Databricks sourceRef must be a three-part name (catalog.schema.table); got "${source.sourceRef}"`,
+      );
+    }
+    const fullName = parts.join('.');
+
+    const response = await fetch(
+      `${host}/api/2.1/unity-catalog/tables/${encodeURIComponent(fullName)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok) {
+      const snippet = await safeReadSnippet(response);
+      throw new Error(
+        `Unity Catalog returned HTTP ${response.status} for ${fullName}${snippet ? `: ${snippet}` : ''}`,
+      );
+    }
+
+    const tableInfo = (await response.json()) as UnityCatalogTableResponse;
+    const rawColumns = Array.isArray(tableInfo.columns) ? tableInfo.columns : [];
+    const columns = rawColumns
+      .slice()
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      .map((col) => ({
+        name: col.name,
+        type: col.type_text ?? col.type_name ?? 'unknown',
+        nullable: col.nullable !== false,
+        position: col.position ?? null,
+        comment: col.comment ?? null,
+      }));
+
+    return {
+      schemaDefinition: {
+        columns,
+        tableType: tableInfo.table_type ?? null,
+        dataSourceFormat: tableInfo.data_source_format ?? null,
+        comment: tableInfo.comment ?? null,
+      },
+      columnCount: columns.length,
+      rowEstimate: null,
+    };
+  }
+}
+
+interface UnityCatalogColumn {
+  name: string;
+  type_text?: string;
+  type_name?: string;
+  position?: number;
+  nullable?: boolean;
+  comment?: string | null;
+}
+
+interface UnityCatalogTableResponse {
+  name?: string;
+  catalog_name?: string;
+  schema_name?: string;
+  table_type?: string;
+  data_source_format?: string;
+  columns?: UnityCatalogColumn[];
+  comment?: string | null;
 }
 
 // ---------------------------------------------------------------------------
