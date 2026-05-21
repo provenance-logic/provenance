@@ -11,6 +11,8 @@ import { ConnectorHealthEventEntity } from '../entities/connector-health-event.e
 import { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from '../entities/schema-snapshot.entity.js';
 import { DiscoveryCrawlEventEntity } from '../entities/discovery-crawl-event.entity.js';
+import { CapabilityManifestEntity } from '../entities/capability-manifest.entity.js';
+import { CapabilityManifestService } from '../capability-manifest.service.js';
 import { ConnectorProbeService } from '../probe/connector-probe.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
@@ -125,8 +127,17 @@ describe('ConnectorsService', () => {
         { provide: getRepositoryToken(SourceRegistrationEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(SchemaSnapshotEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DiscoveryCrawlEventEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(CapabilityManifestEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(RoleAssignmentEntity), useFactory: mockRepo },
         { provide: ConnectorProbeService, useFactory: mockProbeService },
+        {
+          provide: CapabilityManifestService,
+          useValue: {
+            // Default: no manifest registered, so auto-crawl on registration
+            // never fires. Tests that exercise auto-crawl override this.
+            getLatestForType: jest.fn().mockResolvedValue(null),
+          },
+        },
         { provide: KafkaProducerService, useFactory: mockKafkaProducer },
         {
           provide: NotificationsService,
