@@ -1,6 +1,7 @@
 import { ConnectorProbeService } from './connector-probe.service.js';
 import { SecretsManagerService } from './secrets-manager.service.js';
 import type { ConnectorEntity } from '../entities/connector.entity.js';
+import type { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -35,6 +36,54 @@ function mockSecretsManager(): jest.Mocked<SecretsManagerService> {
   return {
     getSecretValue: jest.fn(),
   } as unknown as jest.Mocked<SecretsManagerService>;
+}
+
+function makeDatabricksSource(
+  sourceRef = 'workspace.mro.mro_work_enriched',
+): SourceRegistrationEntity {
+  return {
+    id: '00000000-0000-0000-0000-00000000c001',
+    orgId: '00000000-0000-0000-0000-000000000099',
+    connectorId: '00000000-0000-0000-0000-000000000001',
+    sourceType: 'table',
+    sourceRef,
+    displayName: sourceRef,
+    description: null,
+    registeredBy: '00000000-0000-0000-0000-0000000000bb',
+    registeredAt: new Date(),
+    updatedAt: new Date(),
+  } as SourceRegistrationEntity;
+}
+
+// Minimal Unity Catalog table response — fields the introspection cares about.
+function ucTableResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    name: 'mro_work_enriched',
+    catalog_name: 'workspace',
+    schema_name: 'mro',
+    table_type: 'MANAGED',
+    data_source_format: 'DELTA',
+    comment: 'Enriched MRO work table',
+    columns: [
+      {
+        name: 'ship_id',
+        type_text: 'string',
+        type_name: 'STRING',
+        position: 0,
+        nullable: false,
+        comment: 'Hull number identifier',
+      },
+      {
+        name: 'work_order_id',
+        type_text: 'bigint',
+        type_name: 'LONG',
+        position: 1,
+        nullable: true,
+        comment: null,
+      },
+    ],
+    ...overrides,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +282,222 @@ describe('ConnectorProbeService.probeDatabricks (B-063 Layer 1)', () => {
 
     expect(result.status).toBe('healthy');
     expect(result.responseTimeMs).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Schema inference (Layer 2) — Unity Catalog REST
+// ---------------------------------------------------------------------------
+
+describe('ConnectorProbeService.introspectDatabricks (B-063 Layer 2)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = mockSecretsManager();
+    secretsManager.getSecretValue.mockResolvedValue({ token: VALID_PAT });
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // ---------- happy path ----------
+
+  it('returns column-level schema from Unity Catalog', async () => {
+    fetchSpy.mockResolvedValue(new Response(ucTableResponse(), { status: 200 }));
+
+    const result = await service.inferSchema(
+      makeDatabricksConnector(),
+      makeDatabricksSource(),
+    );
+
+    expect(result.columnCount).toBe(2);
+    const def = result.schemaDefinition as {
+      columns: Array<{
+        name: string;
+        type: string;
+        nullable: boolean;
+        position: number | null;
+        comment: string | null;
+      }>;
+      tableType: string;
+      dataSourceFormat: string;
+      comment: string;
+    };
+    expect(def.tableType).toBe('MANAGED');
+    expect(def.dataSourceFormat).toBe('DELTA');
+    expect(def.comment).toBe('Enriched MRO work table');
+    expect(def.columns).toEqual([
+      {
+        name: 'ship_id',
+        type: 'string',
+        nullable: false,
+        position: 0,
+        comment: 'Hull number identifier',
+      },
+      {
+        name: 'work_order_id',
+        type: 'bigint',
+        nullable: true,
+        position: 1,
+        comment: null,
+      },
+    ]);
+    expect(result.rowEstimate).toBeNull();
+  });
+
+  it('hits the Unity Catalog tables endpoint with the three-part name', async () => {
+    fetchSpy.mockResolvedValue(new Response(ucTableResponse(), { status: 200 }));
+
+    await service.inferSchema(
+      makeDatabricksConnector(),
+      makeDatabricksSource('workspace.mro.mro_work_enriched'),
+    );
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      `${WORKSPACE_URL}/api/2.1/unity-catalog/tables/workspace.mro.mro_work_enriched`,
+    );
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      `Bearer ${VALID_PAT}`,
+    );
+  });
+
+  it('sorts columns by position', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        ucTableResponse({
+          columns: [
+            { name: 'c', type_text: 'string', position: 2 },
+            { name: 'a', type_text: 'string', position: 0 },
+            { name: 'b', type_text: 'string', position: 1 },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.inferSchema(
+      makeDatabricksConnector(),
+      makeDatabricksSource(),
+    );
+
+    const def = result.schemaDefinition as { columns: Array<{ name: string }> };
+    expect(def.columns.map((c) => c.name)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('falls back to type_name when type_text is absent', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        ucTableResponse({
+          columns: [{ name: 'x', type_name: 'INT', position: 0, nullable: true }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.inferSchema(
+      makeDatabricksConnector(),
+      makeDatabricksSource(),
+    );
+
+    const def = result.schemaDefinition as { columns: Array<{ type: string }> };
+    expect(def.columns[0].type).toBe('INT');
+  });
+
+  it('handles tables with zero columns gracefully', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(ucTableResponse({ columns: [] }), { status: 200 }),
+    );
+
+    const result = await service.inferSchema(
+      makeDatabricksConnector(),
+      makeDatabricksSource(),
+    );
+
+    expect(result.columnCount).toBe(0);
+    expect(
+      (result.schemaDefinition as { columns: unknown[] }).columns,
+    ).toEqual([]);
+  });
+
+  // ---------- source-ref validation ----------
+
+  it('rejects a two-part source ref (no catalog prefix)', async () => {
+    await expect(
+      service.inferSchema(
+        makeDatabricksConnector(),
+        makeDatabricksSource('mro.mro_work_enriched'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a one-part source ref', async () => {
+    await expect(
+      service.inferSchema(
+        makeDatabricksConnector(),
+        makeDatabricksSource('mro_work_enriched'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+  });
+
+  it('rejects a source ref with empty segments', async () => {
+    await expect(
+      service.inferSchema(
+        makeDatabricksConnector(),
+        makeDatabricksSource('workspace..mro_work_enriched'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+  });
+
+  // ---------- HTTP error surface ----------
+
+  it('throws a clean error when the table is not found (404)', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        '{"error_code":"TABLE_DOES_NOT_EXIST","message":"Table not found"}',
+        { status: 404 },
+      ),
+    );
+
+    await expect(
+      service.inferSchema(makeDatabricksConnector(), makeDatabricksSource()),
+    ).rejects.toThrow(/HTTP 404/);
+  });
+
+  it('throws on 401 (credential failure during introspect)', async () => {
+    fetchSpy.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
+
+    await expect(
+      service.inferSchema(makeDatabricksConnector(), makeDatabricksSource()),
+    ).rejects.toThrow(/HTTP 401/);
+  });
+
+  // ---------- config validation ----------
+
+  it('throws a clear error when host is missing', async () => {
+    await expect(
+      service.inferSchema(
+        makeDatabricksConnector({ connectionConfig: {} }),
+        makeDatabricksSource(),
+      ),
+    ).rejects.toThrow(/connection_config\.host/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws a clear error when credentialArn is missing', async () => {
+    await expect(
+      service.inferSchema(
+        makeDatabricksConnector({ credentialArn: null }),
+        makeDatabricksSource(),
+      ),
+    ).rejects.toThrow(/credentialArn/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
