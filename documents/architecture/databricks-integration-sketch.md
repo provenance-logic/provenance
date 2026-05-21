@@ -1,9 +1,9 @@
 # Databricks integration — sketch and lift estimate
 
-**Status:** Sketch only. This is a design starting point for the work [B-063](../bugs/open.md#B-063) describes, not an approved plan. Read it as "here is the shape of the work and how big it is."
+**Status (updated 2026-05-21 end-of-session):** Layers 1–4 substantively shipped against this sketch in PRs #142–#146 the same night the sketch was written. Layer 4b (column-level lineage), Layer 5 (push-side notebook), and Layer 3c (Temporal scheduled re-crawls) deferred. **Important:** Matt's correction at end of session reframed this entire sketch — the demo-only argument it was originally written around does not survive the standard "every advertised connector must actually work." This document is still useful as a per-layer record of what was shipped vs deferred for Databricks specifically; reuse the layer model as a template for the OTHER 9 unimplemented connector types if the PRD overhaul keeps them in OSR scope.
 
 **Created:** 2026-05-21
-**Author:** Drafted by Claude during the B-063 filing session.
+**Author:** Drafted by Claude during the B-063 filing session; layer-status annotations added the same day after Layers 1–4 shipped.
 
 ---
 
@@ -24,7 +24,7 @@ Two reasons:
 
 There are five distinct deliverables. Each can land independently. The first three are the minimum demo-able set.
 
-### Layer 1: Connectivity probe — "can Provenance reach this workspace?"
+### Layer 1: Connectivity probe — "can Provenance reach this workspace?" — ✅ SHIPPED #142 (2026-05-21)
 
 **What it does.** When an operator clicks "Validate" on a Databricks connector, the platform makes a live authenticated call against the Databricks workspace and returns `healthy` / `unreachable` / `credential_error` / `timeout`. Today every non-PG/non-S3 connector returns synthetic `healthy` (see B-063).
 
@@ -42,7 +42,7 @@ There are five distinct deliverables. Each can land independently. The first thr
 
 **Lift:** **0.5–1 day.** The probe shape is identical to `probePostgres` — a thin HTTP call wrapped in try/catch with error classification. The unknown is the Secrets Manager fetch path; if `secrets-manager.service.ts` is purely a placeholder (likely), add another 0.5 day to wire AWS SDK and integration-test against a real ARN.
 
-### Layer 2: Schema inference — "what columns are in this table?"
+### Layer 2: Schema inference — "what columns are in this table?" — ✅ SHIPPED #143 (2026-05-21)
 
 **What it does.** Given a `source_registration` like `catalog.schema.table`, introspect the column list, types, and basic stats. Stored as a `schema_snapshot`. This is what makes "describe a data product's structure" not a manual-entry exercise.
 
@@ -52,7 +52,7 @@ There are five distinct deliverables. Each can land independently. The first thr
 
 **Lift:** **0.5–1 day** if the workspace has Unity Catalog (almost all Databricks workspaces post-2024 do). Add another 0.5 day if we want to support the legacy SQL warehouse path too. Recommend: Unity Catalog only for the first cut, document the assumption.
 
-### Layer 3: Discovery crawl — "what tables does this workspace have?"
+### Layer 3: Discovery crawl — "what tables does this workspace have?" — ✅ SHIPPED #144 (3a) + #145 (3b), Temporal scheduled re-crawls (3c) DEFERRED
 
 **What it does.** The defining capability of "discovery mode" connectors per the PRD. On registration (and on a schedule per the capability manifest, default 24h), crawl the workspace to find tables and pre-populate source registrations + schema snapshots, so domain teams don't have to type each one in by hand.
 
@@ -76,7 +76,7 @@ There are five distinct deliverables. Each can land independently. The first thr
 - Catalog/schema/table walking with pagination and rate-limit handling: 1 day.
 - Conflict-resolution rules and tests: 1 day.
 
-### Layer 4: Lineage projection — "what feeds into what?"
+### Layer 4: Lineage projection — "what feeds into what?" — ✅ TABLE-LEVEL SHIPPED #146 (2026-05-21), column-level (4b) DEFERRED
 
 **What it does.** Pull lineage edges from Databricks's Unity Catalog lineage tracking and project them as edges in Provenance's Neo4j graph, tagged `system-discovered`. This is what populates the lineage UI with actual upstream/downstream relationships for Databricks-managed tables.
 
@@ -89,7 +89,7 @@ There are five distinct deliverables. Each can land independently. The first thr
 
 **Lift:** **2–4 days.** API shape is mostly known. The work is the Neo4j projection (existing emission path handles `emitted` markers; needs an extension for `system-discovered` from a crawl rather than from an SDK event) plus the column-level granularity (Provenance's lineage edges today are at the product/port level — column-level requires schema-aware edges).
 
-### Layer 5: Push side — pipeline emission from Databricks back into Provenance
+### Layer 5: Push side — pipeline emission from Databricks back into Provenance — 🔲 NOT STARTED (deferred; mostly external artifact)
 
 **What it does.** A Databricks notebook or job calls the Provenance lineage SDK after a run. Provenance sees the emission event, updates the lineage graph live, recomputes trust score, and the data appears in the dashboard within seconds. This is the second half of the demo story.
 
@@ -128,35 +128,39 @@ Both pull and push need credentials handled correctly:
 
 ---
 
-## Lift summary
+## Lift summary — sketched vs actual
 
-| Layer | Lift | Required for demo? |
-|---|---|---|
-| 1. Connectivity probe (incl. real Secrets Manager fetch) | 0.5–1.5 days | Yes |
-| 2. Schema inference (Unity Catalog) | 0.5–1 day | Yes |
-| 3. Discovery crawl (Temporal workflow + capability-manifest scaffolding) | 3–5 days | Yes |
-| 4. Lineage projection from Unity Catalog | 2–4 days | Yes |
-| 5. Push-side notebook + Python SDK verification | 0.5–2 days | Yes |
-| **Total for demo-quality end-to-end Databricks integration** | **6.5–13.5 days** | |
+| Layer | Sketched lift | Actual lift | Status |
+|---|---|---|---|
+| 1. Connectivity probe (incl. real Secrets Manager fetch) | 0.5–1.5 days | ~2 hours | ✅ Shipped #142. Sentinel work bundled (`local-env:`) saved time on subsequent layers. |
+| 2. Schema inference (Unity Catalog) | 0.5–1 day | ~1 hour | ✅ Shipped #143. UC response shape matched the sketch byte-for-byte; no surprises. |
+| 3a. Discovery crawl walker + idempotent integration | (part of 3–5 days) | ~2 hours | ✅ Shipped #144. The "register entity in DatabaseModule.forRoot too" gotcha cost ~15 minutes. |
+| 3b. Capability manifest scaffolding + auto-crawl on registration | (part of 3–5 days) | ~1.5 hours | ✅ Shipped #145. Read-only service + immutability surface test. |
+| 3c. Temporal scheduled re-crawls | (part of 3–5 days) | 0 (deferred) | 🔲 Not started. Auto-crawl on registration + operator-triggered re-crawl cover demo needs; scheduled cadence is structural completeness. |
+| 4 (table-level). Lineage projection from UC Lineage Tracking | (part of 2–4 days) | ~1.5 hours | ✅ Shipped #146. Reused `LineageService.emitEvent` so no new graph code. |
+| 4b (column-level). Column lineage | (part of 2–4 days) | 0 (deferred) | 🔲 Same API family (`/column-lineage`); same shape, richer payload. |
+| 5. Push-side notebook + Python SDK verification | 0.5–2 days | 0 (deferred) | 🔲 Mostly external artifact (a notebook). |
+| **Actual time for Layers 1+2+3a+3b+4-table** | **6.5–13.5 days sketched** | **~8 hours** | All in one session against Matt's workspace. |
 
-**Realistic central estimate: 8–10 working days** for one developer focused on this, end-to-end Databricks-only, demo-quality (not OS-ready polish).
+**What the actual time taught us about the original estimate.** The Databricks REST APIs are unusually clean (RESTful, JSON, paginated consistently, error codes meaningful). Most of the "0.5–1 day" per-layer numbers assumed unfamiliar territory + 1–2 false starts per layer. Familiar territory + clean API + the `local-env:` sentinel unblocking live verification compressed the work dramatically.
 
-**Compressed "demo-only MVP" scope:** skip Layer 4 (lineage projection) if the demo can survive showing only "Provenance found these tables, here's the schema" plus the push-side notebook emitting events. That cuts to **~4–6 days** but the demo loses the "and here's the lineage we discovered automatically" beat — for a data-savvy audience that's a significant downgrade.
-
-**Open-source-ready scope** (multi-tenant tested, all priority connectors, conflict resolution, coverage scoring, capability-manifest validation, tests, docs): **3–5× the demo number per connector**, multiplied across the four PRD priority connectors (Databricks, dbt, Snowflake, Fivetran). Roughly **8–16 weeks** for the full Phase 3 promised scope. This is the gap B-063 documents.
+**Caveat for the other 9 connector types.** The Databricks lift is now a known-good per-connector floor. Most other connectors will be HARDER than Databricks: JDBC drivers (mysql, snowflake, redshift, bigquery) require driver dependencies and connection-string parsing; cloud blob stores (gcs, azure_blob) have provider-specific auth dances; Kafka and Redpanda are streaming, not tabular, so the "schema inference" abstraction doesn't map cleanly. **Assume 1.5–3× the Databricks time for each additional connector type**, depending on the protocol family. The 8–16 week PRD-completeness estimate for all 12 types stands; tonight's ~8 hours was the best case.
 
 ---
 
-## Recommended sequencing
+## Recommended sequencing — REVISED 2026-05-21 end of session
 
-Two paths depending on what the demo timeline looks like:
+The original "Path A vs Path B" question above was framed around a demo timeline. Matt's correction reframed it: the question is now about whether the PRD shrinks to match what's shipped (or shippable), or whether the codebase grows to match the PRD.
 
-### Path A — "demo in 1-2 weeks"
+**The 2026-05-24 weekend PRD overhaul will decide.** Three real options:
 
-Build Databricks-only, demo-quality, both directions. Skip Layer 4 if time gets tight. ~6-10 days of focused work. Accept that the platform still claims Phase 3 is "complete" while only one of four priority connectors actually works — fix that PRD/status-board honesty problem in the same arc but don't try to ship the other three.
+### Option 1 — Implement all 12 connector types end-to-end
+Per-connector at 1.5–3× the Databricks lift = ~12–24 days each = **8–16 weeks total.** Fully honors the current PRD. Realistic timeline only with multiple developers or significantly reduced ambition elsewhere.
 
-### Path B — "fix Phase 3 honestly before the next demo"
+### Option 2 — Narrow the PRD scope
+Ship OSR with a documented smaller set: PG + S3 + Databricks first-class; the others marked `Experimental` with no probe and a clear warning in the registration UI. Closes B-063 by scope, not by code. Maintains intellectual honesty about what works.
 
-Land the capability-manifest scaffolding (B-063 dependency, ~1-2 days) plus Databricks (~6-10 days) plus at least one other priority connector to make the "discovery mode" pattern reusable (~4-6 days for a thin Snowflake or dbt). Total ~12-18 days. Closes B-063 properly and gives the PRD's Phase 3 ✅ a real foundation.
+### Option 3 — Hide the unimplemented types
+Remove them from the registration UI and the `ConnectorType` enum until they're real. Smallest behavioral change; most aggressive scoping fix; preserves the option to add them back later when implemented.
 
-**Strong recommendation:** Path A. The demo is the forcing function; ship one real connector end-to-end against Matt's workspace, then evaluate whether the second connector is worth doing before OSR or after.
+The trade-offs are about the platform's marketing posture, the contributor experience, and the agent narrative — not about engineering effort alone. Hold the decision for the weekend conversation.

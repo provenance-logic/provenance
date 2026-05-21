@@ -9,43 +9,63 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-063 — Connector framework is "register-only" for every type except PostgreSQL and S3; capability-manifest / discovery-crawl schema doesn't exist; Phase 3 PRD claim of "✅ Complete" does not match the codebase
+## B-063 — Connector framework is "register-only" for every connector type except PostgreSQL, S3, and (now) Databricks; Phase 3 PRD claim of "✅ Complete" does not match the codebase
 
-- **Severity:** High (core product capability gap; the agent + lineage + trust-score story all assume real connectors with discovery, and the platform has neither. The PRD has been claiming this is done since at least the Phase 3 wrap.)
-- **Status:** Open
-- **Area:** `apps/api/src/connectors/`, `apps/api/migrations/` (missing migrations for `connectors.capability_manifests`, `connectors.discovery_crawl_events`, `connectors.discovery_coverage_scores`), and the discovery-crawl orchestration that doesn't have a file anywhere in the API
-- **Discovered:** 2026-05-21, while answering "how would I test registering a Databricks connector?" — the answer turned out to be "you can register a row, nothing else happens for any type except PG or S3."
+- **Severity:** **Blocker** (elevated from High at end of 2026-05-21 session). The platform's whole differentiation is multi-tenant federated mesh of real connectors. Today 3 of 12 advertised types do something meaningful; the other 9 silently fake their probe results. A first-time contributor or evaluator who registers a Snowflake or Kafka connector gets a green checkmark that means nothing. By Matt's stated OSR bar — "every single one of those connectors needs to actually work, EVERY ONE" — this is the gating issue, not a category of partial-shipment.
+- **Status:** Open — **Databricks half substantively shipped 2026-05-21** across PRs #142–#146 (Layers 1+2+3a+3b+4 of the sketch). Capability manifest + discovery-crawl schemas now exist for real (V30, V31). Nine other connector types still register-only.
+- **Area:** `apps/api/src/connectors/`, the discovery-crawl orchestration (now exists for Databricks only), `packages/types/src/connectors.ts` (the 12-type enum that the platform promises to support).
+- **Discovered:** 2026-05-21, while answering "how would I test registering a Databricks connector?" — the answer was "you can register a row, nothing else happens for any type except PG or S3." Elevated to Blocker the same day after Matt corrected the demo-framing the session had been operating under.
 
-**Symptom.** Twelve connector types are declared in `packages/types/src/connectors.ts` (postgresql, mysql, snowflake, bigquery, redshift, databricks, s3, gcs, azure_blob, kafka, redpanda, rest_api, custom). The frontend at `/connectors` exposes a registration form that accepts all twelve. The API at `POST /api/v1/organizations/:orgId/connectors` accepts all twelve. But:
+### What was true when this bug was filed (early 2026-05-21)
 
-- `ConnectorProbeService.probe()` (`apps/api/src/connectors/probe/connector-probe.service.ts:31-39`) has cases for `postgresql` and `s3` only. The default branch returns a synthetic `{ status: 'healthy', responseTimeMs: null, errorMessage: null }`. So clicking "Validate" on any other connector type returns green without doing anything.
-- `ConnectorProbeService.inferSchema()` (same file, lines 50-57) has the same shape: PG and S3 only; default returns an empty schema.
-- **No discovery crawler exists** for any connector type. The PRD's Phase 3 lists four "priority connectors with discovery mode at MVP" — Databricks (Unity Catalog), dbt (manifest.json), Snowflake (information_schema), Fivetran (metadata API). A repo-wide search for `databricks`, `unity`, or `discovery` matching real implementation code returns nothing in `apps/api/src/`. The crawler code is not stubbed, not in-progress, not on a branch — it doesn't exist.
-- **The `connectors.capability_manifests` table does not exist in any migration.** Same for `discovery_crawl_events` and `discovery_coverage_scores`. The CLAUDE.md "Database Schemas" table lists them under the `connectors` schema with the bold annotation `**capability_manifests, discovery_crawl_events, discovery_coverage_scores**`, but no Flyway migration in `apps/api/migrations/` creates them. Confirmed live: `\d connectors.capability_manifests` returns `relation does not exist`.
+- 12 connector types declared. 2 (postgresql, s3) had real probe + schema. The other 10 fell to a default branch in `ConnectorProbeService.probe()` that returned synthetic `healthy` without doing anything.
+- Zero discovery crawlers existed anywhere in `apps/api/src/`.
+- `connectors.capability_manifests`, `discovery_crawl_events`, `discovery_coverage_scores` tables referenced by CLAUDE.md did not exist in any migration. The CLAUDE.md "capability manifests are immutable per version" rule was structurally unenforceable.
 
-So the rules in CLAUDE.md that depend on this schema — "Connector capability manifests are immutable per version. Never mutate a capability manifest in place — create a new connector version" and "Coverage scoring: Each connector reports a discovery coverage score per metadata category after each crawl" — are unenforceable because the storage they reference is absent.
+### What changed during the 2026-05-21 session (PRs #142–#146)
 
-**Root cause.** The Phase 3 PRD entry shipped without the discovery-crawl half of its scope. The user-visible lineage emission (push side) was built — `packages/sdk-ts` and `packages/sdk-python` work, the `lineage.emission_log` table is wired, the trust-score recomputation reacts to emissions. The pull side (connector discovery / capability manifests / crawl orchestration / coverage scoring) was tabled and the PRD was marked ✅ anyway. Same shape as the gap B-061 surfaced for governance and B-060 surfaced for operator tooling — a phase declared complete on the basis of API surface and database tables that *named* the feature, without the actual implementation under them.
+| Layer | PR | What shipped |
+|---|---|---|
+| 1 | #142 | `probeDatabricks()` against SCIM `/Me` with bearer auth, error classification, 5s timeout. Plus `local-env:` credential sentinel so any connector can be tested in local dev without AWS Secrets Manager. |
+| 2 | #143 | `introspectDatabricks()` against Unity Catalog REST `/api/2.1/unity-catalog/tables/{full_name}`. Three-part name validation. |
+| 3a | #144 | Discovery crawl: `walkDatabricksWorkspace()` walks catalogs→schemas→tables with pagination, integrates into `crawlConnector()` which idempotently registers sources and captures snapshots. `POST /connectors/:id/crawl`. New `connectors.discovery_crawl_events` table (V30). |
+| 3b | #145 | `connectors.capability_manifests` table (V31), seeded Databricks 1.0.0 manifest, read-only `CapabilityManifestService`, `GET /connector-capability-manifests[/:type]` endpoints, **auto-crawl on connector registration** (fire-and-forget, gated on the manifest's `supports_discovery_crawl`). |
+| 4 | #146 | `walkDatabricksLineage()` pulls upstream + downstream from Unity Catalog Lineage Tracking API, deduplicates, emits via the existing `LineageService.emitEvent` so the edges land in PostgreSQL `emission_log` AND Neo4j with the same idempotency + trust-score semantics as SDK-emitted lineage. Table-level only. |
 
-**Why this matters.**
+Live-verified against Matt's actual Databricks workspace: 10 tables discovered across bronze/silver/gold, 10 schema snapshots, 9 lineage edges (gold-layer consolidation + cross-catalog publish pattern), all synced to Neo4j. Idempotent re-crawl confirmed.
 
-- The agent story depends on real connectors. "An agent discovers a Snowflake data product, asks for access, runs a federated query" requires the platform to *know* that Snowflake table exists. Today, the only path to that knowledge is hand-seeding the database. That's fine for an investor demo with a curated story; it falls over the moment a contributor or evaluator says "I have a Databricks workspace, show me what this looks like."
-- The trust-score and observability story leans on connector health. Today, every connector except PG/S3 is permanently "healthy" because the probe synthesizes it. That makes the trust score's "data source health" component theatre.
-- The "first 30 minutes" experience for a new contributor cloning the repo and following the README will end at "I registered a connector, why doesn't anything happen?" The answer they'll arrive at is "this is half a platform." That's worse than B-060 or B-061 because it's *visible*, not buried in an admin endpoint.
+### What is still open after tonight
 
-**Out-of-scope but related.** On the product-output side (a data product's output port pointing TO Databricks), the situation is also partial — `apps/api/src/products/connection-probes/` has `kafka.probe.ts` only; the implementation-status note on F10.7 already calls out that per-driver SQL probes for postgres/mysql/snowflake are remaining. Databricks isn't there either.
+**The 9 other connector types are unchanged.** mysql, snowflake, bigquery, redshift, gcs, azure_blob, kafka, redpanda, rest_api, custom — all still register with synthetic-healthy fakery, no schema inference, no discovery, no lineage. The default branch in `connector-probe.service.ts` still returns `{ status: 'healthy', responseTimeMs: null, errorMessage: null }` for every type that isn't in the explicit switch. **This is the bulk of B-063.** One workspace of one connector type doesn't move the platform out of "claims things it doesn't do" territory — it just makes ONE of the lies true.
 
-**Fix scope.** This is not a single-PR bug. The right shape is a small program of work that the project should decide whether to take on now or defer. The Databricks-specific sketch is at [`documents/architecture/databricks-integration-sketch.md`](../architecture/databricks-integration-sketch.md) — read that before committing to a scope. Briefly, by layer:
+Other remaining items within Databricks specifically (smaller scope):
 
-1. **Capability-manifest scaffolding** — migration to add `connectors.capability_manifests`, `discovery_crawl_events`, `discovery_coverage_scores`. Service layer to read/write capability manifests. Validation that a connector's declared mode matches what its capability manifest claims. ~1-2 days.
-2. **Per-connector probe implementations** — `probeDatabricks`, `probeSnowflake`, etc. Each is small individually (~½-1 day) but multiplied across the priority connector list. Each needs a credential-fetch path through `secrets-manager.service.ts` (the existing scaffolding only resolves ARN-shaped strings; the actual `getSecretValue` call against AWS Secrets Manager needs verification).
-3. **Per-connector schema inference** — for connectors that support it (Databricks via Unity Catalog REST, Snowflake via information_schema, dbt via manifest.json). Same per-connector lift as probes (~1-2 days each).
-4. **Discovery crawl orchestration** — Temporal workflow or background job that runs registration crawl + scheduled re-crawl per the capability manifest. Conflict resolution between domain-declared and discovered metadata. Coverage scoring. ~3-5 days, more if Temporal isn't already configured for this kind of long-running workflow (TBD by checking the existing temporal setup).
-5. **Lineage projection from discovery** — pulling lineage edges from sources that expose it (Unity Catalog `lineage-tracking` endpoints, dbt manifest deps, Snowflake `account_usage.access_history`). Writing into Neo4j with the `system-discovered` source marker (the marker exists per CLAUDE.md's "Lineage source markers" list; the population path doesn't). ~2-4 days per source, depending on API completeness.
+- **Layer 4b — column-level lineage** via Unity Catalog `/api/2.0/lineage-tracking/column-lineage`. Table-level is the demo beat; column-level is richness on top.
+- **Layer 5 — push-side notebook** demo (mostly external artifact, not platform code).
+- **Layer 3c — Temporal scheduled re-crawls** (today crawl is operator-triggered + on-registration; no durable re-crawl schedule).
+- **`discovery_coverage_scores` table + per-metadata-category scoring** (referenced in CLAUDE.md, never built).
+- **Conflict resolution** between discovered and domain-declared metadata (CLAUDE.md describes the rule; no enforcement code exists).
 
-**Minimum viable shape for the next investor demo:** one priority connector real end-to-end (probe + schema + discovery + lineage), capability-manifest scaffolding in place, the existing emission SDK demonstrated calling from a notebook on that same connector's platform. Picking Databricks is the leading candidate because of [[feedback_data_demo_both_directions]] — data-savvy audiences will ask about both directions of integration, and Databricks lets us tell one cohesive story on both sides. Sketch in `documents/architecture/databricks-integration-sketch.md`.
+### Strategic question for the 2026-05-24 weekend PRD overhaul
 
-**Pattern.** B-060 was operator tooling that existed without ever being run. B-061 was a security guard that existed without ever being verified. B-063 is a product capability that's been declared complete without ever being implemented. Same family of bug — the gap between "feature is named in the data model / PRD / type system" and "feature actually works end-to-end" — at progressively larger scale. The phase-exit checklist rule added to CLAUDE.md by PR #134 covers exactly this class of issue; B-063 is what catching it earlier would have looked like.
+The fix path isn't a sprint plan — it's a scoping decision. Three real options:
+
+1. **Implement all 12 connector types end-to-end.** Each is 3–8 days at Databricks's lift. ~8–16 weeks of focused work. Closes B-063 in the strict sense.
+2. **Narrow the PRD scope.** Ship OSR with a documented smaller set (e.g. "PG + S3 + Databricks are first-class; others marked Experimental with no probe and a clear warning"). Honest about what works.
+3. **Hide the unimplemented types.** Remove them from the registration UI and the enum until they're real. Smallest behavioral change; most aggressive scoping fix.
+
+Each option has different consequences for the agent story, the demo story, the marketing posture, and the contributor experience. **Matt is taking this to the drawing board the 2026-05-24 weekend.** Don't act on B-063 before that conversation resolves the scope question.
+
+### Pattern (preserved for the weekend re-audit)
+
+B-060 was operator tooling that existed without ever being run. B-061 was a security guard that existed without ever being verified. B-063 is a product capability that was declared complete without ever being implemented. **Same family of bug at progressively larger scale.** The phase-exit checklist rule added to CLAUDE.md by PR #134 covers exactly this class of issue; B-063 is what catching it earlier would have looked like. Worth assuming other PRD "✅ Complete" entries — and CLAUDE.md architectural claims — have the same shape until proven otherwise. The weekend conversation should include a pass through every "Implemented" / "✅" claim against the actual code.
+
+### Files of record from the 2026-05-21 session
+
+- `documents/architecture/databricks-integration-sketch.md` — the five-layer plan with per-layer lift estimates. Updated 2026-05-21 to mark shipped vs deferred.
+- `apps/api/migrations/V30__create_discovery_crawl_events.sql`
+- `apps/api/migrations/V31__create_capability_manifests.sql`
+- Memory: `feedback_osr_means_every_connector_real.md` — the OSR bar Matt set 2026-05-21.
 
 ---
 

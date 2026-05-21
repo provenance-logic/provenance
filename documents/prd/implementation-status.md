@@ -75,17 +75,19 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 3: Connectivity and Source Integration
 
+> **Status warning (2026-05-21).** This domain's "Implemented" entries are the most actively misleading in the doc. The framework exists, but most connector-type-specific implementations don't — see [B-063](../bugs/open.md#B-063) for the full breakdown. The PRD overhaul scheduled for the 2026-05-24 weekend will reconcile.
+
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
 | F3.1 | Connector as First-Class Entity | Implemented | |
-| F3.2 | Connector Library | Partially implemented | Framework built; not all connectors implemented |
-| F3.3 | Connector Extensibility | Partially implemented | SDK framework exists; capability manifest not implemented |
-| F3.4 | Connector Validation | Implemented | Connectivity test on registration |
-| F3.5 | Connector Health Monitoring | Partially implemented | Health monitoring exists; observability port propagation not verified |
-| F3.6 | Credential Management | Implemented | Secrets Manager integration confirmed |
+| F3.2 | Connector Library | **Partially implemented (3 of 12 types real)** | postgresql ✅ (probe+schema), s3 ✅ (probe+schema), databricks ✅ (probe+schema+discovery+lineage, shipped 2026-05-21 #142–#146). The other 9 (mysql, snowflake, bigquery, redshift, gcs, azure_blob, kafka, redpanda, rest_api, custom) register but the probe returns synthetic `healthy`. See B-063. |
+| F3.3 | Connector Extensibility | **Partially implemented** | Capability manifest table + service shipped 2026-05-21 (#145, V31). Read-only API. Seeded for Databricks 1.0.0 only. Other connector types have no manifest yet. |
+| F3.4 | Connector Validation | **Partially implemented (3 of 12 types real)** | Real probe for postgresql, s3, databricks. Other 9 return synthetic `healthy` regardless of whether the workspace is reachable. |
+| F3.5 | Connector Health Monitoring | Partially implemented | Health-event recording exists; observability port propagation not verified |
+| F3.6 | Credential Management | Implemented | Secrets Manager integration confirmed; `local-env:VARNAME` sentinel added 2026-05-21 #142 for laptop dev |
 | F3.7 | Connector Scope Isolation | Implemented | |
 | F3.8 | Source Registration | Implemented | |
-| F3.9 | Schema Inference | Partially implemented | Inference for some connector types |
+| F3.9 | Schema Inference | **Partially implemented (3 of 12 types real)** | postgresql ✅, s3 ✅, databricks ✅ (Unity Catalog, #143). Others return empty `{}`. |
 | F3.10 | Schema Drift Detection | Not implemented | |
 | F3.11 | Source Lineage Registration | Implemented | Lineage node created on registration |
 | F3.12 | Data Product as Input Source | Implemented | |
@@ -99,14 +101,14 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F3.20 | CI/CD Integration | Not implemented | |
 | F3.21 | Semantic Query Port Registration | Implemented | MCP routing in place |
 | F3.22 | Agent Source Discovery | Implemented | |
-| F3.23 | Connector Discovery Mode | Not implemented | Phase 5 |
-| F3.23a | Discovery Metadata Taxonomy | Not implemented | Phase 5 |
-| F3.24 | Discovery Scope: Databricks | Not implemented | Phase 5 |
-| F3.25 | Discovery Scope: dbt | Not implemented | Phase 5 |
-| F3.26 | Discovery Scope: Snowflake | Not implemented | Phase 5 |
-| F3.27 | Discovery Scope: Fivetran | Not implemented | Phase 5 |
-| F3.28 | Discovery Re-crawl | Not implemented | Phase 5 |
-| F3.29 | Discovery Conflict Resolution | Not implemented | Phase 5 |
+| F3.23 | Connector Discovery Mode | **Partially implemented (1 of 4 priority connectors)** | Databricks discovery crawl framework shipped 2026-05-21 #144 (V30 `discovery_crawl_events` table + walker + `POST /connectors/:id/crawl`). Auto-crawl on registration shipped #145. dbt, Snowflake, Fivetran: not implemented. |
+| F3.23a | Discovery Metadata Taxonomy | **Partially implemented** | `capability_manifests.capabilities_doc` JSONB carries per-category coverage levels (Databricks: structural=high, descriptive=medium, operational=low, quality=none, governance=low). `discovery_coverage_scores` table referenced by CLAUDE.md not yet created. |
+| F3.24 | Discovery Scope: Databricks | **Substantively implemented 2026-05-21** | Layers 1–4 shipped via PRs #142–#146. Live-verified end-to-end against a real workspace: 10 tables, 10 schema snapshots, 9 lineage edges into Neo4j. Deferred: column-level lineage (Layer 4b), push-side notebook (Layer 5), Temporal scheduled re-crawls (Layer 3c), legacy hive-metastore fallback. |
+| F3.25 | Discovery Scope: dbt | Not implemented | Same shape as Databricks would be — manifest.json parser + lineage projection. See B-063 weekend conversation. |
+| F3.26 | Discovery Scope: Snowflake | Not implemented | information_schema introspection + access_history lineage. See B-063. |
+| F3.27 | Discovery Scope: Fivetran | Not implemented | Metadata API + best-effort upstream lineage. See B-063. |
+| F3.28 | Discovery Re-crawl | **Not implemented (manual + on-registration only)** | Auto-crawl on connector registration (#145) and operator-triggered re-crawl (`POST /connectors/:id/crawl`, #144) ship. Scheduled / cadenced re-crawl per the manifest's `re_crawl_interval_hours_default` would require Temporal — deferred. |
+| F3.29 | Discovery Conflict Resolution | Not implemented | CLAUDE.md describes the rule ("Domain-declared metadata takes precedence over discovered metadata unless governance configures auto-override"); no enforcement code exists. Discovered-but-conflicting metadata isn't currently flagged. |
 
 ---
 
@@ -426,7 +428,17 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 
 ### Blockers (must be resolved before open source ready)
 
-**Down from 10 at the start of the April 30 push, now 0 active — every OSR blocker resolved as of 2026-05-14, with all F7.46 follow-ons closed 2026-05-15.** Closed: F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17 — every PRD trigger wired or explicitly deferred), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), **Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, `CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true` is now the default**, **F7.7 Role Assignment UI — org-level Roles page with audit + Keycloak sync + per-role revoke (B-023 / B-024 minor deferrals)**, **F7.22 / F10.4 Domain Team Management completion — domain-scoped member endpoints, per-(principal, domain, role) revoke, "assign existing org member" form, idempotent Keycloak sync across scopes**, and **F7.46 Onboarding Experience** — five-step first-run wizard with per-principal progress persistence. All five wizard steps wire to real destinations as of 2026-05-15: the original three-live + two-skip-only shape from 2026-05-14 was closed by [#97](https://github.com/provenance-logic/provenance/pull/97) (B-026 agents UI), [#98](https://github.com/provenance-logic/provenance/pull/98) (B-025 connectors UI), and [#100](https://github.com/provenance-logic/provenance/pull/100) (B-027 sample-data button). Operational hardening over the same window: [#96](https://github.com/provenance-logic/provenance/pull/96) (`refresh-ec2-dev.sh`) and [#99](https://github.com/provenance-logic/provenance/pull/99) (compose env-validator CI step + 3 latent drift fixes) closed B-028 in full. With Domain 12, F7.7, F7.22/F10.4, and F7.46 all shipped and the entire F7.46 follow-on slate closed, the active OSR blocker list is empty and the open-bug ledger holds **zero Medium-severity items** — only B-029 fix 2 (Low, Vite polling deferral) remains. The remaining work for `v0.1.0-osr` is Stage 5 polish (README polish, link-check, fresh-laptop re-measurement, version tag) per [osr-roadmap.md](./osr-roadmap.md).
+> **Correction posted 2026-05-21.** The previous version of this section said "active OSR blocker list is empty." That was wrong by the standard Matt restated at the end of the 2026-05-21 session: *"For this to be real, every single one of those connectors needs to actually work. EVERY ONE. This is not open source ready."* B-063 — connector framework is register-only beyond PG/S3/Databricks — was filed during the same session, elevated to **Blocker**, and is now the sole active OSR blocker. The whole "OSR blockers resolved + Stage 5 polish" framing below is preserved for context; the 2026-05-24 weekend PRD overhaul will reconcile.
+
+**Active OSR blockers (as of 2026-05-21):**
+
+- **[B-063](../bugs/open.md#B-063) — Connector framework completeness.** 3 of 12 advertised connector types do something meaningful (PG + S3 + Databricks); the other 9 register with synthetic-healthy fakery. The weekend conversation needs to decide whether OSR ships with all 12 implemented (~8–16 weeks of work per the Databricks lift), with a narrowed PRD scope, or with the unimplemented types hidden until they're real.
+
+**Recently-resolved OSR-track work (preserved from the prior summary — accurate against the codebase, NOT a defense of the "OSR-ready" framing):**
+
+F5.15 Lineage Visualization (#55, React Flow + Dagre per ADR-003), F7.5 / Domain 11 Notifications (12 trigger-bundle PRs + frontend + F11.17), Domain 9 Priority 1 completeness (P1 enrichment rendering #47 + lifecycle visibility #45 + real port contract schemas #46 + cross-org Request Access guard #43), Domain 10 Workstream B (mostly — F10.7 partial-but-deployed), Domain 12 Connection References and Per-Use-Case Consent — runtime enforcement shipped across PRs #77–#86, F7.7 Role Assignment UI, F7.22 / F10.4 Domain Team Management completion, and F7.46 Onboarding Experience. All five F7.46 wizard steps wire to real destinations as of 2026-05-15 via PRs [#97](https://github.com/provenance-logic/provenance/pull/97), [#98](https://github.com/provenance-logic/provenance/pull/98), [#100](https://github.com/provenance-logic/provenance/pull/100). Operational hardening: [#96](https://github.com/provenance-logic/provenance/pull/96), [#99](https://github.com/provenance-logic/provenance/pull/99).
+
+**Tonight's 2026-05-21 session shipped 10 PRs:** B-060 parts 1+2 (operator tooling — softReset and demo-smoke-test), B-061 (cross-org information leak filing + JwtAuthGuard fix), and B-063 Layers 1–4 for Databricks (the first connector type to ship end-to-end). See [resolved.md](../bugs/resolved.md) for per-PR detail.
 
 **Deferred post-launch (no shame):**
 
