@@ -24,8 +24,9 @@ export class ConnectorProbeService {
 
   /**
    * Runs a live connectivity check for the connector.
-   * Phase 2 supports postgresql and s3. Other types return a synthetic healthy
-   * result so the connector can be registered without a live probe.
+   * Supports postgresql, s3, and databricks. Other types return a synthetic
+   * healthy result so the connector can be registered without a live probe.
+   * See B-063 for the remaining types' implementation status.
    */
   async probe(connector: ConnectorEntity): Promise<ProbeResult> {
     switch (connector.connectorType) {
@@ -33,15 +34,19 @@ export class ConnectorProbeService {
         return this.probePostgres(connector);
       case 's3':
         return this.probeS3(connector);
+      case 'databricks':
+        return this.probeDatabricks(connector);
       default:
-        // Unsupported in Phase 2 — skip live probe, leave status as pending.
+        // Unsupported — skip live probe, leave status as pending.
         return { status: 'healthy', responseTimeMs: null, errorMessage: null };
     }
   }
 
   /**
    * Connects to the external system and infers the source schema.
-   * Phase 2: PostgreSQL (column introspection via information_schema) and S3 (object listing).
+   * Today: PostgreSQL (column introspection via information_schema) and
+   * S3 (object listing). Databricks schema inference (Unity Catalog) is
+   * a follow-up layer; see B-063.
    */
   async inferSchema(
     connector: ConnectorEntity,
@@ -238,6 +243,95 @@ export class ConnectorProbeService {
         : {}),
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Databricks
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Connectivity probe for a Databricks workspace. Hits the SCIM /Me endpoint
+   * — the cheapest authenticated call available — and treats 200 as healthy.
+   *
+   * Credential resolution: credentialArn must be set. Either a real AWS
+   * Secrets Manager ARN (production) or the local-dev sentinel
+   * `local-env:VARNAME` (laptop dev — see SecretsManagerService for how it
+   * resolves). The secret payload must be JSON with shape `{"token":"dapi..."}`.
+   * Raw plaintext credentials in connection_config are blocked by the
+   * raw-credential-guard at registration time.
+   */
+  private async probeDatabricks(connector: ConnectorEntity): Promise<ProbeResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      return {
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage:
+          'Databricks connector requires connection_config.host (the workspace URL, e.g. https://dbc-xxxxxx.cloud.databricks.com)',
+      };
+    }
+
+    const token = await this.resolveDatabricksToken(connector);
+    if (!token) {
+      return {
+        status: 'credential_error',
+        responseTimeMs: null,
+        errorMessage:
+          'Databricks connector requires a personal access token — set credentialArn to a Secrets Manager ARN or local-env:VARNAME sentinel pointing at a JSON value of shape {"token":"dapi..."}',
+      };
+    }
+
+    const start = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(`${host}/api/2.0/preview/scim/v2/Me`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      const responseTimeMs = Date.now() - start;
+      if (response.ok) {
+        return { status: 'healthy', responseTimeMs, errorMessage: null };
+      }
+      const bodySnippet = await safeReadSnippet(response);
+      return {
+        status: classifyDatabricksHttpStatus(response.status),
+        responseTimeMs: null,
+        errorMessage: `Databricks returned HTTP ${response.status}${bodySnippet ? `: ${bodySnippet}` : ''}`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        return {
+          status: 'timeout',
+          responseTimeMs: null,
+          errorMessage: 'Databricks probe timed out after 5s',
+        };
+      }
+      return {
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage: error.message ?? 'Unknown error',
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private async resolveDatabricksToken(
+    connector: ConnectorEntity,
+  ): Promise<string | null> {
+    if (!connector.credentialArn) return null;
+    try {
+      const creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      if (typeof creds.token === 'string' && creds.token.length > 0) {
+        return creds.token;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,4 +361,19 @@ function classifyS3Error(err: Error & { name?: string; Code?: string }): HealthS
     return 'timeout';
   }
   return 'unreachable';
+}
+
+function classifyDatabricksHttpStatus(status: number): HealthStatus {
+  if (status === 401 || status === 403) return 'credential_error';
+  if (status === 408 || status === 504) return 'timeout';
+  return 'unreachable';
+}
+
+async function safeReadSnippet(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.slice(0, 200).replace(/\s+/g, ' ');
+  } catch {
+    return '';
+  }
 }
