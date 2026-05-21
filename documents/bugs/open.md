@@ -9,23 +9,16 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-060 — Demo verification tooling drifted from the API surface; `softReset` and `demo-smoke-test.sh` layers 3–6 reference endpoints/columns that don't exist
+## B-060 — Demo verification tooling drifted from the API surface; `demo-smoke-test.sh` layers 3–6 reference endpoints that don't exist
 
 - **Severity:** Medium (operator-facing tooling functionally broken; the *platform* works, but the scripts that verify it can't)
-- **Status:** Open
-- **Area:** `packages/seed/src/reset.ts`, `infrastructure/scripts/demo-smoke-test.sh`
+- **Status:** Open — **softReset half resolved 2026-05-21** (see [resolved.md](./resolved.md#B-060-part-1-softReset-referenced-columns-and-tables-that-dont-exist-in-the-live-schema)). The smoke-test layers 3–6 fix and the CI integration remain open.
+- **Area:** `infrastructure/scripts/demo-smoke-test.sh`
 - **Discovered:** 2026-05-18, during the Path 3 attempt to verify `demo-reset.sh --soft` after bringing the demo box to current main.
 
 **Symptom.**
 
-1. **`softReset` (`packages/seed/src/reset.ts`):** the function references five tables/columns; only one is correct.
-   - `audit.audit_log WHERE event_at` — column is `occurred_at` (V4 schema).
-   - `observability.trust_score_history WHERE computed_at` — correct ✅.
-   - `observability.observability_snapshots WHERE snapshot_at` — **table does not exist** in any migration.
-   - `lineage.emission_events WHERE emitted_at` — **table does not exist** in any migration.
-   - `access.access_requests WHERE created_at` — column is `requested_at` (V25 schema).
-   
-   The first DELETE throws `column "event_at" does not exist`, the transaction rolls back, soft reset reports failure. `softReset` has never actually worked. `bash demo-reset.sh --soft` exits non-zero every time it has ever been run.
+1. **`softReset` (`packages/seed/src/reset.ts`):** ~~the function references five tables/columns; only one is correct.~~ **RESOLVED 2026-05-21.** softReset now matches the live schema (V4 `occurred_at`, V7 `requested_at`, V9 `emission_log`, V11 `computed_at`); the phantom `observability_snapshots` DELETE was dropped (no such table exists). A new CLI verifier (`seed:verify:soft-reset`) inserts sentinel rows on both sides of the 24h cutoff, runs softReset, and asserts the right rows were deleted; verified end-to-end on back-to-back invocations.
 
 2. **`demo-smoke-test.sh` layers 3–6:** almost every authenticated API call references a flat top-level endpoint shape that the API doesn't expose. The real surface is org-scoped (`/organizations/:orgId/...`).
    | Smoke test calls | What actually exists |
@@ -47,11 +40,7 @@ Neither was ever end-to-end run after the underlying surfaces moved. This is the
 
 **Fix path.**
 
-1. **`softReset`** — three sub-tasks:
-   - Replace `event_at` → `occurred_at` for `audit.audit_log`.
-   - Replace `created_at` → `requested_at` for `access.access_requests`.
-   - Decide what to do with `observability_snapshots` and `emission_events`: were they renamed, dropped, or never built? Audit the resolved schema and either correct the references or delete those DELETE statements entirely.
-   - Add a smoke test for `softReset` itself — invoke it on a populated demo box and assert recent rows are gone.
+1. **`softReset`** — ✅ **DONE 2026-05-21.** Fixed: `event_at`→`occurred_at`, `created_at`→`requested_at`, `emission_events`→`emission_log` (the table was renamed, not dropped — V9), and `observability_snapshots` DELETE removed entirely (table never existed). New `seed:verify:soft-reset` CLI command runs as the smoke test for `softReset` itself.
 
 2. **`demo-smoke-test.sh` layers 3–6** — for each endpoint:
    - Look up the real route in the corresponding controller (`grep -n "@Controller" apps/api/src/<area>/*.controller.ts`).

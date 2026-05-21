@@ -12,7 +12,8 @@
     "seed": "tsx src/cli.ts seed",
     "seed:reset:soft": "tsx src/cli.ts reset --soft",
     "seed:reset:hard": "tsx src/cli.ts reset --hard",
-    "seed:verify": "tsx src/cli.ts verify"
+    "seed:verify": "tsx src/cli.ts verify",
+    "seed:verify:soft-reset": "tsx src/cli.ts verify-soft-reset"
   },
   "dependencies": {
     "pg": "^8.11.3",

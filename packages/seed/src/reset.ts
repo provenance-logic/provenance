@@ -7,21 +7,24 @@ import { withDb } from './db-client.js';
 import { runSeed } from './runner.js';
 
 export async function softReset(config: SeedConfig, logger: Logger): Promise<void> {
-  logger.info('soft reset: clearing transactional demo state (audit log, lineage emissions, trust score history)');
+  logger.info(
+    'soft reset: clearing transactional demo state (audit log, lineage emissions, trust score history, access requests)'
+  );
   await withDb(config, async (db: Client) => {
     await db.query('BEGIN');
     try {
       await db.query(
-        `DELETE FROM audit.audit_log WHERE event_at >= now() - interval '24 hours'`
+        `DELETE FROM audit.audit_log WHERE occurred_at >= now() - interval '24 hours'`
       );
       await db.query(
         `DELETE FROM observability.trust_score_history WHERE computed_at >= now() - interval '24 hours'`
       );
       await db.query(
-        `DELETE FROM observability.observability_snapshots WHERE snapshot_at >= now() - interval '24 hours'`
+        `DELETE FROM lineage.emission_log WHERE emitted_at >= now() - interval '24 hours'`
       );
-      await db.query(`DELETE FROM lineage.emission_events WHERE emitted_at >= now() - interval '24 hours'`);
-      await db.query(`DELETE FROM access.access_requests WHERE created_at >= now() - interval '24 hours'`);
+      await db.query(
+        `DELETE FROM access.access_requests WHERE requested_at >= now() - interval '24 hours'`
+      );
       await db.query('COMMIT');
     } catch (e) {
       await db.query('ROLLBACK');

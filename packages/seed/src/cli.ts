@@ -6,6 +6,7 @@ import { createKeycloakClient } from './keycloak-client.js';
 import { runSeed } from './runner.js';
 import { softReset, hardReset } from './reset.js';
 import { verify } from './verify.js';
+import { verifySoftReset } from './verify-soft-reset.js';
 
 async function main(): Promise<void> {
   const [, , command, flag] = process.argv;
@@ -36,8 +37,12 @@ async function main(): Promise<void> {
         await verify(config, logger);
         break;
       }
+      case 'verify-soft-reset': {
+        await verifySoftReset(config, logger);
+        break;
+      }
       default:
-        console.error('Usage: seed <seed|reset --soft|reset --hard|verify>');
+        console.error('Usage: seed <seed|reset --soft|reset --hard|verify|verify-soft-reset>');
         process.exit(2);
     }
   } catch (e) {
