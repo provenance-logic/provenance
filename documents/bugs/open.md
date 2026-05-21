@@ -9,91 +9,36 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-061 — Cross-org information leak: org-scoped endpoints serve other-org data when the caller passes a different `:orgId` in the URL
+## B-062 — RLS-by-default: the `provenance.current_org_id` session variable doesn't persist across the connections a request actually uses
 
-- **Severity:** High (cross-tenant information leak in production-shaped code paths; reproduced live on dev — not theoretical. Provenance's whole story is multi-tenant; this is OSR-blocking in spirit even if the marketing site doesn't say "we leak data across orgs.")
+- **Severity:** Medium (defense-in-depth gap; the immediate cross-org leak is closed at the controller boundary by [B-061](resolved.md#B-061-cross-org-information-leak-the-jwt-auth-guard-did-not-check-the-url-orgid-against-the-tokens-claim)'s fix, but the database-layer guarantee the platform's RLS policies were designed to provide is not actually in force on most service-layer queries today)
 - **Status:** Open
-- **Area:** `apps/api/src/governance/governance.controller.ts`, `apps/api/src/trust-score/trust-score.controller.ts`, and almost certainly the wider family of controllers that use `@Param('orgId')` directly (see Blast radius below).
-- **Discovered:** 2026-05-21, while probing endpoints during the [B-060 part 2](resolved.md#B-060-part-2-demo-smoke-testsh-layers-3-6-targeted-flat-endpoints-the-api-never-exposed) smoke-test rewrite. Flagged in passing in that PR's resolved.md entry; deserves its own filing.
+- **Area:** `apps/api/src/database/org-context.middleware.ts`, TypeORM connection-pool interaction with `SET LOCAL`-style session config
+- **Discovered:** 2026-05-21, surfaced during [B-061](resolved.md#B-061-cross-org-information-leak-the-jwt-auth-guard-did-not-check-the-url-orgid-against-the-tokens-claim) root-cause analysis.
 
-**Reproducible symptom.** Authenticate as `admin@acme.example.com` (JWT carries `provenance_org_id = <Acme>`). Call an org-scoped endpoint with **Beta Industries**' `orgId` in the URL. The API returns 200 with Beta's data.
+**Symptom (subtle).** RLS policies on every tenant-scoped table read `current_setting('provenance.current_org_id', true)::UUID` to filter. With the B-061 guard in place, the cross-org leak is closed at the API layer — any URL/JWT mismatch is rejected before the service runs. But if the guard ever gets a bypass (e.g. a future controller declares its path parameter with a different name than `orgId`, or a new bootstrap path mounts under `/organizations/:foo/...`), the database layer will not catch it. RLS is the platform's last line of defense and right now it isn't actually defending most of the surface.
 
-```
-# Acme JWT, Beta org id in URL — should be 403 (or at minimum return Acme data and ignore URL mismatch).
-GET /api/v1/organizations/<Beta>/governance/dashboard
-  → { "summary": { "totalPublished": 4, ... } }    # Beta's counts, not Acme's
+**Root cause.** `OrgContextMiddleware` (`apps/api/src/database/org-context.middleware.ts`) calls `SELECT set_config('provenance.current_org_id', $1, true)` on `this.dataSource.query(...)`. The `true` is `is_local`, which scopes the variable to the current transaction. But `dataSource.query` acquires a fresh connection from the pool, runs the `SET LOCAL` in an auto-commit transaction, releases the connection. The next query (from the actual service-layer call) acquires a **different** connection from the pool, where the variable is unset. `current_setting('...', true)` returns NULL, the RLS USING clause evaluates to `org_id = NULL` (false), and the policy returns zero rows — except that several controllers' service queries don't go through a path where RLS is enforced for the application role anyway (they run as the postgres owner via TypeORM, which inherits BYPASSRLS).
 
-GET /api/v1/organizations/<Beta>/governance/effective-policies
-  → { "items": [ { "orgId": "<Beta>", ... }, ... ] }    # Actual Beta rows
+So: RLS exists, the middleware tries to set the session variable, neither actually works end-to-end.
 
-GET /api/v1/organizations/<Beta>/products/<Beta-product>/trust-score
-  → { "score": 0.66, "band": "fair", "org_id": "<Beta>", ... }    # Beta's trust score
-```
+**Confirmation method.** Easy live check: instrument the middleware to log the connection id it sets the variable on, instrument the relevant service queries to log the connection id they're running on, observe that they differ on most requests. Or: write a query that calls `pg_backend_pid()` from both contexts.
 
-The dashboard leaks aggregate counts. `/effective-policies` and `/trust-score` leak actual row content with the other org's UUID in the response.
+**Why we're not freaking out today.** The B-061 guard closes the actual data-leak surface that mattered to a multi-tenant deployment. Failure mode if RLS-by-default doesn't ship: a future regression in the controller-layer guard would re-expose data. The platform is safe **as long as the guard is correct on every org-scoped route**. That's a reasonable invariant for the OSR milestone — but it's a structural debt the project should be honest about.
 
-**Write side effect (worse).** Calling `/organizations/<Acme>/products/<Beta-product>/trust-score` — Acme orgId in URL, Beta product UUID — returns HTTP 200 with a freshly computed score whose response payload claims `org_id = <Acme>` for `product_id = <Beta-product>`. The trust-score service appears to compute and persist a new `observability.trust_score_history` row attributing a Beta product to Acme's tenant. Cross-org write, not just cross-org read. Has not been verified yet against the table contents but the response shape strongly suggests it.
+**Fix paths (need a design pass, not a one-PR job).**
 
-**Endpoints that handle correctly (also probed).** Same swap (Acme JWT, Beta orgId in URL) returned the caller's own data on:
-- `/organizations/<Beta>/access/grants` → items have `orgId = <Acme>` (URL ignored, JWT respected)
-- `/organizations/<Beta>/access/requests` → same
-- `/organizations/<Beta>/marketplace/products` → same
+1. **Per-request, sticky connection.** Hold a single TypeORM `QueryRunner` for the lifetime of the request, set the session variable on it once, route every service-layer query through that runner. Big refactor — every repository would need to accept a runner or operate inside a request-scoped data source.
+2. **Transactional wrapper around every request.** A Nest interceptor that opens a transaction at request start, sets `SET LOCAL` inside it, commits at end. Queries inside the transaction inherit the session variable. Smaller per-call diff but every request now runs in a transaction, which changes the failure-mode shape (a single service-layer error rolls back the whole request including the parts that wanted to side-effect on partial failure — e.g. notifications, outbox events).
+3. **Move tenant filter into the query layer, drop reliance on RLS for the hot path.** Treat RLS as a backstop only, and require every service-layer query to filter explicitly on `orgId = ctx.orgId`. Pairs well with the B-061 guard since the guard already enforces `ctx.orgId === url.orgId`. RLS stays in place but is no longer the only check.
 
-So the gap is per-controller, not platform-wide.
+Option 3 is closest to what the platform actually does today on the safe controllers (B-061's "safe list" — they all filter on `ctx.orgId` explicitly). Formalizing that as a pattern and adding a lint rule (or just a CI grep) for `@Param('orgId')` flowing into a service call without an accompanying `ctx.orgId` check would catch the next B-061 at PR time.
 
-**Root cause.** Two controller patterns coexist in the codebase. Compare:
+**Also worth covering when this lands.** The B-061 guard checks `request.params.orgId` specifically. If a future controller mounts at `/organizations/:organizationId/...` or `/:tenantId/...`, the guard's `request.params.orgId` will be undefined and the check will silently pass. Either standardize the param name (lint rule / convention) or have the guard inspect every `:*Id`-shaped param that's a UUID against the JWT.
 
-```ts
-// access.controller.ts:50 — SAFE. Uses ctx.orgId (resolved from JWT).
-@Get('grants')
-listGrants(@ReqContext() ctx: RequestContext, ...) {
-  return this.accessService.listGrants(ctx.orgId, ...);
-}
-```
+**Verification scaffold.** When this lands, extend `demo-smoke-test.sh` further: add a layer that simulates a guard bypass (e.g. directly inject a service-layer call with a mismatched orgId via a test-only endpoint behind `SEED_ENABLED`) and assert RLS returns zero rows. Without that, defense-in-depth is unverifiable.
 
-```ts
-// governance.controller.ts:37 — LEAKY. Passes the URL :orgId straight through.
-@Get('dashboard')
-getDashboard(@Param('orgId') orgId: string) {
-  return this.governanceService.getDashboard(orgId);
-}
-```
-
-There is no controller-level check that `@Param('orgId') === ctx.orgId`. The `JwtAuthGuard` only verifies that the JWT carries a non-empty `provenance_org_id` claim — it does not compare it to the URL path parameter.
-
-**Why RLS didn't catch it.** The `OrgContextMiddleware` (`apps/api/src/database/org-context.middleware.ts`) sets `provenance.current_org_id` from `req.user.orgId` — the JWT's value, so far so good. But it uses `SELECT set_config(..., $1, true)` with `is_local=true`, which scopes the variable to the **current transaction**. The middleware runs on a fresh connection from the pool, then releases that connection. The service layer's subsequent `repository.find(...)` / `dataSource.query(...)` calls each acquire **different** connections from the same pool, where the session variable is not set, so `current_setting('provenance.current_org_id', true)::UUID` evaluates to NULL inside the RLS USING clause and the policy effectively becomes `org_id = NULL` (no rows) — except that several governance/trust-score queries appear to bypass RLS entirely or run as a role exempt from the policy.
-
-Either way, the *control-plane* tenancy invariant is currently leaning on application-layer authorization that some controllers honor and others don't, with no enforcement floor under it.
-
-**Blast radius (needs explicit audit, not assumed).** Controllers mounted at `/organizations/:orgId/...` that use `@Param('orgId')` and pass it through to the service — every one is a candidate until proven otherwise:
-
-- `governance/governance.controller.ts` — **confirmed leaky** (dashboard, effective-policies; assume all routes)
-- `trust-score/trust-score.controller.ts` — **confirmed leaky** (with likely write side effect)
-- `products/products.controller.ts`
-- `connectors/connectors.controller.ts`
-- `lineage/lineage.controller.ts`
-- `observability/slo.controller.ts`
-- `sample-data/sample-data.controller.ts`
-- Possibly `consent/consent.controller.ts` and `notifications/notifications.controller.ts` if any of their routes use `@Param('orgId')` directly rather than `ctx.orgId`
-
-`access`, `marketplace`, `governance/governance.controller.ts`'s ctx-using routes (if any), `products/products.controller.ts`'s ctx-using routes (if any) — the safe ones — use `ctx.orgId`. Mixed-mode is the worst case because the controller LOOKS safe at a glance.
-
-**Fix paths (not commitments — needs design pass).** Three options, increasing in robustness:
-
-1. **Guard at the controller boundary** — `JwtAuthGuard` (or a dedicated `OrgScopeGuard`) compares `request.params.orgId` to `request.user.orgId` for any route that has both, and returns 403 on mismatch. One place to enforce, no per-controller refactor. Doesn't fix the RLS gap below — but prevents cross-org calls from ever reaching the service layer.
-2. **Repair RLS-by-default** — fix `OrgContextMiddleware` (or move it to a Nest interceptor / typeorm connection lifecycle hook) so the session variable persists across the connections the request actually uses, OR migrate to a pattern where every service-layer query goes through a runner that explicitly scopes the connection. Defense in depth — even if a controller leaks, the database refuses to serve cross-org rows.
-3. **Both.** Almost certainly the right answer for OSR. Layer 1 is fast to ship and catches the wrong call before it touches the DB; layer 2 is the structural fix.
-
-**Recommended sequencing.** (1) first, as a single PR — small diff, immediately stops the bleed, includes an integration test that the cross-org calls now 403. Then (2) as a follow-up — much larger refactor, deserves its own design pass.
-
-**Verification scaffold for whichever fix lands.** Extend `infrastructure/scripts/demo-smoke-test.sh` layer 5 (or add a layer 5a) — call each `/organizations/<other-org>/...` endpoint with the smoke user's JWT and assert HTTP 403. This is the kind of test that's worth wiring into the planned CI job from the remaining open piece of B-060: regression on this exact bug is the highest-cost regression on the project.
-
-**Impact today.**
-
-- Provenance positions itself as a multi-tenant platform. This bug breaks that claim end-to-end on at least three confirmed endpoints — anyone authenticated as one org can read another org's governance posture, effective policies, and trust scores by typing a different UUID into the URL.
-- No fix is shipped yet. Workaround for any operator: **only run the platform with one tenant** until B-061 is closed. The smoke-test fix from PR #138 does not make this worse — it just used to be invisible because the smoke test never reached the leaky endpoints.
-
-**Pattern.** The `@Param('orgId')` controller pattern looks Type-Script-tidy ("explicit, typed param from the URL") but quietly bypasses the JWT identity that the whole tenant model depends on. Every new org-scoped controller is going to be tempted into this same pattern unless the platform makes the safe choice the easy one. Long-term fix is RLS-by-default plus a guard; short-term fix is the guard alone. The B-060 family of bugs taught the project that "operator tooling is part of the surface a phase ships" — B-061 is the analogue for tenant isolation: "the URL is part of the security surface a phase ships."
+**Pattern.** B-061 taught the project: "the URL is part of the security surface a phase ships." B-062 is the follow-up: "controller guards are the user-facing security surface; RLS is the durable security surface; both should be in force, and right now only one is." Until B-062 closes, every new org-scoped controller is leaning on one wall instead of two.
 
 ---
 

@@ -205,6 +205,23 @@ cross_org=$(echo "$GRANTS" | jq -r --arg o "$ORG_ID" \
   || fail "data-plane" "org-scoped /access/grants returned ${cross_org} rows from other orgs — tenant filter failed"
 ok "tenant isolation holds: marketplace spans ${distinct_orgs} orgs, org-scoped reads return only caller's org"
 
+# Cross-org URL/JWT mismatch (B-061 regression check). The smoke user's JWT
+# is scoped to ORG_ID; substituting any *other* org's UUID in an org-scoped
+# URL must return 403. Pick a different org from the marketplace listing
+# (we already know it spans ≥ 2 orgs from the assertion above).
+foreign_org_id=$(echo "$PRODUCTS_JSON" | jq -r --arg o "$ORG_ID" \
+  '[.items[].orgId | select(. != $o)] | first // empty')
+[ -n "$foreign_org_id" ] \
+  || fail "data-plane" "could not identify a foreign org id for cross-org regression check"
+for path in "governance/dashboard" "governance/effective-policies"; do
+  http_code=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    "${BASE_URL}/api/v1/organizations/${foreign_org_id}/${path}")
+  [ "$http_code" = "403" ] \
+    || fail "data-plane" "cross-org GET /organizations/${foreign_org_id}/${path} returned ${http_code}; expected 403 (B-061 regression)"
+done
+ok "cross-org URL/JWT mismatch correctly returns 403 (B-061 regression check)"
+
 # ---------------------------------------------------------------------------
 # 6. Observability
 # ---------------------------------------------------------------------------

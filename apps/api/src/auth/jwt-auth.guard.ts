@@ -1,4 +1,9 @@
-import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  ExecutionContext,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -10,6 +15,7 @@ import type { RequestContext } from '@provenance/types';
 
 interface AuthRequest {
   headers?: Record<string, string | string[] | undefined>;
+  params?: Record<string, string | undefined>;
   user?: RequestContext;
 }
 
@@ -87,6 +93,25 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (!allowNoOrg && !request.user?.orgId) {
       throw new UnauthorizedException(
         'Token is missing a provenance_org_id claim — complete org signup first',
+      );
+    }
+
+    // Cross-org URL/JWT consistency (B-061). When a route carries an :orgId
+    // path parameter, it must equal the caller's JWT-resolved orgId. Several
+    // controllers pass @Param('orgId') straight through to the service layer
+    // without this check, and the RLS session variable (set with is_local=true
+    // by OrgContextMiddleware on a transient pool connection) does not always
+    // cover the downstream query — so without enforcement here, an Acme user
+    // could substitute Beta's UUID in the URL and the service would happily
+    // return Beta's data.
+    //
+    // Skip when request.user.orgId is empty (the MCP service-account bypass
+    // earlier in this guard sets orgId='' for the privileged inter-service
+    // path; @AllowNoOrg routes don't carry :orgId in their URLs).
+    const urlOrgId = request.params?.orgId;
+    if (urlOrgId && request.user?.orgId && urlOrgId !== request.user.orgId) {
+      throw new ForbiddenException(
+        'Org scope mismatch: token is scoped to a different organization than the URL targets',
       );
     }
 
