@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConnectorsController } from './connectors.controller.js';
 import { ConnectorsService } from './connectors.service.js';
+import { CapabilityManifestController } from './capability-manifest.controller.js';
+import { CapabilityManifestService } from './capability-manifest.service.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { SecretsManagerService } from './probe/secrets-manager.service.js';
 import { ConnectorEntity } from './entities/connector.entity.js';
@@ -9,6 +11,7 @@ import { ConnectorHealthEventEntity } from './entities/connector-health-event.en
 import { SourceRegistrationEntity } from './entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from './entities/schema-snapshot.entity.js';
 import { DiscoveryCrawlEventEntity } from './entities/discovery-crawl-event.entity.js';
+import { CapabilityManifestEntity } from './entities/capability-manifest.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
@@ -21,6 +24,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
       SourceRegistrationEntity,
       SchemaSnapshotEntity,
       DiscoveryCrawlEventEntity,
+      CapabilityManifestEntity,
       RoleAssignmentEntity,
     ]),
     KafkaModule,
@@ -29,9 +33,10 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
   providers: [
     SecretsManagerService,
     ConnectorProbeService,
+    CapabilityManifestService,
     ConnectorsService,
   ],
-  controllers: [ConnectorsController],
-  exports: [ConnectorsService],
+  controllers: [ConnectorsController, CapabilityManifestController],
+  exports: [ConnectorsService, CapabilityManifestService],
 })
 export class ConnectorsModule {}

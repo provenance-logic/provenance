@@ -16,6 +16,7 @@ import { ConnectorHealthEventEntity } from '../connectors/entities/connector-hea
 import { SourceRegistrationEntity } from '../connectors/entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.entity.js';
 import { DiscoveryCrawlEventEntity } from '../connectors/entities/discovery-crawl-event.entity.js';
+import { CapabilityManifestEntity } from '../connectors/entities/capability-manifest.entity.js';
 import { PolicySchemaEntity } from '../governance/entities/policy-schema.entity.js';
 import { PolicyVersionEntity } from '../governance/entities/policy-version.entity.js';
 import { EffectivePolicyEntity } from '../governance/entities/effective-policy.entity.js';
@@ -66,6 +67,7 @@ import { PrincipalNotificationSettingsEntity } from '../notifications/entities/p
             SourceRegistrationEntity,
             SchemaSnapshotEntity,
             DiscoveryCrawlEventEntity,
+            CapabilityManifestEntity,
             PolicySchemaEntity,
             PolicyVersionEntity,
             EffectivePolicyEntity,

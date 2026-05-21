@@ -16,6 +16,7 @@ import {
   DiscoveryCrawlEventEntity,
   type DiscoveryCrawlStatus,
 } from './entities/discovery-crawl-event.entity.js';
+import { CapabilityManifestService } from './capability-manifest.service.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
@@ -78,6 +79,7 @@ export class ConnectorsService {
     @InjectRepository(RoleAssignmentEntity)
     private readonly roleRepo: Repository<RoleAssignmentEntity>,
     private readonly probeService: ConnectorProbeService,
+    private readonly capabilityManifestService: CapabilityManifestService,
     private readonly kafkaProducer: KafkaProducerService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -161,6 +163,29 @@ export class ConnectorsService {
     const updated = await this.connectorRepo.findOne({
       where: { id: connector.id, orgId },
     });
+
+    // 6. Auto-crawl on registration (B-063 Layer 3b). Fire-and-forget if the
+    //    capability manifest says discovery is supported AND the probe came
+    //    back healthy. We don't block the create response on the crawl — it
+    //    can take seconds, and crawl outcomes land on the crawl-events
+    //    history where operators can inspect them.
+    //
+    //    No Temporal yet (Layer 3c). This is plain async with error capture,
+    //    which is non-durable across api restarts. For demo and dev that's
+    //    fine; production will want the durable workflow.
+    if (updated && updated.validationStatus === 'valid') {
+      const manifest = await this.capabilityManifestService.getLatestForType(
+        updated.connectorType,
+      );
+      if (manifest?.supportsDiscoveryCrawl) {
+        void this.crawlConnector(orgId, updated.id, createdBy).catch((err) => {
+          this.logger.warn(
+            `Auto-crawl on registration failed for connector ${updated.id}: ${(err as Error).message}`,
+          );
+        });
+      }
+    }
+
     return this.toConnector(updated!);
   }
 
