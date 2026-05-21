@@ -95,6 +95,32 @@ export class ConnectorsController {
   }
 
   // ---------------------------------------------------------------------------
+  // Discovery crawl (B-063 Layer 3a)
+  // ---------------------------------------------------------------------------
+
+  @Post(':connectorId/crawl')
+  crawlConnector(
+    @Param('orgId') orgId: string,
+    @Param('connectorId') connectorId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.connectorsService.crawlConnector(orgId, connectorId, ctx.principalId);
+  }
+
+  @Get(':connectorId/crawl-events')
+  listCrawlEvents(
+    @Param('orgId') orgId: string,
+    @Param('connectorId') connectorId: string,
+    @Query('limit') limit = 20,
+  ) {
+    return this.connectorsService.listCrawlEvents(
+      orgId,
+      connectorId,
+      Number(limit),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Health Events
   // ---------------------------------------------------------------------------
 
