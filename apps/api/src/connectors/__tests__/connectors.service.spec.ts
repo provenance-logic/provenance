@@ -13,6 +13,7 @@ import { SchemaSnapshotEntity } from '../entities/schema-snapshot.entity.js';
 import { DiscoveryCrawlEventEntity } from '../entities/discovery-crawl-event.entity.js';
 import { CapabilityManifestEntity } from '../entities/capability-manifest.entity.js';
 import { CapabilityManifestService } from '../capability-manifest.service.js';
+import { LineageService } from '../../lineage/lineage.service.js';
 import { ConnectorProbeService } from '../probe/connector-probe.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
@@ -136,6 +137,14 @@ describe('ConnectorsService', () => {
             // Default: no manifest registered, so auto-crawl on registration
             // never fires. Tests that exercise auto-crawl override this.
             getLatestForType: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: LineageService,
+          useValue: {
+            // No-op default — discovery-crawl tests that exercise the
+            // lineage projection path mock this explicitly.
+            emitEvent: jest.fn().mockResolvedValue({ id: 'l1', createdAt: new Date() }),
           },
         },
         { provide: KafkaProducerService, useFactory: mockKafkaProducer },

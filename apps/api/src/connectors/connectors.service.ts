@@ -17,6 +17,7 @@ import {
   type DiscoveryCrawlStatus,
 } from './entities/discovery-crawl-event.entity.js';
 import { CapabilityManifestService } from './capability-manifest.service.js';
+import { LineageService } from '../lineage/lineage.service.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
@@ -80,6 +81,7 @@ export class ConnectorsService {
     private readonly roleRepo: Repository<RoleAssignmentEntity>,
     private readonly probeService: ConnectorProbeService,
     private readonly capabilityManifestService: CapabilityManifestService,
+    private readonly lineageService: LineageService,
     private readonly kafkaProducer: KafkaProducerService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -548,8 +550,72 @@ export class ConnectorsService {
         }
       }
 
+      // Lineage projection (B-063 Layer 4). For each discovered table,
+      // pull its upstream + downstream lineage from Unity Catalog and
+      // emit the edges via LineageService — same path the SDK uses, so
+      // edges land in PostgreSQL (emission_log) and Neo4j (the graph)
+      // with the same idempotency + trust-score recompute semantics.
+      // Idempotency key is deterministic so re-crawls don't duplicate
+      // edges. emitted_by carries the system-discovered marker.
+      let lineageEdgesEmitted = 0;
+      let lineageEdgesSkipped = 0;
+      let lineageEdgesFailed = 0;
+      let tablesWithLineageErrors: string[] = [];
+      if (walk.tables.length > 0) {
+        try {
+          const fullNames = walk.tables.map((t) => t.fullName);
+          const lineageResult = await this.probeService.walkDatabricksLineage(
+            connector,
+            fullNames,
+          );
+          tablesWithLineageErrors = lineageResult.tablesWithErrors;
+          for (const edge of lineageResult.edges) {
+            try {
+              const before = await this.lineageService.emitEvent(orgId, {
+                source_node: {
+                  node_type: 'Source',
+                  node_id: edge.sourceFullName,
+                  org_id: orgId,
+                  display_name: edge.sourceFullName,
+                  metadata: { connectorType: 'databricks' },
+                },
+                target_node: {
+                  node_type: 'Source',
+                  node_id: edge.targetFullName,
+                  org_id: orgId,
+                  display_name: edge.targetFullName,
+                  metadata: { connectorType: 'databricks' },
+                },
+                edge_type: 'DERIVES_FROM',
+                emitted_by: 'databricks-discovery-crawl',
+                confidence: 1.0,
+                idempotency_key: `databricks-lineage:${connectorId}:${edge.sourceFullName}->${edge.targetFullName}`,
+              });
+              // The emission service returns the existing entry on
+              // idempotency hit (re-crawl). Distinguish "new" vs "skipped"
+              // by checking whether the row pre-dates this crawl event.
+              if (before.createdAt < event.startedAt) {
+                lineageEdgesSkipped++;
+              } else {
+                lineageEdgesEmitted++;
+              }
+            } catch (err) {
+              this.logger.warn(
+                `Lineage emission failed for ${edge.sourceFullName} -> ${edge.targetFullName}: ${(err as Error).message}`,
+              );
+              lineageEdgesFailed++;
+            }
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Lineage walk failed (continuing without lineage projection): ${(err as Error).message}`,
+          );
+        }
+      }
+
       event.completedAt = new Date();
-      event.status = (snapshotsFailed > 0 ? 'partial' : 'succeeded') as DiscoveryCrawlStatus;
+      const hadFailures = snapshotsFailed > 0 || lineageEdgesFailed > 0 || tablesWithLineageErrors.length > 0;
+      event.status = (hadFailures ? 'partial' : 'succeeded') as DiscoveryCrawlStatus;
       event.catalogsWalked = walk.catalogs.length;
       event.schemasWalked = walk.schemasWalked;
       event.tablesFound = walk.tables.length;
@@ -557,6 +623,13 @@ export class ConnectorsService {
       event.sourcesSkipped = sourcesSkipped;
       event.snapshotsCaptured = snapshotsCaptured;
       event.snapshotsFailed = snapshotsFailed;
+      event.metadata = {
+        ...event.metadata,
+        lineageEdgesEmitted,
+        lineageEdgesSkipped,
+        lineageEdgesFailed,
+        tablesWithLineageErrors,
+      };
       event = await this.crawlEventRepo.save(event);
       return this.toDiscoveryCrawlEvent(event);
     } catch (err) {

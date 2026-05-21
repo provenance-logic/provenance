@@ -641,3 +641,149 @@ describe('ConnectorProbeService.walkDatabricksWorkspace (B-063 Layer 3a)', () =>
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Lineage walk (Layer 4) — Unity Catalog Lineage Tracking API
+// ---------------------------------------------------------------------------
+
+describe('ConnectorProbeService.walkDatabricksLineage (B-063 Layer 4)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = mockSecretsManager();
+    secretsManager.getSecretValue.mockResolvedValue({ token: VALID_PAT });
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  function lineageResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status });
+  }
+
+  function tableInfo(catalog: string, schema: string, name: string) {
+    return { tableInfo: { catalog_name: catalog, schema_name: schema, name } };
+  }
+
+  it('returns upstream + downstream edges as (source, target) pairs', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      lineageResponse({
+        upstreams: [tableInfo('workspace', 'bronze', 'mro_raw')],
+        downstreams: [tableInfo('workspace', 'gold', 'mro_summary_by_ship')],
+      }),
+    );
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.silver.mro_clean',
+    ]);
+
+    expect(result.edges).toEqual([
+      { sourceFullName: 'workspace.bronze.mro_raw', targetFullName: 'workspace.silver.mro_clean' },
+      { sourceFullName: 'workspace.silver.mro_clean', targetFullName: 'workspace.gold.mro_summary_by_ship' },
+    ]);
+    expect(result.tablesWithErrors).toEqual([]);
+  });
+
+  it('deduplicates edges seen from both sides of the lineage relationship', async () => {
+    // silver.mro_clean lists workspace.bronze.mro_raw as upstream
+    fetchSpy.mockResolvedValueOnce(
+      lineageResponse({ upstreams: [tableInfo('workspace', 'bronze', 'mro_raw')] }),
+    );
+    // bronze.mro_raw lists workspace.silver.mro_clean as downstream — same edge
+    fetchSpy.mockResolvedValueOnce(
+      lineageResponse({ downstreams: [tableInfo('workspace', 'silver', 'mro_clean')] }),
+    );
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.silver.mro_clean',
+      'workspace.bronze.mro_raw',
+    ]);
+
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0]).toEqual({
+      sourceFullName: 'workspace.bronze.mro_raw',
+      targetFullName: 'workspace.silver.mro_clean',
+    });
+  });
+
+  it('treats a 404 (no lineage available for this table) as "no edges", not an error', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 404 }));
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.bronze.freshly_created',
+    ]);
+
+    expect(result.edges).toEqual([]);
+    expect(result.tablesWithErrors).toEqual([]);
+  });
+
+  it('records tables that returned 5xx in tablesWithErrors but continues the walk', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(lineageResponse({}, 500))
+      .mockResolvedValueOnce(
+        lineageResponse({ upstreams: [tableInfo('workspace', 'bronze', 'mro_raw')] }),
+      );
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.bronze.flaky_table',
+      'workspace.silver.mro_clean',
+    ]);
+
+    expect(result.tablesWithErrors).toEqual(['workspace.bronze.flaky_table']);
+    expect(result.edges).toEqual([
+      { sourceFullName: 'workspace.bronze.mro_raw', targetFullName: 'workspace.silver.mro_clean' },
+    ]);
+  });
+
+  it('records tables that threw a network error in tablesWithErrors', async () => {
+    fetchSpy.mockRejectedValueOnce(new Error('ENOTFOUND'));
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.silver.mro_clean',
+    ]);
+
+    expect(result.tablesWithErrors).toEqual(['workspace.silver.mro_clean']);
+    expect(result.edges).toEqual([]);
+  });
+
+  it('skips lineage entries missing any of catalog/schema/name', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      lineageResponse({
+        upstreams: [
+          { tableInfo: { catalog_name: 'workspace', schema_name: 'bronze' /* name missing */ } },
+          tableInfo('workspace', 'bronze', 'mro_raw'),
+        ],
+      }),
+    );
+
+    const result = await service.walkDatabricksLineage(makeDatabricksConnector(), [
+      'workspace.silver.mro_clean',
+    ]);
+
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].sourceFullName).toBe('workspace.bronze.mro_raw');
+  });
+
+  it('rejects missing host / missing credentialArn up front', async () => {
+    await expect(
+      service.walkDatabricksLineage(
+        makeDatabricksConnector({ connectionConfig: {} }),
+        ['workspace.silver.x'],
+      ),
+    ).rejects.toThrow(/connection_config\.host/);
+
+    await expect(
+      service.walkDatabricksLineage(
+        makeDatabricksConnector({ credentialArn: null }),
+        ['workspace.silver.x'],
+      ),
+    ).rejects.toThrow(/credentialArn/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
