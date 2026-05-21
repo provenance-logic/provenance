@@ -9,6 +9,94 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-061 — Cross-org information leak: org-scoped endpoints serve other-org data when the caller passes a different `:orgId` in the URL
+
+- **Severity:** High (cross-tenant information leak in production-shaped code paths; reproduced live on dev — not theoretical. Provenance's whole story is multi-tenant; this is OSR-blocking in spirit even if the marketing site doesn't say "we leak data across orgs.")
+- **Status:** Open
+- **Area:** `apps/api/src/governance/governance.controller.ts`, `apps/api/src/trust-score/trust-score.controller.ts`, and almost certainly the wider family of controllers that use `@Param('orgId')` directly (see Blast radius below).
+- **Discovered:** 2026-05-21, while probing endpoints during the [B-060 part 2](resolved.md#B-060-part-2-demo-smoke-testsh-layers-3-6-targeted-flat-endpoints-the-api-never-exposed) smoke-test rewrite. Flagged in passing in that PR's resolved.md entry; deserves its own filing.
+
+**Reproducible symptom.** Authenticate as `admin@acme.example.com` (JWT carries `provenance_org_id = <Acme>`). Call an org-scoped endpoint with **Beta Industries**' `orgId` in the URL. The API returns 200 with Beta's data.
+
+```
+# Acme JWT, Beta org id in URL — should be 403 (or at minimum return Acme data and ignore URL mismatch).
+GET /api/v1/organizations/<Beta>/governance/dashboard
+  → { "summary": { "totalPublished": 4, ... } }    # Beta's counts, not Acme's
+
+GET /api/v1/organizations/<Beta>/governance/effective-policies
+  → { "items": [ { "orgId": "<Beta>", ... }, ... ] }    # Actual Beta rows
+
+GET /api/v1/organizations/<Beta>/products/<Beta-product>/trust-score
+  → { "score": 0.66, "band": "fair", "org_id": "<Beta>", ... }    # Beta's trust score
+```
+
+The dashboard leaks aggregate counts. `/effective-policies` and `/trust-score` leak actual row content with the other org's UUID in the response.
+
+**Write side effect (worse).** Calling `/organizations/<Acme>/products/<Beta-product>/trust-score` — Acme orgId in URL, Beta product UUID — returns HTTP 200 with a freshly computed score whose response payload claims `org_id = <Acme>` for `product_id = <Beta-product>`. The trust-score service appears to compute and persist a new `observability.trust_score_history` row attributing a Beta product to Acme's tenant. Cross-org write, not just cross-org read. Has not been verified yet against the table contents but the response shape strongly suggests it.
+
+**Endpoints that handle correctly (also probed).** Same swap (Acme JWT, Beta orgId in URL) returned the caller's own data on:
+- `/organizations/<Beta>/access/grants` → items have `orgId = <Acme>` (URL ignored, JWT respected)
+- `/organizations/<Beta>/access/requests` → same
+- `/organizations/<Beta>/marketplace/products` → same
+
+So the gap is per-controller, not platform-wide.
+
+**Root cause.** Two controller patterns coexist in the codebase. Compare:
+
+```ts
+// access.controller.ts:50 — SAFE. Uses ctx.orgId (resolved from JWT).
+@Get('grants')
+listGrants(@ReqContext() ctx: RequestContext, ...) {
+  return this.accessService.listGrants(ctx.orgId, ...);
+}
+```
+
+```ts
+// governance.controller.ts:37 — LEAKY. Passes the URL :orgId straight through.
+@Get('dashboard')
+getDashboard(@Param('orgId') orgId: string) {
+  return this.governanceService.getDashboard(orgId);
+}
+```
+
+There is no controller-level check that `@Param('orgId') === ctx.orgId`. The `JwtAuthGuard` only verifies that the JWT carries a non-empty `provenance_org_id` claim — it does not compare it to the URL path parameter.
+
+**Why RLS didn't catch it.** The `OrgContextMiddleware` (`apps/api/src/database/org-context.middleware.ts`) sets `provenance.current_org_id` from `req.user.orgId` — the JWT's value, so far so good. But it uses `SELECT set_config(..., $1, true)` with `is_local=true`, which scopes the variable to the **current transaction**. The middleware runs on a fresh connection from the pool, then releases that connection. The service layer's subsequent `repository.find(...)` / `dataSource.query(...)` calls each acquire **different** connections from the same pool, where the session variable is not set, so `current_setting('provenance.current_org_id', true)::UUID` evaluates to NULL inside the RLS USING clause and the policy effectively becomes `org_id = NULL` (no rows) — except that several governance/trust-score queries appear to bypass RLS entirely or run as a role exempt from the policy.
+
+Either way, the *control-plane* tenancy invariant is currently leaning on application-layer authorization that some controllers honor and others don't, with no enforcement floor under it.
+
+**Blast radius (needs explicit audit, not assumed).** Controllers mounted at `/organizations/:orgId/...` that use `@Param('orgId')` and pass it through to the service — every one is a candidate until proven otherwise:
+
+- `governance/governance.controller.ts` — **confirmed leaky** (dashboard, effective-policies; assume all routes)
+- `trust-score/trust-score.controller.ts` — **confirmed leaky** (with likely write side effect)
+- `products/products.controller.ts`
+- `connectors/connectors.controller.ts`
+- `lineage/lineage.controller.ts`
+- `observability/slo.controller.ts`
+- `sample-data/sample-data.controller.ts`
+- Possibly `consent/consent.controller.ts` and `notifications/notifications.controller.ts` if any of their routes use `@Param('orgId')` directly rather than `ctx.orgId`
+
+`access`, `marketplace`, `governance/governance.controller.ts`'s ctx-using routes (if any), `products/products.controller.ts`'s ctx-using routes (if any) — the safe ones — use `ctx.orgId`. Mixed-mode is the worst case because the controller LOOKS safe at a glance.
+
+**Fix paths (not commitments — needs design pass).** Three options, increasing in robustness:
+
+1. **Guard at the controller boundary** — `JwtAuthGuard` (or a dedicated `OrgScopeGuard`) compares `request.params.orgId` to `request.user.orgId` for any route that has both, and returns 403 on mismatch. One place to enforce, no per-controller refactor. Doesn't fix the RLS gap below — but prevents cross-org calls from ever reaching the service layer.
+2. **Repair RLS-by-default** — fix `OrgContextMiddleware` (or move it to a Nest interceptor / typeorm connection lifecycle hook) so the session variable persists across the connections the request actually uses, OR migrate to a pattern where every service-layer query goes through a runner that explicitly scopes the connection. Defense in depth — even if a controller leaks, the database refuses to serve cross-org rows.
+3. **Both.** Almost certainly the right answer for OSR. Layer 1 is fast to ship and catches the wrong call before it touches the DB; layer 2 is the structural fix.
+
+**Recommended sequencing.** (1) first, as a single PR — small diff, immediately stops the bleed, includes an integration test that the cross-org calls now 403. Then (2) as a follow-up — much larger refactor, deserves its own design pass.
+
+**Verification scaffold for whichever fix lands.** Extend `infrastructure/scripts/demo-smoke-test.sh` layer 5 (or add a layer 5a) — call each `/organizations/<other-org>/...` endpoint with the smoke user's JWT and assert HTTP 403. This is the kind of test that's worth wiring into the planned CI job from the remaining open piece of B-060: regression on this exact bug is the highest-cost regression on the project.
+
+**Impact today.**
+
+- Provenance positions itself as a multi-tenant platform. This bug breaks that claim end-to-end on at least three confirmed endpoints — anyone authenticated as one org can read another org's governance posture, effective policies, and trust scores by typing a different UUID into the URL.
+- No fix is shipped yet. Workaround for any operator: **only run the platform with one tenant** until B-061 is closed. The smoke-test fix from PR #138 does not make this worse — it just used to be invisible because the smoke test never reached the leaky endpoints.
+
+**Pattern.** The `@Param('orgId')` controller pattern looks Type-Script-tidy ("explicit, typed param from the URL") but quietly bypasses the JWT identity that the whole tenant model depends on. Every new org-scoped controller is going to be tempted into this same pattern unless the platform makes the safe choice the easy one. Long-term fix is RLS-by-default plus a guard; short-term fix is the guard alone. The B-060 family of bugs taught the project that "operator tooling is part of the surface a phase ships" — B-061 is the analogue for tenant isolation: "the URL is part of the security surface a phase ships."
+
+---
+
 ## B-060 — Demo verification tooling drifted from the API surface; `demo-smoke-test.sh` layers 3–6 reference endpoints that don't exist
 
 - **Severity:** Medium (operator-facing tooling functionally broken; the *platform* works, but the scripts that verify it can't)
