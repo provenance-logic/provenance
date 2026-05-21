@@ -7,6 +7,7 @@ export { createKeycloakClient } from './keycloak-client.js';
 export { runSeed } from './runner.js';
 export { softReset, hardReset } from './reset.js';
 export { verify } from './verify.js';
+export { verifySoftReset } from './verify-soft-reset.js';
 export { seedOrgs } from './orgs/index.js';
 export { seedUsers } from './users/index.js';
 export { seedPolicies } from './policies/index.js';

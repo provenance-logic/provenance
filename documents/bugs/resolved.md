@@ -6,6 +6,34 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-060 (part 1) — `softReset` referenced columns and tables that don't exist in the live schema
+
+- **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)
+- **Severity:** was Medium (operator-facing tooling functionally broken since written; the *platform* worked but the script that freshens demo state could not run)
+- **Area:** `packages/seed/src/reset.ts`
+
+**Symptom.** `bash demo-reset.sh --soft` (which runs `pnpm --filter @provenance/seed seed:reset:soft`) had never completed successfully. The very first DELETE in the transaction threw `column "event_at" does not exist`, the transaction rolled back, and the operator was left with no working "freshen transactional state" path between rehearsals.
+
+**Root cause.** `softReset` was written against an earlier snapshot of the platform and never end-to-end exercised after the underlying schema evolved. Four of five DELETE statements were wrong:
+
+| `softReset` referenced | What actually exists |
+|---|---|
+| `audit.audit_log WHERE event_at` | column is `occurred_at` (V4) |
+| `observability.observability_snapshots` | **table does not exist** in any migration; closest analogue `governance.compliance_snapshots` (V8) is a daily aggregate, not transactional state |
+| `lineage.emission_events WHERE emitted_at` | table is `lineage.emission_log` (V9); column `emitted_at` is correct |
+| `access.access_requests WHERE created_at` | column is `requested_at` (V7) |
+| `observability.trust_score_history WHERE computed_at` | correct ✅ |
+
+**Fix.** Rewrote `softReset` against the current schema. Dropped the `observability_snapshots` DELETE entirely since the table never existed and `compliance_snapshots` is the wrong shape for a 24h-window wipe (it's a date-keyed daily roll-up). The remaining four DELETEs now match V4 / V7 / V9 / V11.
+
+**Test added.** New CLI subcommand `seed:verify:soft-reset` (`packages/seed/src/verify-soft-reset.ts`) that inserts paired sentinel rows in each of the four target tables — one inside the 24h window, one 48 hours old — then runs `softReset` and asserts that the recent rows were deleted and the older rows survived. Cleans up its own sentinels at start and end so re-runs are idempotent. Verified end-to-end against the EC2 dev stack: passes on back-to-back invocations. Intended for CI once the demo-smoke-test work lands; runnable on-demand by an operator with `pnpm --filter @provenance/seed seed:verify:soft-reset`.
+
+**Pattern.** Operator tooling is part of the surface a phase ships. Scripts that exist without being run regularly are scripts that don't work. `softReset` is the second piece of demo-verification tooling found dead in the last week (B-050 was the smoke test's layer 2). Both fit the same shape: written against the API/schema as it was at the time, never re-exercised when the underlying surface evolved.
+
+The companion smoke-test fix (`demo-smoke-test.sh` layers 3–6 reference phantom flat-top-level endpoints; the API is multi-tenant) and the CI integration ("run the smoke test against a freshly-bootstrapped demo on every merge to main") remain open as the rest of [B-060](open.md#B-060).
+
+---
+
 ## B-050 — Smoke-test layer 2 step 3 hit a non-existent `/api/v1/organizations/me` route
 
 - **Resolved:** 2026-05-18 — fix PR pending (commit hash on merge)
