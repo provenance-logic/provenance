@@ -31,6 +31,19 @@ export interface WorkspaceWalkResult {
   tables: DiscoveredTable[];
 }
 
+export interface DiscoveredLineageEdge {
+  /**
+   * Source side of the edge — the upstream table whose data flows
+   * INTO the target. Format: catalog.schema.table.
+   */
+  sourceFullName: string;
+  /**
+   * Target side of the edge — the downstream table that derives from
+   * the source. Format: catalog.schema.table.
+   */
+  targetFullName: string;
+}
+
 @Injectable()
 export class ConnectorProbeService {
   constructor(private readonly secretsManager: SecretsManagerService) {}
@@ -523,6 +536,86 @@ export class ConnectorProbeService {
     return all.map((t) => t.name);
   }
 
+  /**
+   * Pulls lineage edges for each discovered table from Unity Catalog's
+   * Lineage Tracking API. Returns a deduplicated list of edges, where
+   * each edge is (source_full_name → target_full_name). Used by the
+   * discovery crawl to project system-discovered lineage into Neo4j.
+   *
+   * - GET /api/2.0/lineage-tracking/table-lineage?table_name=X returns
+   *   both upstreams AND downstreams for table X. Walking every table
+   *   in the discovered set thus produces edges twice (once from each
+   *   side); the dedupe pass collapses them.
+   * - Tables outside the discovered set still appear in lineage if they
+   *   feed into one of the discovered tables — those are kept (the
+   *   upstream `workspace.bronze.raw_mro_inputs → workspace.silver.mro_clean`
+   *   edge is part of the lineage graph even if the bronze table wasn't
+   *   in catalogScope).
+   * - The Lineage Tracking API returns 404 or an empty body for tables
+   *   that have no lineage yet (workspace freshly seeded, no query
+   *   activity through SQL Warehouses). Both are treated as "no edges"
+   *   silently — not every table has lineage and that's normal.
+   * - Network/HTTP errors on individual table calls are logged but do
+   *   not abort the walk; the orchestration layer counts errors and
+   *   surfaces them on the crawl event row.
+   */
+  async walkDatabricksLineage(
+    connector: ConnectorEntity,
+    tableFullNames: string[],
+  ): Promise<{ edges: DiscoveredLineageEdge[]; tablesWithErrors: string[] }> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error('Databricks connector requires connection_config.host');
+    }
+    const token = await this.resolveDatabricksToken(connector);
+    if (!token) {
+      throw new Error(
+        'Databricks connector requires a credentialArn pointing at a secret with shape {"token":"dapi..."}',
+      );
+    }
+    const auth = { Authorization: `Bearer ${token}` };
+
+    // (sourceFullName, targetFullName) string keys for dedupe.
+    const seen = new Set<string>();
+    const edges: DiscoveredLineageEdge[] = [];
+    const tablesWithErrors: string[] = [];
+
+    for (const fullName of tableFullNames) {
+      try {
+        const url = `${host}/api/2.0/lineage-tracking/table-lineage?table_name=${encodeURIComponent(fullName)}`;
+        const response = await fetch(url, { headers: auth });
+        if (response.status === 404) continue; // no lineage yet — normal
+        if (!response.ok) {
+          tablesWithErrors.push(fullName);
+          continue;
+        }
+        const body = (await response.json()) as DatabricksLineageResponse;
+        for (const up of body.upstreams ?? []) {
+          const upName = extractFullName(up.tableInfo);
+          if (!upName) continue;
+          const key = `${upName}\x1f${fullName}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            edges.push({ sourceFullName: upName, targetFullName: fullName });
+          }
+        }
+        for (const dn of body.downstreams ?? []) {
+          const dnName = extractFullName(dn.tableInfo);
+          if (!dnName) continue;
+          const key = `${fullName}\x1f${dnName}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            edges.push({ sourceFullName: fullName, targetFullName: dnName });
+          }
+        }
+      } catch {
+        tablesWithErrors.push(fullName);
+      }
+    }
+
+    return { edges, tablesWithErrors };
+  }
+
   private async uc_paged<T>(
     host: string,
     auth: Record<string, string>,
@@ -562,6 +655,28 @@ interface UnityCatalogColumn {
   position?: number;
   nullable?: boolean;
   comment?: string | null;
+}
+
+interface DatabricksLineageTableInfo {
+  name?: string;
+  catalog_name?: string;
+  schema_name?: string;
+}
+
+interface DatabricksLineageEntry {
+  tableInfo?: DatabricksLineageTableInfo;
+}
+
+interface DatabricksLineageResponse {
+  upstreams?: DatabricksLineageEntry[];
+  downstreams?: DatabricksLineageEntry[];
+}
+
+function extractFullName(info?: DatabricksLineageTableInfo): string | null {
+  if (!info) return null;
+  const { catalog_name: c, schema_name: s, name: n } = info;
+  if (!c || !s || !n) return null;
+  return `${c}.${s}.${n}`;
 }
 
 interface UnityCatalogTableResponse {

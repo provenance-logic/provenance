@@ -14,6 +14,7 @@ import { DiscoveryCrawlEventEntity } from './entities/discovery-crawl-event.enti
 import { CapabilityManifestEntity } from './entities/capability-manifest.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
+import { LineageModule } from '../lineage/lineage.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
@@ -28,6 +29,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
       RoleAssignmentEntity,
     ]),
     KafkaModule,
+    LineageModule,
     NotificationsModule,
   ],
   providers: [
