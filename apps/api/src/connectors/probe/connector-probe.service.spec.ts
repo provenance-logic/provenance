@@ -501,3 +501,143 @@ describe('ConnectorProbeService.introspectDatabricks (B-063 Layer 2)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Workspace walk (Layer 3a) — Unity Catalog catalog/schema/table enumeration
+// ---------------------------------------------------------------------------
+
+describe('ConnectorProbeService.walkDatabricksWorkspace (B-063 Layer 3a)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = mockSecretsManager();
+    secretsManager.getSecretValue.mockResolvedValue({ token: VALID_PAT });
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // Helpers to script multi-call sequences. The walker fans out across
+  // catalogs/schemas/tables, so tests need ordered fetch responses.
+
+  function queueResponses(...responses: Array<{ status?: number; body: unknown }>) {
+    for (const r of responses) {
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify(r.body), { status: r.status ?? 200 }),
+      );
+    }
+  }
+
+  // ---------- happy path ----------
+
+  it('walks scoped catalogs, schemas, and tables and returns the discovered set', async () => {
+    // Scope to one catalog ("workspace") → no /catalogs call, jump to schemas.
+    queueResponses(
+      { body: { schemas: [{ name: 'bronze' }, { name: 'silver' }, { name: 'information_schema' }] } },
+      { body: { tables: [{ name: 'mro_raw' }] } }, // bronze
+      { body: { tables: [{ name: 'mro_clean' }, { name: 'mro_enriched' }] } }, // silver
+    );
+
+    const result = await service.walkDatabricksWorkspace(makeDatabricksConnector(), ['workspace']);
+
+    expect(result.catalogs).toEqual(['workspace']);
+    expect(result.schemasWalked).toBe(2); // information_schema skipped
+    expect(result.tables).toEqual([
+      { catalog: 'workspace', schema: 'bronze', name: 'mro_raw', fullName: 'workspace.bronze.mro_raw' },
+      { catalog: 'workspace', schema: 'silver', name: 'mro_clean', fullName: 'workspace.silver.mro_clean' },
+      { catalog: 'workspace', schema: 'silver', name: 'mro_enriched', fullName: 'workspace.silver.mro_enriched' },
+    ]);
+  });
+
+  it('lists catalogs when no scope is provided', async () => {
+    queueResponses(
+      { body: { catalogs: [{ name: 'workspace' }, { name: 'samples' }] } },
+      { body: { schemas: [{ name: 'bronze' }] } },
+      { body: { tables: [{ name: 'mro_raw' }] } },
+      { body: { schemas: [] } }, // samples has no schemas the principal can see
+    );
+
+    const result = await service.walkDatabricksWorkspace(makeDatabricksConnector());
+
+    expect(result.catalogs).toEqual(['workspace', 'samples']);
+    expect(result.tables.map((t) => t.fullName)).toEqual(['workspace.bronze.mro_raw']);
+  });
+
+  it('skips the information_schema schema entirely', async () => {
+    queueResponses(
+      { body: { schemas: [{ name: 'information_schema' }, { name: 'gold' }] } },
+      { body: { tables: [{ name: 'fact_readiness' }] } },
+    );
+
+    const result = await service.walkDatabricksWorkspace(makeDatabricksConnector(), ['workspace']);
+
+    expect(result.schemasWalked).toBe(1);
+    expect(result.tables.map((t) => t.fullName)).toEqual(['workspace.gold.fact_readiness']);
+  });
+
+  it('returns an empty result when a scoped catalog has zero schemas', async () => {
+    queueResponses({ body: { schemas: [] } });
+
+    const result = await service.walkDatabricksWorkspace(makeDatabricksConnector(), ['empty_catalog']);
+
+    expect(result.catalogs).toEqual(['empty_catalog']);
+    expect(result.schemasWalked).toBe(0);
+    expect(result.tables).toEqual([]);
+  });
+
+  // ---------- pagination ----------
+
+  it('follows next_page_token to aggregate paged table lists', async () => {
+    queueResponses(
+      { body: { schemas: [{ name: 'silver' }] } },
+      {
+        body: {
+          tables: [{ name: 'a' }, { name: 'b' }],
+          next_page_token: 'TOKEN_PAGE_2',
+        },
+      },
+      { body: { tables: [{ name: 'c' }] } }, // no token = done
+    );
+
+    const result = await service.walkDatabricksWorkspace(makeDatabricksConnector(), ['workspace']);
+
+    expect(result.tables.map((t) => t.name)).toEqual(['a', 'b', 'c']);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const [page2Url] = fetchSpy.mock.calls[2] as [string];
+    expect(page2Url).toContain('page_token=TOKEN_PAGE_2');
+  });
+
+  // ---------- failures bubble ----------
+
+  it('throws when a Unity Catalog page returns non-OK', async () => {
+    queueResponses(
+      { body: { schemas: [{ name: 'silver' }] } },
+      { status: 403, body: { error_code: 'PERMISSION_DENIED', message: 'no access' } },
+    );
+
+    await expect(
+      service.walkDatabricksWorkspace(makeDatabricksConnector(), ['workspace']),
+    ).rejects.toThrow(/HTTP 403/);
+  });
+
+  it('rejects missing host / missing credentialArn up front', async () => {
+    await expect(
+      service.walkDatabricksWorkspace(
+        makeDatabricksConnector({ connectionConfig: {} }),
+      ),
+    ).rejects.toThrow(/connection_config\.host/);
+
+    await expect(
+      service.walkDatabricksWorkspace(
+        makeDatabricksConnector({ credentialArn: null }),
+      ),
+    ).rejects.toThrow(/credentialArn/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

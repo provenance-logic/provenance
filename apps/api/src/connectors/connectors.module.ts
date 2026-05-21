@@ -8,6 +8,7 @@ import { ConnectorEntity } from './entities/connector.entity.js';
 import { ConnectorHealthEventEntity } from './entities/connector-health-event.entity.js';
 import { SourceRegistrationEntity } from './entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from './entities/schema-snapshot.entity.js';
+import { DiscoveryCrawlEventEntity } from './entities/discovery-crawl-event.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
@@ -19,6 +20,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
       ConnectorHealthEventEntity,
       SourceRegistrationEntity,
       SchemaSnapshotEntity,
+      DiscoveryCrawlEventEntity,
       RoleAssignmentEntity,
     ]),
     KafkaModule,

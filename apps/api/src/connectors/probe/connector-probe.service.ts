@@ -18,6 +18,19 @@ export interface SchemaInferenceResult {
   rowEstimate: number | null;
 }
 
+export interface DiscoveredTable {
+  catalog: string;
+  schema: string;
+  name: string;
+  fullName: string; // catalog.schema.name
+}
+
+export interface WorkspaceWalkResult {
+  catalogs: string[];
+  schemasWalked: number;
+  tables: DiscoveredTable[];
+}
+
 @Injectable()
 export class ConnectorProbeService {
   constructor(private readonly secretsManager: SecretsManagerService) {}
@@ -409,6 +422,136 @@ export class ConnectorProbeService {
       columnCount: columns.length,
       rowEstimate: null,
     };
+  }
+
+  /**
+   * Walks a Databricks workspace via Unity Catalog REST and returns every
+   * table the connector's principal can see. Used by ConnectorsService's
+   * discovery crawl to pre-populate source registrations.
+   *
+   * - catalogScope (optional) limits the walk to a named subset. When
+   *   absent or empty, walks every catalog the principal can list. The
+   *   built-in `information_schema` schema is always skipped — it's
+   *   metadata-about-metadata, not user-facing data.
+   * - Pagination uses Unity Catalog's `next_page_token`.
+   * - Network errors and HTTP failures bubble; the orchestration layer
+   *   records them on the discovery_crawl_events row.
+   */
+  async walkDatabricksWorkspace(
+    connector: ConnectorEntity,
+    catalogScope?: string[],
+  ): Promise<WorkspaceWalkResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error('Databricks connector requires connection_config.host');
+    }
+    const token = await this.resolveDatabricksToken(connector);
+    if (!token) {
+      throw new Error(
+        'Databricks connector requires a credentialArn pointing at a secret with shape {"token":"dapi..."}',
+      );
+    }
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const catalogs = await this.uc_listCatalogs(host, auth, catalogScope);
+    const tables: DiscoveredTable[] = [];
+    let schemasWalked = 0;
+
+    for (const catalog of catalogs) {
+      const schemas = await this.uc_listSchemas(host, auth, catalog);
+      for (const schema of schemas) {
+        if (schema === 'information_schema') continue;
+        schemasWalked++;
+        const tableNames = await this.uc_listTables(host, auth, catalog, schema);
+        for (const name of tableNames) {
+          tables.push({
+            catalog,
+            schema,
+            name,
+            fullName: `${catalog}.${schema}.${name}`,
+          });
+        }
+      }
+    }
+
+    return { catalogs, schemasWalked, tables };
+  }
+
+  private async uc_listCatalogs(
+    host: string,
+    auth: Record<string, string>,
+    catalogScope?: string[],
+  ): Promise<string[]> {
+    if (catalogScope && catalogScope.length > 0) {
+      return catalogScope;
+    }
+    const all = await this.uc_paged<{ name: string }>(
+      host,
+      auth,
+      '/api/2.1/unity-catalog/catalogs',
+      'catalogs',
+    );
+    return all.map((c) => c.name);
+  }
+
+  private async uc_listSchemas(
+    host: string,
+    auth: Record<string, string>,
+    catalog: string,
+  ): Promise<string[]> {
+    const all = await this.uc_paged<{ name: string }>(
+      host,
+      auth,
+      `/api/2.1/unity-catalog/schemas?catalog_name=${encodeURIComponent(catalog)}`,
+      'schemas',
+    );
+    return all.map((s) => s.name);
+  }
+
+  private async uc_listTables(
+    host: string,
+    auth: Record<string, string>,
+    catalog: string,
+    schema: string,
+  ): Promise<string[]> {
+    const all = await this.uc_paged<{ name: string }>(
+      host,
+      auth,
+      `/api/2.1/unity-catalog/tables?catalog_name=${encodeURIComponent(catalog)}&schema_name=${encodeURIComponent(schema)}`,
+      'tables',
+    );
+    return all.map((t) => t.name);
+  }
+
+  private async uc_paged<T>(
+    host: string,
+    auth: Record<string, string>,
+    pathAndQuery: string,
+    arrayKey: 'catalogs' | 'schemas' | 'tables',
+  ): Promise<T[]> {
+    const sep = pathAndQuery.includes('?') ? '&' : '?';
+    const aggregated: T[] = [];
+    let pageToken: string | undefined;
+    // Cap at 50 pages defensively — Databricks pages at ~100 items by
+    // default, so this allows up to ~5000 items in a single resource list
+    // before we bail out and force the operator to scope down.
+    for (let i = 0; i < 50; i++) {
+      const url = `${host}${pathAndQuery}${pageToken ? `${sep}page_token=${encodeURIComponent(pageToken)}` : ''}`;
+      const response = await fetch(url, { headers: auth });
+      if (!response.ok) {
+        const snippet = await safeReadSnippet(response);
+        throw new Error(
+          `Unity Catalog returned HTTP ${response.status} for ${pathAndQuery}${snippet ? `: ${snippet}` : ''}`,
+        );
+      }
+      const body = (await response.json()) as Record<string, unknown>;
+      const items = (body[arrayKey] as T[] | undefined) ?? [];
+      aggregated.push(...items);
+      const next = body.next_page_token;
+      if (typeof next !== 'string' || next.length === 0) break;
+      pageToken = next;
+    }
+    return aggregated;
   }
 }
 

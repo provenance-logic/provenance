@@ -10,6 +10,7 @@ import { ConnectorEntity } from '../entities/connector.entity.js';
 import { ConnectorHealthEventEntity } from '../entities/connector-health-event.entity.js';
 import { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from '../entities/schema-snapshot.entity.js';
+import { DiscoveryCrawlEventEntity } from '../entities/discovery-crawl-event.entity.js';
 import { ConnectorProbeService } from '../probe/connector-probe.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
@@ -123,6 +124,7 @@ describe('ConnectorsService', () => {
         { provide: getRepositoryToken(ConnectorHealthEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(SourceRegistrationEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(SchemaSnapshotEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(DiscoveryCrawlEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(RoleAssignmentEntity), useFactory: mockRepo },
         { provide: ConnectorProbeService, useFactory: mockProbeService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducer },

@@ -12,6 +12,10 @@ import { ConnectorEntity } from './entities/connector.entity.js';
 import { ConnectorHealthEventEntity } from './entities/connector-health-event.entity.js';
 import { SourceRegistrationEntity } from './entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from './entities/schema-snapshot.entity.js';
+import {
+  DiscoveryCrawlEventEntity,
+  type DiscoveryCrawlStatus,
+} from './entities/discovery-crawl-event.entity.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
@@ -35,6 +39,27 @@ import type {
   ConnectorHealthEventMessage,
 } from '@provenance/types';
 
+// Layer 3a (B-063): operator-facing record of a single crawl invocation.
+// Promote to packages/types in the follow-up PR that adds the OpenAPI spec
+// for the crawl endpoints.
+export interface DiscoveryCrawlEventRecord {
+  id: string;
+  orgId: string;
+  connectorId: string;
+  triggeredBy: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: DiscoveryCrawlStatus;
+  catalogsWalked: number;
+  schemasWalked: number;
+  tablesFound: number;
+  sourcesCreated: number;
+  sourcesSkipped: number;
+  snapshotsCaptured: number;
+  snapshotsFailed: number;
+  errorMessage: string | null;
+}
+
 @Injectable()
 export class ConnectorsService {
   private readonly logger = new Logger(ConnectorsService.name);
@@ -48,6 +73,8 @@ export class ConnectorsService {
     private readonly sourceRepo: Repository<SourceRegistrationEntity>,
     @InjectRepository(SchemaSnapshotEntity)
     private readonly snapshotRepo: Repository<SchemaSnapshotEntity>,
+    @InjectRepository(DiscoveryCrawlEventEntity)
+    private readonly crawlEventRepo: Repository<DiscoveryCrawlEventEntity>,
     @InjectRepository(RoleAssignmentEntity)
     private readonly roleRepo: Repository<RoleAssignmentEntity>,
     private readonly probeService: ConnectorProbeService,
@@ -400,6 +427,159 @@ export class ConnectorsService {
       }),
     );
     return this.toSchemaSnapshot(snapshot);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Discovery crawl (B-063 Layer 3a)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Walks the connector's external system, registers any new sources it
+   * finds, and captures a schema snapshot for each. Idempotent —
+   * pre-existing sources (matched by sourceRef) are skipped. Records the
+   * outcome in `connectors.discovery_crawl_events` so the operator has a
+   * history of what each crawl produced.
+   *
+   * Today only Databricks is supported (via Unity Catalog REST). Other
+   * connector types will get a NotSupported error until their walkers ship.
+   *
+   * Scheduled re-crawls (Temporal-driven) are a separate follow-on PR;
+   * this method only handles the operator-triggered case.
+   */
+  async crawlConnector(
+    orgId: string,
+    connectorId: string,
+    triggeredBy: string,
+  ): Promise<DiscoveryCrawlEventRecord> {
+    const connector = await this.connectorRepo.findOne({
+      where: { id: connectorId, orgId },
+    });
+    if (!connector) throw new NotFoundException(`Connector ${connectorId} not found`);
+    if (connector.connectorType !== 'databricks') {
+      throw new BadRequestException(
+        `Discovery crawl is not yet implemented for connector type '${connector.connectorType}'. See B-063.`,
+      );
+    }
+
+    let event = await this.crawlEventRepo.save(
+      this.crawlEventRepo.create({
+        orgId,
+        connectorId,
+        triggeredBy,
+        status: 'running' as DiscoveryCrawlStatus,
+      }),
+    );
+
+    try {
+      const catalogScope = Array.isArray(connector.connectionConfig.catalogs)
+        ? (connector.connectionConfig.catalogs as string[])
+        : undefined;
+      const walk = await this.probeService.walkDatabricksWorkspace(connector, catalogScope);
+
+      let sourcesCreated = 0;
+      let sourcesSkipped = 0;
+      let snapshotsCaptured = 0;
+      let snapshotsFailed = 0;
+
+      for (const table of walk.tables) {
+        const existing = await this.sourceRepo.findOne({
+          where: { connectorId, sourceRef: table.fullName },
+        });
+        if (existing) {
+          sourcesSkipped++;
+          continue;
+        }
+        const source = await this.sourceRepo.save(
+          this.sourceRepo.create({
+            orgId,
+            connectorId,
+            sourceRef: table.fullName,
+            sourceType: 'table',
+            displayName: table.name,
+            description: `Discovered from ${table.catalog}.${table.schema}`,
+            registeredBy: triggeredBy,
+          }),
+        );
+        sourcesCreated++;
+        try {
+          const inferred = await this.probeService.inferSchema(connector, source);
+          await this.snapshotRepo.save(
+            this.snapshotRepo.create({
+              orgId,
+              sourceRegistrationId: source.id,
+              connectorId,
+              schemaDefinition: inferred.schemaDefinition,
+              columnCount: inferred.columnCount,
+              rowEstimate: inferred.rowEstimate,
+              capturedBy: triggeredBy,
+            }),
+          );
+          snapshotsCaptured++;
+        } catch (err) {
+          this.logger.warn(
+            `Discovery crawl snapshot failed for ${table.fullName}: ${(err as Error).message}`,
+          );
+          snapshotsFailed++;
+        }
+      }
+
+      event.completedAt = new Date();
+      event.status = (snapshotsFailed > 0 ? 'partial' : 'succeeded') as DiscoveryCrawlStatus;
+      event.catalogsWalked = walk.catalogs.length;
+      event.schemasWalked = walk.schemasWalked;
+      event.tablesFound = walk.tables.length;
+      event.sourcesCreated = sourcesCreated;
+      event.sourcesSkipped = sourcesSkipped;
+      event.snapshotsCaptured = snapshotsCaptured;
+      event.snapshotsFailed = snapshotsFailed;
+      event = await this.crawlEventRepo.save(event);
+      return this.toDiscoveryCrawlEvent(event);
+    } catch (err) {
+      event.completedAt = new Date();
+      event.status = 'failed' as DiscoveryCrawlStatus;
+      event.errorMessage = (err as Error).message ?? 'Unknown error';
+      await this.crawlEventRepo.save(event);
+      throw new BadRequestException(
+        `Discovery crawl failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  async listCrawlEvents(
+    orgId: string,
+    connectorId: string,
+    limit: number,
+  ): Promise<DiscoveryCrawlEventRecord[]> {
+    const exists = await this.connectorRepo.findOne({
+      where: { id: connectorId, orgId },
+    });
+    if (!exists) throw new NotFoundException(`Connector ${connectorId} not found`);
+    const items = await this.crawlEventRepo.find({
+      where: { connectorId, orgId },
+      order: { startedAt: 'DESC' },
+      take: limit,
+    });
+    return items.map((e) => this.toDiscoveryCrawlEvent(e));
+  }
+
+  private toDiscoveryCrawlEvent(e: DiscoveryCrawlEventEntity): DiscoveryCrawlEventRecord {
+    return {
+      id: e.id,
+      orgId: e.orgId,
+      connectorId: e.connectorId,
+      triggeredBy: e.triggeredBy,
+      startedAt: e.startedAt.toISOString(),
+      completedAt: e.completedAt ? e.completedAt.toISOString() : null,
+      status: e.status,
+      catalogsWalked: e.catalogsWalked,
+      schemasWalked: e.schemasWalked,
+      tablesFound: e.tablesFound,
+      sourcesCreated: e.sourcesCreated,
+      sourcesSkipped: e.sourcesSkipped,
+      snapshotsCaptured: e.snapshotsCaptured,
+      snapshotsFailed: e.snapshotsFailed,
+      errorMessage: e.errorMessage,
+    };
   }
 
   // ---------------------------------------------------------------------------
