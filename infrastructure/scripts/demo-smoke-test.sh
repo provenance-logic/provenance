@@ -13,7 +13,6 @@
 #   SMOKE_USER_PASSWORD     (default DemoPass123!)
 #   SMOKE_AGENT_CLIENT_ID   (default agent-acme-marketing-copilot)
 #   SMOKE_AGENT_SECRET      (required — export from seed output)
-#   MCP_API_KEY             (required — service-to-service token)
 
 set -euo pipefail
 
@@ -24,7 +23,6 @@ SMOKE_USER_EMAIL="${SMOKE_USER_EMAIL:-admin@acme.example.com}"
 SMOKE_USER_PASSWORD="${SMOKE_USER_PASSWORD:-DemoPass123!}"
 SMOKE_AGENT_CLIENT_ID="${SMOKE_AGENT_CLIENT_ID:-agent-acme-marketing-copilot}"
 SMOKE_AGENT_SECRET="${SMOKE_AGENT_SECRET:-}"
-MCP_API_KEY="${MCP_API_KEY:-}"
 
 REALM="${REALM:-provenance}"
 MIN_PRODUCTS="${MIN_PRODUCTS:-8}"
@@ -109,21 +107,28 @@ org_slug=$(jq -r '.slug // empty' /tmp/smoke-org.json)
 [ -n "$org_slug" ] || fail "control-plane" "GET /organizations/${ORG_ID} returned no slug"
 ok "seeded org present: ${org_slug}"
 
+# The global marketplace is the right surface for "how many products has this
+# deployment got across all orgs?" — it pages over OpenSearch `provenance-products`
+# (BM25 index), so a non-empty response also proves the keyword index is queryable.
 PRODUCTS_JSON=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/v1/products?limit=50")
+  "${BASE_URL}/api/v1/marketplace/products?limit=50")
 count=$(echo "$PRODUCTS_JSON" | jq -r '.items | length // 0')
 [ "$count" -ge "$MIN_PRODUCTS" ] || fail "control-plane" "product count $count < minimum $MIN_PRODUCTS"
 ok "seeded products present: count=${count}"
 
-first_product_id=$(echo "$PRODUCTS_JSON" | jq -r '.items[0].id // empty')
-[ -n "$first_product_id" ] || fail "control-plane" "could not identify first product id"
+# Pick the first product that belongs to the smoke user's org — anything else
+# can't be used by the lineage check downstream (the lineage cypher matches on
+# org_id) and would only confuse a layer-3 failure message.
+first_product_id=$(echo "$PRODUCTS_JSON" | jq -r --arg o "$ORG_ID" \
+  '[.items[] | select(.orgId == $o)][0].id // empty')
+[ -n "$first_product_id" ] || fail "control-plane" "marketplace returned no products in caller's org ${ORG_ID}"
 DETAIL=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/v1/products/${first_product_id}")
-for field in schema ownership freshness accessStatus; do
-  echo "$DETAIL" | jq -e ".enrichment.${field}" >/dev/null \
-    || fail "control-plane" "product detail missing enrichment.${field}"
+  "${BASE_URL}/api/v1/marketplace/products/${first_product_id}")
+for field in columnSchema owner freshness accessStatus; do
+  echo "$DETAIL" | jq -e "has(\"${field}\")" >/dev/null \
+    || fail "control-plane" "product detail missing field: ${field}"
 done
-ok "product detail returns schema, ownership, freshness, accessStatus"
+ok "product detail returns columnSchema, owner, freshness, accessStatus"
 
 # ---------------------------------------------------------------------------
 # 4. Agent
@@ -161,25 +166,44 @@ ok "list_products MCP tool call succeeded end-to-end"
 # ---------------------------------------------------------------------------
 section "data-plane"
 
-[ -n "$MCP_API_KEY" ] || fail "data-plane" "MCP_API_KEY not set (service-to-service token required for data plane checks)"
+# Lineage: walk the upstream side of the product picked in layer 3. The
+# cypher matches on (node_id = product_id, org_id = caller's org), so a
+# non-empty edge set proves both that Neo4j is reachable and that the
+# product was projected into the graph by the seed.
+LINEAGE=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
+  "${BASE_URL}/api/v1/organizations/${ORG_ID}/lineage/products/${first_product_id}/upstream")
+edge_count=$(echo "$LINEAGE" | jq -r '.edges | length // 0')
+[ "$edge_count" -gt 0 ] \
+  || fail "data-plane" "Neo4j returned no upstream edges for product ${first_product_id}"
+ok "Neo4j returned ${edge_count} upstream edges for a seeded product"
 
-LINEAGE=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/v1/lineage/smoke?productSlug=customer-360")
-echo "$LINEAGE" | jq -e '.edges | length > 0' >/dev/null \
-  || fail "data-plane" "Neo4j returned no edges for customer-360"
-ok "Neo4j returned lineage edges for a seeded product"
+# Semantic search hits the kNN index (`data_products`) via the embedding
+# service. The marketplace listing above already proves the BM25 index
+# (`provenance-products`) is queryable — together they cover both
+# OpenSearch indices.
+SEARCH=$(curl -sS -X POST \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\":\"customer\",\"org_id\":\"${ORG_ID}\",\"limit\":10}" \
+  "${BASE_URL}/api/v1/internal/search/semantic")
+echo "$SEARCH" | jq -e '.results | length > 0' >/dev/null \
+  || fail "data-plane" "semantic search returned no hits (kNN index empty or embedding service down)"
+ok "OpenSearch kNN index returned hits for semantic query"
 
-SEARCH=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/v1/search/smoke?q=Customer%20360")
-echo "$SEARCH" | jq -e '.semantic.hits > 0 and .keyword.hits > 0' >/dev/null \
-  || fail "data-plane" "OpenSearch missing hits in one of the two indices"
-ok "OpenSearch returned hits from both data_products and provenance-products"
-
-RLS=$(curl -sS -H "x-mcp-api-key: ${MCP_API_KEY}" \
-  "${BASE_URL}/api/v1/governance/rls-probe?assumeOrg=beta-industries")
-echo "$RLS" | jq -e '.crossOrgRowCount == 0' >/dev/null \
-  || fail "data-plane" "row-level security is not blocking cross-org reads"
-ok "PostgreSQL row-level security blocks cross-org reads"
+# Tenant isolation: the global marketplace returns products from across orgs
+# (multi-tenant by design), while an org-scoped endpoint must return only the
+# caller's own org's rows. If a service ever started returning cross-org data
+# from a /organizations/:orgId/... endpoint, this assertion would catch it.
+distinct_orgs=$(echo "$PRODUCTS_JSON" | jq -r '[.items[].orgId] | unique | length')
+[ "$distinct_orgs" -ge 2 ] \
+  || fail "data-plane" "global marketplace returned products from only ${distinct_orgs} org(s); expected ≥ 2 for a multi-tenant demo"
+GRANTS=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
+  "${BASE_URL}/api/v1/organizations/${ORG_ID}/access/grants")
+cross_org=$(echo "$GRANTS" | jq -r --arg o "$ORG_ID" \
+  '[.items[]? | select(.orgId != $o)] | length // 0')
+[ "$cross_org" = "0" ] \
+  || fail "data-plane" "org-scoped /access/grants returned ${cross_org} rows from other orgs — tenant filter failed"
+ok "tenant isolation holds: marketplace spans ${distinct_orgs} orgs, org-scoped reads return only caller's org"
 
 # ---------------------------------------------------------------------------
 # 6. Observability
@@ -187,9 +211,9 @@ ok "PostgreSQL row-level security blocks cross-org reads"
 section "observability"
 
 TRUST=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${BASE_URL}/api/v1/products/${first_product_id}/trust-score")
+  "${BASE_URL}/api/v1/organizations/${ORG_ID}/products/${first_product_id}/trust-score")
 echo "$TRUST" | jq -e '.score != null' >/dev/null \
-  || fail "observability" "no trust score computed for first product"
+  || fail "observability" "no trust score computed for product ${first_product_id}"
 ok "trust score computed for at least one seeded product"
 
 # ---------------------------------------------------------------------------

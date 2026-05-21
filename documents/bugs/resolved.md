@@ -6,6 +6,50 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-060 (part 2) — `demo-smoke-test.sh` layers 3–6 targeted flat endpoints the API never exposed
+
+- **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)
+- **Severity:** was Medium (the pre-demo green-light gate was effectively unavailable at the layer that matters most — control plane, data plane, observability)
+- **Area:** `infrastructure/scripts/demo-smoke-test.sh`
+
+**Symptom.** Layers 3, 5, and 6 of the smoke test called endpoints that don't exist on the multi-tenant API. Every call returned 404 (or a NestJS-shaped JSON 404 for path-mismatched routes), the script's first `fail` exited non-zero, and an operator running it before a demo got no signal beyond "infrastructure and auth are up" (layers 1 and 2, the latter recently fixed by B-050).
+
+**Endpoint-by-endpoint mapping.**
+
+| Smoke test was calling | What actually exists | What the rewrite uses |
+|---|---|---|
+| `GET /api/v1/products?limit=50` | `/api/v1/organizations/:orgId/domains/:domainId/products`; or the global `/marketplace/products` | `/api/v1/marketplace/products?limit=50` (global, JWT-auth, also exercises the BM25 `provenance-products` index) |
+| `GET /api/v1/products/:id` (assertions on `enrichment.schema`, `enrichment.ownership`, `enrichment.freshness`, `enrichment.accessStatus`) | `/api/v1/marketplace/products/:id` returns a flat shape — `columnSchema`, `owner`, `freshness`, `accessStatus` (no `enrichment.*` wrapper) | `/api/v1/marketplace/products/:id` with assertions remapped to the flat shape |
+| `GET /api/v1/lineage/smoke?productSlug=customer-360` | `/api/v1/organizations/:orgId/lineage/products/:productNodeId/{upstream,downstream,impact}`; `productNodeId` is the postgres product UUID (verified by probing the cypher) | `/api/v1/organizations/:orgId/lineage/products/${first_product_id}/upstream`, asserting `.edges.length > 0` |
+| `GET /api/v1/search/smoke?q=Customer%20360` (with `x-mcp-api-key`) | `POST /api/v1/internal/search/semantic`, JWT-auth, body `{query, org_id, limit}` | Same; asserts `.results.length > 0`. The BM25 index assertion was folded into the layer-3 marketplace listing — `listAllProducts` already queries OpenSearch `provenance-products`, so a non-empty marketplace response is implicit BM25 coverage |
+| `GET /api/v1/governance/rls-probe?assumeOrg=...` (with `x-mcp-api-key`) | No such endpoint and no API-layer diagnostic of postgres RLS exists | Replaced with a *behavioral* tenant-isolation check: assert the global marketplace spans ≥ 2 distinct `orgId`s, AND that `/organizations/${ORG_ID}/access/grants` returns 0 rows where `orgId !== ${ORG_ID}` |
+| `GET /api/v1/products/:id/trust-score` | `/api/v1/organizations/:orgId/products/:productId/trust-score` | Same |
+
+Side cleanups:
+
+- Picked the first product in layer 3 from the caller's *own* org (was unfiltered) — the lineage cypher matches on `(node_id, org_id)`, so a product from a different org would silently return zero edges and confuse layer-5 failure messages.
+- Removed the `MCP_API_KEY` precondition; nothing in layers 3–6 uses it anymore (the original phantom `/smoke` and `/rls-probe` subpaths were the only consumers).
+
+**Root cause.** Same shape as B-060 part 1 (`softReset`) and B-050 (`/organizations/me`): the smoke test was written against an earlier flat API design that was re-architected into the multi-tenant `/organizations/:orgId/...` shape (rationale obvious in hindsight — RLS, federation, ADR-001 control/data plane split). The test never followed. Nobody ran it end-to-end against the real product surface after the API moved, so the drift was invisible until the 2026-05-17 demo rehearsal.
+
+**Decision: behavioral checks over phantom diagnostic endpoints.** The bug doc proposed an alternative — *add* `/smoke` and `/rls-probe` endpoints to the API and have the test call them. This would have worked, but it replicates the anti-pattern B-050 already pushed back on: adding permanent API surface for a single bash caller. Behavioral checks against existing endpoints are honest about what the platform actually does, won't decay quietly when an internal service is refactored, and don't grow a "test-only" appendix on the API. Same principle the B-050 fix applied to `/me`.
+
+**Verification.** Direct curl-based execution of each layer-3/5/6 path against the local stack on `fix/b-060-smoke-test-layers`:
+
+```
+== LAYER 3 ==  marketplace lists 16 products (>= MIN_PRODUCTS=8); detail has all 4 fields
+== LAYER 5 ==  lineage upstream: 25 edges; semantic search: 10 hits; marketplace spans 2 orgs; tenant filter holds (0 cross-org rows)
+== LAYER 6 ==  trust score for first product: 0.8
+```
+
+End-to-end run via the script blocked on an unrelated environment issue on this dev box (`provenance_principal_id` user attribute missing from local Keycloak realm import — separate from B-060 scope; the realm-export *does* declare the mapper). Per-endpoint verification stands in.
+
+**Pattern.** Operator tooling is part of the surface a phase ships. The smoke test is the operator's eyes — if it talks to a different platform than the one shipping, the operator is blind. Three pieces of demo-verification tooling have now been found dead in the last week (B-050 layer 2, B-060 part 1 softReset, B-060 part 2 smoke layers 3–6), all the same shape. The last open piece of B-060 — wire the smoke test into CI so the next API/schema move surfaces drift on the next merge — is the only structural fix that prevents this from happening a fourth time.
+
+**Out-of-scope finding flagged during the rewrite.** When probing endpoints to choose a replacement for the `/rls-probe` step, calling `GET /api/v1/organizations/<other-org>/governance/dashboard` as a smoke user from a different org returned the *other org's* dashboard stats — not the caller's. Other org-scoped endpoints behave correctly (e.g. `/organizations/<other-org>/access/grants` returned the caller's grants, ignoring the URL mismatch). The dashboard appears to be reading the URL `:orgId` rather than the JWT claim, which is a cross-org information leak. Out of scope for B-060; flagged here so a future bug filing has the trail.
+
+---
+
 ## B-060 (part 1) — `softReset` referenced columns and tables that don't exist in the live schema
 
 - **Resolved:** 2026-05-21 — fix PR pending (commit hash on merge)
