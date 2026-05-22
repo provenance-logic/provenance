@@ -6,6 +6,29 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-066 — Legacy connection reference UI now visually distinguishes from properly requested references
+
+- **Resolved:** 2026-05-22
+- **PR:** [#153](https://github.com/provenance-logic/provenance/pull/153)
+- **Severity:** Low (no live legacy refs on most installs — only matters on installs that ran the F12.25 legacy-agent-migration endpoint)
+- **Area:** `apps/web/src/features/agents/AgentDetailPage.tsx` (`ReferencesTab`)
+
+**What was wrong.** The data carried the distinction (`caused_by='legacy_migration'` per V28; distinct notification category `connection_reference_legacy_provisioned`), and CLAUDE.md's "Claude Code Patterns" required visual distinction in the UI. The frontend rendered legacy refs identically to properly-requested ones. An agent operator looking at the connection-references tab on an agent's detail page couldn't tell at-a-glance which refs were 30-day legacy stubs (expiring, non-renewable) versus properly-approved refs — they'd have to inspect the `caused_by` field individually. `implementation-status.md` Domain 12 explicitly listed this as deferred, which directly conflicted with the CLAUDE.md rule.
+
+**Fix.** `ReferencesTab` now branches on `r.causedBy === 'legacy_migration'`:
+
+- The whole card gets distinctive styling: amber background (`bg-amber-50`), dashed amber border (`border-2 border-dashed border-amber-300`) — visually obvious at a glance, not just a small badge in the corner.
+- A `Legacy · non-renewable` pill chip appears next to the state badge with an explanatory `title` tooltip.
+- An amber explanatory paragraph appears in the body: "This is a legacy compatibility reference created at Domain 12 enforcement activation. It cannot be renewed — submit a proper connection-reference request before the expiry date above to continue access."
+
+Non-legacy refs keep their existing white-card styling unchanged.
+
+**Verification.** Typecheck + lint clean. Visual verification could not be performed on the dev box — no legacy refs exist there because the F12.25 legacy-migration endpoint hasn't been run. To verify visually after merge: either run the F12.25 endpoint on a dev environment to provision real legacy refs, or set `caused_by='legacy_migration'` on a row in `consent.connection_references` via a direct SQL update against a dev DB.
+
+**Pattern.** When CLAUDE.md "Claude Code Patterns" describes a UI rule and `implementation-status.md` lists the corresponding frontend work as deferred, either ship the frontend work or move the rule. Same family as B-064 / B-065 / B-067 — keeping the two source-of-truth docs in sync against the code.
+
+---
+
 ## B-063 Layer 4 — Databricks lineage projection from Unity Catalog → Neo4j
 
 - **Resolved:** 2026-05-21 (partial — B-063 itself remains Open as the 9 other connector types are still register-only)

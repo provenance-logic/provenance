@@ -412,32 +412,6 @@ Either rewrite the security rule to distinguish tiers, or move the Kong claim to
 
 ---
 
-## B-066 — Legacy connection reference UI doesn't visually distinguish from properly requested references
-
-- **Severity:** Low (no live legacy refs on most installs — only matters on installs that ran the F12.25 legacy-agent-migration endpoint; the rule is vacuously honored until then)
-- **Status:** Open
-- **Area:** `CLAUDE.md` "Claude Code Patterns" ("Legacy compatibility references are visually distinct and non-renewable"); `apps/web/src/features/agents/`
-- **Discovered:** 2026-05-22, by the claim-vs-code audit (`documents/audits/claim-vs-code-2026-05-22.md`). Originally documented as a deferred Domain 12 item in `implementation-status.md`; the audit surfaced that the deferral conflicts with a CLAUDE.md operational rule.
-
-**Symptom.** CLAUDE.md states as an operational rule: *"Legacy compatibility references are visually distinct and non-renewable. The auto-provisioned 30-day legacy-compatibility references created at Domain 12 enforcement activation must be rendered differently in the UI from properly requested references."*
-
-The data carries the distinction (`caused_by='legacy_migration'` per V28; distinct notification category `connection_reference_legacy_provisioned`). The frontend does NOT render the distinction — both legacy and properly-requested refs render the same in the UI today. `implementation-status.md` Domain 12 explicitly lists this as a deferred item: *"Frontend UI distinguishing legacy refs from properly requested refs (the data carries `caused_by` and a distinctive use-case category; the UI renders them the same today)."*
-
-The CLAUDE.md rule and the implementation-status.md deferral are inconsistent — one says "must be rendered differently" as a binding pattern; the other says "deferred, not OSR-blocking." Both can't be right.
-
-**Impact today.** Limited — the F12.25 legacy-migration endpoint is operator-invoked, and most installs haven't run it. On an install that DID run it, an agent operator looking at the connection references list cannot tell at-a-glance which refs are 30-day legacy stubs (expiring, non-renewable) versus properly-approved refs. They would have to inspect the `caused_by` field individually.
-
-**Fix paths.**
-
-1. **Ship the UI distinction.** Add a `legacy` badge or distinctive styling + an explicit "legacy 30-day compatibility ref — non-renewable" label to legacy rows. Small frontend change. Closes the inconsistency by making the rule true.
-2. **Move the rule out of CLAUDE.md.** If shipping the UI distinction isn't a near-term priority, demote the rule from "Claude Code Patterns" (which reads as in-force) to a deferred-features list or remove it entirely. Closes the inconsistency by removing the false rule.
-
-Pick during the 2026-05-24 weekend overhaul, or whenever the Domain 12 deferred items get re-prioritized.
-
-**Pattern.** Same family as B-064 / B-065: CLAUDE.md operational rules read as in-force invariants; when implementation-status.md explicitly defers an item, the two should be reconciled — either ship the rule or remove the claim.
-
----
-
 ## B-067 — Security rule "Agent access scope enforced at infrastructure level" doesn't match code
 
 - **Severity:** Low (the layer that's actually enforcing — application-level — is real, verified, and doing the work; the misleading claim is in the doc only, not a security gap)
