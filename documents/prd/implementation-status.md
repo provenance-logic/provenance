@@ -288,12 +288,14 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 9: Data Product Detail Completeness
 
+> **Status reconciled 2026-05-22.** The four P1 rows below previously read "Not implemented — Phase 5 - Blocker," which directly contradicted the "Recently-resolved OSR-track work" entry crediting PRs #43/#45/#46/#47 for shipping P1 completeness. The reconciliation: the summary was right; this table was stale. Verified against `apps/api/src/products/product-enrichment.service.ts` and `apps/web/src/features/discovery/ProductDetailPage.tsx`. Surfaced by the claim-vs-code audit (`documents/audits/claim-vs-code-2026-05-22.md`).
+
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
-| Column-level schema (Priority 1) | Not implemented | Phase 5 - Blocker |
-| Ownership and stewardship (Priority 1) | Not implemented | Phase 5 - Blocker |
-| Data freshness signals (Priority 1) | Not implemented | Phase 5 - Blocker |
-| Access status for requesting principal (Priority 1) | Not implemented | Phase 5 - Blocker |
+| Column-level schema (Priority 1) | Implemented (via port contracts) | `PortsTab` at `ProductDetailPage.tsx:541-562` renders a real columns table extracted from `port.contractSchema` via `extractFieldsFromContract` — field name, type, required, description. Port contract schemas became real JSON Schema definitions in PR #46. **Note:** the *connector-discovered* path via `ProductEnrichmentService.resolveColumnSchema` returns null pending a product-to-source-registration FK — that's a follow-up enrichment, not a P1 gap; consumers see columns today via declared contracts. |
+| Ownership and stewardship (Priority 1) | Implemented | `ProductEnrichmentService.resolveOwner` + `resolveDomainTeam` return real principal + domain + lead data; `OverviewTab` Ownership panel renders product owner + email + domain team name + lead at `ProductDetailPage.tsx:145-169`. Wired in PR #47. |
+| Data freshness signals (Priority 1) | Partial | `resolveFreshness` queries the latest active SLO declaration of `sloType='freshness'` and its most recent evaluation; `FreshnessPanel` (`ProductDetailPage.tsx:209-`) renders Within-SLO/Stale status + sloType + measuredValue + evaluatedAt. Sufficient signal for a consumer to judge whether the data is current per the producer's declared SLO. **Stub remaining:** `lastRefreshedAt` is hardcoded to null in the service; UI falls back to "Not yet observed." Populating it requires tying connector lineage emission or source-registration timestamps into the freshness payload. Not OSR-blocking; the SLO-based path delivers visible freshness signal today. |
+| Access status for requesting principal (Priority 1) | Implemented | `resolveAccessStatus` resolves to granted / pending / denied / not_requested with grantedAt + expiresAt; `AccessTab` renders the status at `ProductDetailPage.tsx:595, 654-658`. |
 | Data quality signals (Priority 2) | Not implemented | Phase 5 |
 | Versioning and change history (Priority 2) | Not implemented | Phase 5 |
 | Contractual and compliance (Priority 2) | Not implemented | Phase 5 |
