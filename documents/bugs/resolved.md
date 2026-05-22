@@ -6,6 +6,23 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-008 — Request Access button hidden for product owner on dashboard product detail
+
+- **Resolved:** 2026-05-22
+- **PR:** [#155](https://github.com/provenance-logic/provenance/pull/155)
+- **Severity:** Medium
+- **Area:** `apps/web/src/features/publishing/ProductDetail.tsx`
+
+**What was wrong.** The dashboard product detail page rendered the "Request Access" button for any published product, including products owned by the viewing principal. The marketplace product detail page handled this case correctly (`product.ownerPrincipalId === ctx.principalId` → suppress request CTA). Dashboard didn't.
+
+**Fix.** Added `useAuth().principalId` to the dashboard ProductDetail and gated the `RequestAccessPanel` on `principalId !== product.ownerPrincipalId`. When the viewer IS the owner, surface an explanatory line instead ("You own this product. Consumers who request access will be routed to you for approval.").
+
+**Did NOT fix in this PR — flagged for follow-up.** Same file (`ProductDetail.tsx:283` pre-fix) passes `isOwner={product.status === 'draft'}` to the port section. That's a wrong heuristic — it treats lifecycle state as a proxy for ownership, so port-management UI is visible on any draft product (even to non-owners) and hidden on owned non-draft products. Fixing it to a real principal check would expose port-editing affordances on published/deprecated/decommissioned products owned by the user, which may surface unfinished flows; left untouched until B-002 (the broader two-view ownership-state refactor) is taken on. The `isOwner` mislabel is more conservative than the B-008 surface but should be revisited.
+
+**Pattern.** Same family as B-008's official "proposed fix": both views (`features/publishing/ProductDetail.tsx` and `features/discovery/ProductDetailPage.tsx`) derive ownership state independently from `product.ownerPrincipalId` against `useAuth().principalId`. A shared `useProductAccessState(product, principal)` hook returning `{ owner | granted | pending | denied | not_requested }` would centralize this and prevent the next divergence. That's B-002's scope.
+
+---
+
 ## B-063 Layer 4 — Databricks lineage projection from Unity Catalog → Neo4j
 
 - **Resolved:** 2026-05-21 (partial — B-063 itself remains Open as the 9 other connector types are still register-only)
