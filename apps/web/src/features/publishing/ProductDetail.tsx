@@ -4,6 +4,7 @@ import { productsApi } from '../../shared/api/products.js';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { accessApi } from '../../shared/api/access.js';
 import { ApiError } from '../../shared/api/client.js';
+import { useAuth } from '../../auth/AuthProvider.js';
 import type {
   DataProduct,
   Domain,
@@ -107,6 +108,7 @@ interface ChecklistItem {
 export function ProductDetail() {
   const { orgId, domainId, productId } =
     useParams<{ orgId: string; domainId: string; productId: string }>();
+  const { principalId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [product, setProduct] = useState<DataProduct | null>(null);
@@ -268,9 +270,17 @@ export function ProductDetail() {
         />
       )}
 
-      {/* Request access — only for published products */}
-      {product.status === 'published' && (
+      {/* Request access — only for published products, and only when the viewer
+          is NOT the product owner (B-008). The marketplace product detail page
+          renders this branch correctly too; both views still derive ownership
+          independently (B-002 / two-view inconsistency remains open). */}
+      {product.status === 'published' && principalId !== product.ownerPrincipalId && (
         <RequestAccessPanel product={product} orgId={orgId!} />
+      )}
+      {product.status === 'published' && principalId === product.ownerPrincipalId && (
+        <div className="mb-8 rounded-md bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-600">
+          You own this product. Consumers who request access will be routed to you for approval.
+        </div>
       )}
 
       {/* Ports */}
