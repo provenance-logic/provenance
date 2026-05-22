@@ -286,49 +286,72 @@ function ReferencesTab({ references }: { references: ConnectionReference[] | nul
   }
   return (
     <ul className="space-y-2">
-      {references.map((r) => (
-        <li key={r.id} className="bg-white border border-slate-200 rounded p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Link
-                  to={`/marketplace/${r.orgId}/${r.productId}`}
-                  className="text-sm font-semibold text-slate-900 hover:text-brand-700"
-                >
-                  Product {r.productId.slice(0, 8)}…
-                </Link>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    r.state === 'active'    ? 'bg-green-100 text-green-800' :
-                    r.state === 'pending'   ? 'bg-amber-100 text-amber-800' :
-                    r.state === 'suspended' ? 'bg-orange-100 text-orange-800' :
-                                              'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  {r.state}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-slate-700">
-                <span className="text-slate-500">Use case:</span>{' '}
-                {r.useCaseCategory}
-              </p>
-              <p className="mt-1 text-sm text-slate-700 italic">
-                "{r.purposeElaboration}"
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                Requested {formatRelativeTime(r.requestedAt)}
-                {r.approvedAt && <> · approved {formatRelativeTime(r.approvedAt)}</>}
-                {' · '}expires {formatRelativeTime(r.expiresAt)}
-              </p>
-              {r.denialReason && (
-                <p className="mt-1 text-xs text-red-700">
-                  Denial reason: {r.denialReason}
+      {references.map((r) => {
+        const isLegacy = r.causedBy === 'legacy_migration';
+        return (
+          <li
+            key={r.id}
+            className={`rounded p-4 ${
+              isLegacy
+                ? 'bg-amber-50 border-2 border-dashed border-amber-300'
+                : 'bg-white border border-slate-200'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Link
+                    to={`/marketplace/${r.orgId}/${r.productId}`}
+                    className="text-sm font-semibold text-slate-900 hover:text-brand-700"
+                  >
+                    Product {r.productId.slice(0, 8)}…
+                  </Link>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full ${
+                      r.state === 'active'    ? 'bg-green-100 text-green-800' :
+                      r.state === 'pending'   ? 'bg-amber-100 text-amber-800' :
+                      r.state === 'suspended' ? 'bg-orange-100 text-orange-800' :
+                                                'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {r.state}
+                  </span>
+                  {isLegacy && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-semibold uppercase tracking-wide"
+                      title="Auto-provisioned legacy compatibility reference (F12.25). Non-renewable — when this expires the agent must submit a proper connection-reference request to continue access. Created at Domain 12 enforcement activation to keep existing agent-product grants working through the transition."
+                    >
+                      Legacy · non-renewable
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-sm text-slate-700">
+                  <span className="text-slate-500">Use case:</span>{' '}
+                  {r.useCaseCategory}
                 </p>
-              )}
+                <p className="mt-1 text-sm text-slate-700 italic">
+                  "{r.purposeElaboration}"
+                </p>
+                <p className="mt-2 text-xs text-slate-500">
+                  Requested {formatRelativeTime(r.requestedAt)}
+                  {r.approvedAt && <> · approved {formatRelativeTime(r.approvedAt)}</>}
+                  {' · '}expires {formatRelativeTime(r.expiresAt)}
+                </p>
+                {isLegacy && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    This is a legacy compatibility reference created at Domain 12 enforcement activation. It cannot be renewed — submit a proper connection-reference request before the expiry date above to continue access.
+                  </p>
+                )}
+                {r.denialReason && (
+                  <p className="mt-1 text-xs text-red-700">
+                    Denial reason: {r.denialReason}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
