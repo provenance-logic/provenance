@@ -79,6 +79,35 @@ jobs:
           KEYCLOAK_CLIENT_ID: provenance-api
 
   # ---------------------------------------------------------------------------
+  # Tests — Web frontend unit tests (Vitest + React Testing Library)
+  # Mirrors test-api: same setup-node + pnpm install pattern, runs the web
+  # package's `test` script which invokes `vitest run` in headless mode.
+  # ---------------------------------------------------------------------------
+  test-web:
+    name: Test Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build types
+        run: pnpm turbo run build --filter=@provenance/types
+
+      - name: Run Web tests
+        run: pnpm turbo run test --filter=@provenance/web
+
+  # ---------------------------------------------------------------------------
   # Build Docker images (verify they compile — no push on PRs)
   # ---------------------------------------------------------------------------
   build-images:
