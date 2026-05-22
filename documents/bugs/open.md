@@ -281,23 +281,6 @@ Domain owners see one shape of truth while consumers see another, leading to con
 
 ---
 
-## B-005 — Decommissioned products still visible in domain dashboard
-
-- **Severity:** Low
-- **Status:** Open
-- **Area:** Publishing / lifecycle
-- **Environment:** EC2 dev (`https://dev.provenancelogic.com`)
-
-**Symptom.** "Phase 4b Verification Product" was decommissioned but still appears in the domain dashboard product list. The marketplace correctly hides decommissioned products from consumers, but domain owners see the full lifecycle history (including decommissioned rows) in the authoring surface.
-
-**Root cause (suspected).** `apps/web/src/features/publishing/DomainDashboard.tsx` calls `productsApi.list(...)` without passing a `status` filter, and the API returns every row regardless of lifecycle state. The marketplace path filters server-side to `published | deprecated` only.
-
-**Proposed fix.** Either (a) hide decommissioned rows by default in the domain dashboard with an "Include decommissioned" toggle, or (b) visually demote decommissioned rows (greyed out, grouped at the bottom) so they remain discoverable for audit purposes without cluttering the primary workflow.
-
-Related to the broader Domain 9 lifecycle-visibility gap noted in CLAUDE.md (Phase 5 walkthrough findings).
-
----
-
 ## B-006 — Add Port UI does not enforce contract schema on output ports
 
 - **Severity:** Medium
