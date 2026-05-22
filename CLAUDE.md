@@ -121,17 +121,23 @@ provenance-platform/
 
 ## Database Schemas (PostgreSQL)
 
+> **Reconciled 2026-05-22 against actual migrations** (`apps/api/migrations/V1`–`V31`). Tables listed below match what `\dt` would show. Two earlier "planned" tables (`discovery_coverage_scores`, `observability_snapshots`) were removed pending the 2026-05-24 weekend overhaul: the discovery scoring framework that referenced the first is part of the B-063 conversation; no observability-snapshot mechanism was ever built. Four other names in earlier versions of this list (`domain_extensions`, `roles`, `port_contracts`, `use_case_declarations`) were never separate tables — the data is carried in JSONB columns or enum-like fields on existing tables; the inline annotations below name where. The `consent_records` projection table also doesn't exist; F12.11's audit-log-as-projection design covers it (see implementation-status.md Domain 12).
+>
+> Surfaced by `documents/audits/claim-vs-code-2026-05-22.md` (B-064).
+
 | Schema | Key Tables | Notes |
 | --- | --- | --- |
-| organizations | orgs, domains, domain_extensions, governance_configs | org_id on all tables for tenant isolation |
-| identity | principals, roles, role_assignments, agent_identities, agent_trust_classifications | Keycloak is auth source; PostgreSQL stores platform-specific metadata |
-| products | data_products, product_versions, port_declarations, port_contracts, lifecycle_events | Versions are immutable records |
-| connectors | connectors, connector_health_events, source_registrations, schema_snapshots, **capability_manifests, discovery_crawl_events, discovery_coverage_scores** | Credentials stored as Secrets Manager ARN only — never raw values |
-| governance | policy_schemas, policy_versions, effective_policies, compliance_states, exceptions, grace_periods | Policy artifacts stored as JSONB |
-| access | access_grants, access_requests, approval_events | Consumer-product access with expiration tracking |
-| consent | connection_references, use_case_declarations, consent_records, connection_reference_outbox | org_id on every table for tenant isolation. Per-use-case consent layer composing with (not replacing) access grants. Outbox table drives Redpanda `connection_reference.state` publication for cache invalidation at the Agent Query Layer. See ADR-005 through ADR-008. |
-| observability | slo_declarations, slo_evaluations, trust_score_history, observability_snapshots | Partitioned by org_id and time |
-| audit | audit_log | Append-only. Never updated or deleted. Partitioned by month. |
+| organizations | orgs, domains, governance_configs | org_id on all tables for tenant isolation. Domain extensions are not a separate table; they're represented by `scope_type='domain_extension'` rows in `governance.effective_policies`. |
+| identity | principals, role_assignments, agent_identities, agent_trust_classifications, invitations, principal_preferences | Keycloak is auth source; PostgreSQL stores platform-specific metadata. Roles are not a separate table; they're an enum-like value on `role_assignments.role`. |
+| products | data_products, product_versions, port_declarations, lifecycle_events | Versions are immutable records. Port contracts are not a separate table; the contract is a `contract_schema JSONB` column on `port_declarations` (V3). |
+| connectors | connectors, connector_health_events, source_registrations, schema_snapshots, **capability_manifests, discovery_crawl_events** | Credentials stored as Secrets Manager ARN only — never raw values. **No `discovery_coverage_scores` table today** — coverage levels live as labels inside `capability_manifests.capabilities_doc` JSONB; whether a per-crawl scoring table ships is part of the B-063 weekend overhaul. |
+| governance | policy_schemas, policy_versions, effective_policies, compliance_states, compliance_snapshots, exceptions, grace_periods | Policy artifacts stored as JSONB. |
+| access | access_grants, access_requests, approval_events | Consumer-product access with expiration tracking. |
+| consent | connection_references, connection_reference_outbox | org_id on every table for tenant isolation. Per-use-case consent layer composing with (not replacing) access grants. Use-case declaration fields (`use_case_category`, `purpose_elaboration`, `scope`, `data_category_constraints`) are columns on `connection_references` — there's no separate `use_case_declarations` table. The immutable consent record projection (F12.11) is reconstructed from `audit.audit_log` rather than a separate `consent_records` table per implementation-status.md Domain 12. Outbox table drives Redpanda `connection_reference.state` publication for cache invalidation at the Agent Query Layer. See ADR-005 through ADR-008. |
+| lineage | emission_log | SQL audit trail of every lineage emit event with idempotency key. The primary lineage store is **Neo4j** (per Constraint 1); this table is the durable record that drives Neo4j projection and emission deduplication. |
+| observability | slo_declarations, slo_evaluations, trust_score_history | Tables partitioned by org_id and time where applicable. No `observability_snapshots` table exists today; the trust-score and SLO history tables together provide the snapshot-like read pattern. |
+| notifications | notifications, delivery_outbox, principal_preferences, principal_settings | Domain 11 routing + per-channel delivery + per-(principal, category) preferences. Same outbox pattern as `consent`. |
+| audit | audit_log | Append-only at the database role level (`REVOKE UPDATE, DELETE ON audit.audit_log FROM provenance_app`). Partitioned monthly through 2027-03. |
 
 ---
 
@@ -367,12 +373,14 @@ For the decision rationale see `documents/architecture/adr/ADR-004-demo-environm
 
 ## Security Rules (Never Violate)
 
-* `org_id` on every PostgreSQL table with row-level security enforced at database level
+> **Reconciled 2026-05-22 against actual code.** Earlier wording on two rules (TLS termination layer + agent scope enforcement layer) described the Phase 6 production target rather than the MVP. The rules below describe what's actually in force today; the Phase 6 hardening targets are called out separately. Surfaced by `documents/audits/claim-vs-code-2026-05-22.md` (B-065, B-067).
+
+* `org_id` on every PostgreSQL table with row-level security enabled at the database level. **Caveat (B-062):** the `provenance.current_org_id` session variable doesn't reliably persist across the connections a request uses; the controller-layer guard added in B-061 is what's actually preventing cross-org leaks today. RLS is a backstop, not the load-bearing check on the hot path. Closing B-062 is the Phase 6 hardening item.
 * Credentials stored as ARN references only — never logged, never cached beyond connection lifetime
-* Audit log is append-only — no UPDATE or DELETE at any level
-* Agent access scope enforced at infrastructure level, not application policy check only
-* TLS 1.3 enforced at Kong for all external traffic
-* All agent tokens carry `principal_type=agent` and `agent_id` claims validated on every request
+* Audit log is append-only — `REVOKE UPDATE, DELETE ON audit.audit_log` at the `provenance_app` role level (V4) plus `REVOKE UPDATE, DELETE ON ALL TABLES IN SCHEMA audit FROM PUBLIC`. Not just convention.
+* Agent access scope enforced by the AQL `ConnectionReferenceGuard` on every product-bound MCP tool call (`apps/agent-query/src/auth/connection-reference.guard.ts`). Application-level enforcement; the guard checks active grant AND active reference AND scope match, returning one of five distinct denial codes. **Infrastructure-level enforcement is a Phase 6 hardening item, not in force today** — there is no Kong plugin or network-policy layer enforcing scope.
+* TLS 1.3 enforced **at Caddy on hosted deployments** (dev / demo / production EC2) with Let's Encrypt certs. Local dev runs HTTP-only on `localhost:*` ports. The compose file ships a Kong service but it does not sit on the user-traffic data path today; **Kong-as-gateway is the Phase 6 / production-EKS target**, not the MVP reality.
+* All agent tokens carry `principal_type=agent` and `agent_id` claims validated on every request (`apps/agent-query/src/auth/auth.middleware.ts`)
 * Discovery crawl credentials use the same secrets manager pattern as connector credentials — never stored raw
 
 ---

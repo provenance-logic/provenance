@@ -6,6 +6,61 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-067 — Security rule "Agent access scope enforced at infrastructure level" doesn't match code
+
+- **Resolved:** 2026-05-22
+- **PR:** [#152](https://github.com/provenance-logic/provenance/pull/152)
+- **Severity:** Low (the actually-enforced layer — application-level — is real and verified; the misleading claim was in the doc only)
+- **Area:** `CLAUDE.md` "Security Rules (Never Violate)" section
+
+**What was wrong.** CLAUDE.md stated: *"Agent access scope enforced at infrastructure level, not application policy check only."* Reality (per implementation-status.md F6.8): app-level enforcement is real and doing the work; infra-level (Kong plugin / network policy) is not in force. The MVP's actual enforcement is the AQL `ConnectionReferenceGuard` at `apps/agent-query/src/auth/connection-reference.guard.ts` — application code in a NestJS process.
+
+**Fix.** Rewrote the security rule to name the actually-in-force layer (AQL `ConnectionReferenceGuard`) and flag infrastructure-level enforcement as Phase 6 hardening, not MVP.
+
+**Pattern.** Same family as B-064 / B-065 / B-066 — CLAUDE.md "Never Violate" rules drifted toward describing the Phase 6 production target rather than the MVP reality. Three of these were caught in the security-rules section alone by the 2026-05-22 audit; worth a section-by-section pass on remaining CLAUDE.md claims during the 2026-05-24 weekend overhaul.
+
+---
+
+## B-065 — Security rule "TLS 1.3 enforced at Kong" was misleading for MVP
+
+- **Resolved:** 2026-05-22
+- **PR:** [#152](https://github.com/provenance-logic/provenance/pull/152)
+- **Severity:** Medium (security-doc claim didn't match deployed reality; a contributor evaluating the platform's security posture would form a wrong mental model)
+- **Area:** `CLAUDE.md` "Security Rules (Never Violate)" section
+
+**What was wrong.** CLAUDE.md stated: *"TLS 1.3 enforced at Kong for all external traffic."* In reality, Kong is present in `docker-compose.yml` but the web frontend's `VITE_API_BASE_URL` defaults to `http://localhost:3001/api/v1` — bypassing Kong entirely. On hosted dev / demo deployments, **Caddy** terminates TLS with Let's Encrypt certs; Kong sits beside Caddy, not in front of it. Local dev runs HTTP-only. The Kong claim is accurate only for a hypothetical Phase 6 production EKS deployment.
+
+**Fix.** Replaced the Kong rule with a tier-aware statement: Caddy terminates TLS on hosted deployments, HTTP-only locally, Kong-as-gateway is the Phase 6 / production-EKS target.
+
+**Pattern.** CLAUDE.md's production-stack table already lists Kong honestly as "production"; the drift was in the security-rules section that didn't qualify the claim with a deployment tier. Aspirational claims and MVP-reality claims should be visually distinguishable, not interleaved in the same "Never Violate" list.
+
+---
+
+## B-064 — CLAUDE.md schema list named 7 tables that aren't actual tables
+
+- **Resolved:** 2026-05-22
+- **PR:** [#152](https://github.com/provenance-logic/provenance/pull/152)
+- **Severity:** Low (documentation-only — five of the seven are misnamed but the data exists embedded in other tables; two are truly missing)
+- **Area:** `CLAUDE.md` "Database Schemas (PostgreSQL)" section
+
+**What was wrong.** The schema list named 35 tables across 9 schemas. Migrations create 32. The other 7:
+
+| Named in CLAUDE.md | Reality |
+|---|---|
+| `organizations.domain_extensions` | `scope_type='domain_extension'` rows in `governance.effective_policies` (V5:90). |
+| `identity.roles` | Enum-like value within `identity.role_assignments.role`. |
+| `products.port_contracts` | `contract_schema JSONB` column on `products.port_declarations` (V3). |
+| `connectors.discovery_coverage_scores` | Doesn't exist — discovery coverage scoring framework has no storage backing. |
+| `consent.use_case_declarations` | Use-case fields are columns on `consent.connection_references` (V18). |
+| `consent.consent_records` | V18 comment said "will add audit.consent_records table" — never created. Audit log substitutes per F12.11. |
+| `observability.observability_snapshots` | Doesn't exist; no observability snapshot mechanism. |
+
+**Fix.** Replaced the schema list with one that matches what `\dt` would show. Inline annotations name where data for the misnamed-table concepts actually lives (e.g. JSONB columns, enum-like role values). The two truly-missing tables are removed pending the weekend overhaul: `discovery_coverage_scores` is part of the B-063 discovery framework conversation; `observability_snapshots` was never used and is dropped from the doc.
+
+**Pattern.** Schema-list drift is its own category of documentation rot — tables get renamed, data gets restructured into JSONB columns, projection tables get planned-but-never-built. A periodic "diff CLAUDE.md schema list against `\dt`" check would catch this class of drift at PR time rather than in an audit months later.
+
+---
+
 ## B-063 Layer 4 — Databricks lineage projection from Unity Catalog → Neo4j
 
 - **Resolved:** 2026-05-21 (partial — B-063 itself remains Open as the 9 other connector types are still register-only)
