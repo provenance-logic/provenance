@@ -274,7 +274,7 @@ function GrantsTab({ grants }: { grants: AccessGrant[] | null }) {
   );
 }
 
-function ReferencesTab({ references }: { references: ConnectionReference[] | null }) {
+export function ReferencesTab({ references }: { references: ConnectionReference[] | null }) {
   if (references === null) return <div className="text-sm text-slate-500">Loading…</div>;
   if (references.length === 0) {
     return (
