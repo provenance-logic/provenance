@@ -10,6 +10,7 @@ export function DomainDashboard() {
   const [products, setProducts] = useState<DataProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showDecommissioned, setShowDecommissioned] = useState(false);
 
   useEffect(() => {
     if (!orgId || !domainId) return;
@@ -27,6 +28,15 @@ export function DomainDashboard() {
 
   if (loading) return <PageShell><Spinner /></PageShell>;
   if (error) return <PageShell><ErrorBanner message={error} /></PageShell>;
+
+  // B-005: hide decommissioned products by default to keep the primary authoring
+  // workflow uncluttered. Surface a counter + toggle so they remain reachable for
+  // audit purposes — decommissioned products are immutable lifecycle records, not
+  // garbage, so they should never be invisible without a way to find them.
+  const decommissionedCount = products.filter((p) => p.status === 'decommissioned').length;
+  const visibleProducts = showDecommissioned
+    ? products
+    : products.filter((p) => p.status !== 'decommissioned');
 
   return (
     <PageShell>
@@ -53,11 +63,27 @@ export function DomainDashboard() {
         </div>
       </div>
 
-      {products.length === 0 ? (
-        <EmptyState />
+      {decommissionedCount > 0 && (
+        <div className="mb-4 flex items-center gap-3 text-xs text-slate-500">
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showDecommissioned}
+              onChange={(e) => setShowDecommissioned(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+            />
+            <span>
+              Show {decommissionedCount} decommissioned product{decommissionedCount === 1 ? '' : 's'}
+            </span>
+          </label>
+        </div>
+      )}
+
+      {visibleProducts.length === 0 ? (
+        <EmptyState hasHiddenDecommissioned={!showDecommissioned && decommissionedCount > 0} />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((product) => (
+          {visibleProducts.map((product) => (
             <ProductCard key={product.id} product={product} orgId={orgId!} domainId={domainId!} />
           ))}
         </div>
@@ -96,7 +122,18 @@ function ProductCard({ product, orgId, domainId }: { product: DataProduct; orgId
   );
 }
 
-function EmptyState() {
+function EmptyState({ hasHiddenDecommissioned = false }: { hasHiddenDecommissioned?: boolean }) {
+  if (hasHiddenDecommissioned) {
+    return (
+      <div className="text-center py-16">
+        <div className="text-4xl mb-4">📦</div>
+        <h3 className="text-sm font-medium text-slate-900">No active data products</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          All products in this domain are decommissioned. Toggle "Show decommissioned" above to see them, or create a new product.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="text-center py-16">
       <div className="text-4xl mb-4">📦</div>

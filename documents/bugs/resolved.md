@@ -6,6 +6,23 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-005 — Decommissioned products hidden by default in domain dashboard
+
+- **Resolved:** 2026-05-22
+- **PR:** [#154](https://github.com/provenance-logic/provenance/pull/154)
+- **Severity:** Low
+- **Area:** `apps/web/src/features/publishing/DomainDashboard.tsx`
+
+**What was wrong.** The domain dashboard's product grid called `productsApi.list(...)` without a status filter, so decommissioned products mixed in with active ones — cluttering the primary authoring workflow for domain owners. The marketplace path filters server-side to active lifecycle states only; the dashboard path did not.
+
+**Fix.** Frontend-side filter: decommissioned products hidden by default. When the domain has at least one decommissioned product, a checkbox above the grid surfaces the count and lets the owner opt in to seeing them (e.g. for audit lookback). When all products in the domain are decommissioned, the empty state explains why and points at the toggle.
+
+Chose the frontend-filter path over an API-side change because the dashboard already fetches all products in one call and the data volumes per domain are small. If an API-side `status_in` array filter becomes useful elsewhere (e.g. for paginated lookups against domains with thousands of decommissioned products), that's a separate generalization.
+
+**Pattern.** Lifecycle states that signal "done, archive" should be hidden by default in workflow-primary surfaces but discoverable via opt-in. Same shape as PR #45's marketplace lifecycle-visibility fix (which handled the consumer-facing surface); this PR handles the producer-facing surface.
+
+---
+
 ## B-066 — Legacy connection reference UI now visually distinguishes from properly requested references
 
 - **Resolved:** 2026-05-22
