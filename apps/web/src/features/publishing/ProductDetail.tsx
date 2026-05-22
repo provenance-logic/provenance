@@ -859,12 +859,22 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
     e.preventDefault();
     setError(null);
 
+    // B-006: contract schema is required for every output port (backend
+    // enforces this at publish time — `ProductsService.publishProduct` raises
+    // `UnprocessableEntityException` for missing contract schemas). Mirror
+    // that authoring-time so the feedback lands while the user is still in
+    // the form, not later when they try to publish.
+    if (portType === 'output' && contractSchemaRaw.trim() === '') {
+      setError('Output ports require a contract schema. Describe the columns or fields this port exposes.');
+      return;
+    }
+
     let contractSchema: Record<string, unknown> | undefined;
     if (contractSchemaRaw.trim()) {
       try {
         contractSchema = JSON.parse(contractSchemaRaw) as Record<string, unknown>;
       } catch {
-        setError('Must be valid JSON');
+        setError('Contract schema must be valid JSON');
         return;
       }
     }
