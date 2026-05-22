@@ -6,6 +6,25 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-006 — Add Port UI now enforces contract schema on output ports at authoring time
+
+- **Resolved:** 2026-05-22
+- **PR:** [#156](https://github.com/provenance-logic/provenance/pull/156)
+- **Severity:** Medium
+- **Area:** `apps/web/src/features/publishing/ProductDetail.tsx` (`AddPortForm.handleSubmit`)
+
+**What was wrong.** The Add Port form marked the contract schema field with a `required` cosmetic label but the submit handler didn't enforce non-empty schema for output ports. A user could declare an output port with no contract schema and only discover the gap later at publish time — the API's `ProductsService.publishProduct` correctly throws `UnprocessableEntityException("Output ports must have a contract schema: <names>")`, but by then the user has moved on from port authoring and the feedback is disconnected from the action.
+
+**Fix.** Added a guard at the top of `handleSubmit`: if `portType === 'output' && contractSchemaRaw.trim() === ''`, the form refuses to submit and surfaces an inline error ("Output ports require a contract schema. Describe the columns or fields this port exposes.") — keeping the form open with the user's data intact so they can fill it in.
+
+Also tightened the existing JSON-parse error from "Must be valid JSON" to "Contract schema must be valid JSON" so the user knows which field is at fault.
+
+Matches the backend's actual rule exactly: every output port (including `semantic_query_endpoint`) requires a contract schema. No exemptions on this surface — the connection-details rule does exempt semantic ports, but contract schema is universal for outputs.
+
+**Pattern.** Authoring-time validation should mirror publish-time validation so users see errors next to the action that caused them, not at a distant later step. Same family as the connection-details validation that shipped in Workstream B (F10.5). The bug entry's suggestion of a shared `validateOutputPortDraft(dto)` helper would generalize this pattern across Add Port + Edit Port forms — worth doing when Edit Port lands (B-007).
+
+---
+
 ## B-063 Layer 4 — Databricks lineage projection from Unity Catalog → Neo4j
 
 - **Resolved:** 2026-05-21 (partial — B-063 itself remains Open as the 9 other connector types are still register-only)

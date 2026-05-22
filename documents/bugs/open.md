@@ -298,21 +298,6 @@ Related to the broader Domain 9 lifecycle-visibility gap noted in CLAUDE.md (Pha
 
 ---
 
-## B-006 — Add Port UI does not enforce contract schema on output ports
-
-- **Severity:** Medium
-- **Status:** Open
-- **Area:** Publishing / port authoring
-
-**Symptom.** When adding an output port via the Add Port form in `apps/web/src/features/publishing/ProductDetail.tsx`, the contract schema textarea is not required. A user can save an output port with no contract schema, then only discover the gap at publish time when the API rejects with `Output ports must have a contract schema: <names>`. By that point the user has moved on from port authoring and the feedback is disconnected from the action that caused it.
-
-**Root cause.** The Add Port form marks the contract schema field with a `required` label prop (cosmetic) but the submit handler does not enforce non-empty contract schema for output ports before calling `productsApi.ports.declare()`. Backend validation in `ProductsService.publishProduct()` is correct and authoritative — the frontend simply doesn't mirror it at authoring time.
-
-**Proposed fix.** In the Add Port form submit handler, when `portType === 'output'`, reject submission (display inline error, keep the form open) if `contractSchemaRaw.trim() === ''` or the parsed schema lacks a `properties` / columns shape. Same check applies to any future Edit Port form. Consider refactoring the validation into a shared `validateOutputPortDraft(dto)` helper that both frontend and tests can share.
-
-This is analogous to — and should share scaffolding with — the new connection-details field validation added in Workstream B.
-
----
 
 ## B-007 — Ports not editable after creation
 
