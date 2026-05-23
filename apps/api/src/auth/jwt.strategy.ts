@@ -62,6 +62,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const isAgentToken = principalType === 'ai_agent' || payload.agent_id !== undefined;
     if (orgId && payload.sub && !isAgentToken) {
       try {
+        // @cross-tenant-by-design: keycloak_subject is globally unique; auth-strategy principal lookup pre-org-context-establishment
         const existing = await this.principalRepo.findOne({
           where: { keycloakSubject: payload.sub },
         });

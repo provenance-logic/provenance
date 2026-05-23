@@ -300,6 +300,7 @@ export class GovernanceService {
     const where = dto.productId
       ? { orgId, productId: dto.productId }
       : { orgId };
+    // @cross-tenant-by-design: false positive — `where` variable always includes orgId per the ternary above
     const states = await this.complianceStateRepo.find({ where });
     return {
       evaluated: states.length,

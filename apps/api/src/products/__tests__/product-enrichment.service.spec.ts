@@ -111,21 +111,21 @@ describe('ProductEnrichmentService', () => {
   describe('resolveOwner', () => {
     it('returns null when the principal is missing', async () => {
       principalRepo.findOne.mockResolvedValueOnce(null);
-      await expect(service.resolveOwner('missing')).resolves.toBeNull();
+      await expect(service.resolveOwner('org-1', 'missing')).resolves.toBeNull();
     });
 
     it('returns id, displayName, email when found', async () => {
       principalRepo.findOne.mockResolvedValueOnce({
         id: 'p-1', displayName: 'Alice', email: 'alice@example.com',
       });
-      await expect(service.resolveOwner('p-1')).resolves.toEqual({
+      await expect(service.resolveOwner('org-1', 'p-1')).resolves.toEqual({
         id: 'p-1', displayName: 'Alice', email: 'alice@example.com',
       });
     });
 
     it('returns null rather than throwing when the repo errors', async () => {
       principalRepo.findOne.mockRejectedValueOnce(new Error('db down'));
-      await expect(service.resolveOwner('p-1')).resolves.toBeNull();
+      await expect(service.resolveOwner('org-1', 'p-1')).resolves.toBeNull();
     });
   });
 
@@ -137,7 +137,7 @@ describe('ProductEnrichmentService', () => {
       principalRepo.findOne.mockResolvedValueOnce({
         id: 'p-owner', displayName: 'Dana', email: 'dana@example.com',
       });
-      await expect(service.resolveDomainTeam('domain-1')).resolves.toEqual({
+      await expect(service.resolveDomainTeam('org-1', 'domain-1')).resolves.toEqual({
         id: 'domain-1',
         name: 'Finance',
         ownerDisplayName: 'Dana',
@@ -147,7 +147,7 @@ describe('ProductEnrichmentService', () => {
 
     it('returns null when domain is missing', async () => {
       domainRepo.findOne.mockResolvedValueOnce(null);
-      await expect(service.resolveDomainTeam('nope')).resolves.toBeNull();
+      await expect(service.resolveDomainTeam('org-1', 'nope')).resolves.toBeNull();
     });
   });
 

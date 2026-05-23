@@ -30,12 +30,9 @@ module.exports = {
     // lookups (marketplace global reads, ensurePrincipal helpers, slug
     // uniqueness pre-creation, org-by-id, etc.).
     //
-    // Started at 'warn' so the audit's known Tier-3 sites (slo.service.ts
-    // evaluation queries, product-enrichment helpers, notifications.service.ts
-    // updates) surface without failing CI. Tighten to 'error' once those
-    // mechanical cleanup PRs land. See:
-    // documents/audits/service-org-filter-audit-2026-05-22.md
-    'provenance/require-org-filter': 'warn',
+    // Tightened to 'error' after the Tier-3 mechanical cleanup landed.
+    // See documents/audits/service-org-filter-audit-2026-05-22.md.
+    'provenance/require-org-filter': 'error',
   },
   overrides: [
     {

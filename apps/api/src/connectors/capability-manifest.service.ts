@@ -39,6 +39,7 @@ export class CapabilityManifestService {
   ) {}
 
   async listManifests(): Promise<CapabilityManifest[]> {
+    // @cross-tenant-by-design: capability_manifests is platform-wide metadata (no org_id column per V31)
     const rows = await this.repo.find({
       order: { connectorType: 'ASC', version: 'DESC' },
     });
@@ -53,6 +54,7 @@ export class CapabilityManifestService {
    * a real version comparator.
    */
   async getLatestForType(connectorType: string): Promise<CapabilityManifest | null> {
+    // @cross-tenant-by-design: capability_manifests is platform-wide metadata (no org_id)
     const row = await this.repo.findOne({
       where: { connectorType },
       order: { version: 'DESC' },

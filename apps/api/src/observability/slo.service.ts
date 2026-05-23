@@ -107,10 +107,11 @@ export class SloService {
     if (status === 'active') where['active'] = true;
     else if (status === 'inactive') where['active'] = false;
 
+    // @cross-tenant-by-design: false positive — `where` variable always includes orgId per its initializer above
     const items = await this.declarationRepo.find({ where, order: { createdAt: 'DESC' } });
 
     const enriched = await Promise.all(items.map(async (d) => {
-      const passRates = await this.computePassRates(d.id);
+      const passRates = await this.computePassRates(orgId, d.id);
       return { ...this.toDeclarationDto(d), ...passRates };
     }));
 
@@ -122,12 +123,12 @@ export class SloService {
     if (!decl) throw new NotFoundException(`SLO ${sloId} not found`);
 
     const evaluations = await this.evaluationRepo.find({
-      where: { sloId },
+      where: { sloId, orgId },
       order: { evaluatedAt: 'DESC' },
       take: 30,
     });
 
-    const passRates = await this.computePassRates(sloId);
+    const passRates = await this.computePassRates(orgId, sloId);
 
     return {
       ...this.toDeclarationDto(decl),
@@ -233,10 +234,11 @@ export class SloService {
     const decl = await this.declarationRepo.findOne({ where: { id: sloId, orgId } });
     if (!decl) throw new NotFoundException(`SLO ${sloId} not found`);
 
-    const where: Record<string, unknown> = { sloId };
+    const where: Record<string, unknown> = { sloId, orgId };
     if (from) where['evaluatedAt'] = MoreThanOrEqual(new Date(from));
     if (to) where['evaluatedAt'] = LessThanOrEqual(new Date(to));
 
+    // @cross-tenant-by-design: false positive — `where` variable always includes orgId per its initializer above
     const items = await this.evaluationRepo.find({
       where,
       order: { evaluatedAt: 'DESC' },
@@ -269,10 +271,10 @@ export class SloService {
 
     for (const decl of activeDecls) {
       const evals7d = await this.evaluationRepo.find({
-        where: { sloId: decl.id, evaluatedAt: MoreThanOrEqual(sevenDaysAgo) },
+        where: { sloId: decl.id, orgId, evaluatedAt: MoreThanOrEqual(sevenDaysAgo) },
       });
       const evals30d = await this.evaluationRepo.find({
-        where: { sloId: decl.id, evaluatedAt: MoreThanOrEqual(thirtyDaysAgo) },
+        where: { sloId: decl.id, orgId, evaluatedAt: MoreThanOrEqual(thirtyDaysAgo) },
       });
 
       if (evals7d.length === 0 && evals30d.length === 0) {
@@ -322,20 +324,20 @@ export class SloService {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private async computePassRates(sloId: string) {
+  private async computePassRates(orgId: string, sloId: string) {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const evals7d = await this.evaluationRepo.find({
-      where: { sloId, evaluatedAt: MoreThanOrEqual(sevenDaysAgo) },
+      where: { sloId, orgId, evaluatedAt: MoreThanOrEqual(sevenDaysAgo) },
     });
     const evals30d = await this.evaluationRepo.find({
-      where: { sloId, evaluatedAt: MoreThanOrEqual(thirtyDaysAgo) },
+      where: { sloId, orgId, evaluatedAt: MoreThanOrEqual(thirtyDaysAgo) },
     });
 
     const lastEval = await this.evaluationRepo.findOne({
-      where: { sloId },
+      where: { sloId, orgId },
       order: { evaluatedAt: 'DESC' },
     });
 

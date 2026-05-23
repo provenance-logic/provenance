@@ -55,8 +55,8 @@ export class ProductEnrichmentService {
 
   async enrich(product: EnrichableProduct, ctx?: RequestContext): Promise<ProductEnrichmentFields> {
     const [owner, domainTeam, freshness, accessStatus, columnSchema] = await Promise.all([
-      this.resolveOwner(product.ownerPrincipalId),
-      this.resolveDomainTeam(product.domainId),
+      this.resolveOwner(product.orgId, product.ownerPrincipalId),
+      this.resolveDomainTeam(product.orgId, product.domainId),
       this.resolveFreshness(product.orgId, product.id),
       ctx ? this.resolveAccessStatus(product.orgId, product.id, ctx) : Promise.resolve(null),
       this.resolveColumnSchema(),
@@ -64,19 +64,19 @@ export class ProductEnrichmentService {
     return { owner, domainTeam, freshness, accessStatus, columnSchema };
   }
 
-  async resolveOwner(ownerPrincipalId: string): Promise<ProductOwner | null> {
+  async resolveOwner(orgId: string, ownerPrincipalId: string): Promise<ProductOwner | null> {
     try {
-      const principal = await this.principalRepo.findOne({ where: { id: ownerPrincipalId } });
+      const principal = await this.principalRepo.findOne({ where: { id: ownerPrincipalId, orgId } });
       if (!principal) return null;
       return { id: principal.id, displayName: principal.displayName, email: principal.email };
     } catch { return null; }
   }
 
-  async resolveDomainTeam(domainId: string): Promise<ProductDomainTeam | null> {
+  async resolveDomainTeam(orgId: string, domainId: string): Promise<ProductDomainTeam | null> {
     try {
-      const domain = await this.domainRepo.findOne({ where: { id: domainId } });
+      const domain = await this.domainRepo.findOne({ where: { id: domainId, orgId } });
       if (!domain) return null;
-      const domainOwner = await this.principalRepo.findOne({ where: { id: domain.ownerPrincipalId } });
+      const domainOwner = await this.principalRepo.findOne({ where: { id: domain.ownerPrincipalId, orgId } });
       return {
         id: domain.id,
         name: domain.name,

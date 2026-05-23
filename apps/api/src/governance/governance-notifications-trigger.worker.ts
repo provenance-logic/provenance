@@ -57,7 +57,7 @@ export class GovernanceNotificationsTriggerWorker {
 
     let count = 0;
     for (const gp of eligible) {
-      const product = await this.productRepo.findOne({ where: { id: gp.productId } });
+      const product = await this.productRepo.findOne({ where: { id: gp.productId, orgId: gp.orgId } });
       if (!product) continue;
       try {
         const daysRemaining = Math.max(
@@ -81,7 +81,7 @@ export class GovernanceNotificationsTriggerWorker {
           dedupKey: `grace_period_expiring:${gp.id}`,
         });
         await this.gracePeriodRepo.update(
-          { id: gp.id },
+          { id: gp.id, orgId: gp.orgId },
           { expiryWarningSentAt: new Date() },
         );
         count++;

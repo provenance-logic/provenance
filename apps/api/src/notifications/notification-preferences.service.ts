@@ -66,7 +66,7 @@ export class NotificationPreferencesService {
       validateChannelSet(update.channels);
     }
     const existing = await this.repo.findOne({
-      where: { principalId, category },
+      where: { principalId, category, orgId },
     });
     const merged: NotificationPreferenceEntity = existing ?? this.repo.create({
       orgId,
@@ -91,10 +91,11 @@ export class NotificationPreferencesService {
    * so deletion is the correct shape for "reset to default."
    */
   async reset(
+    orgId: string,
     principalId: string,
     category: NotificationCategory,
   ): Promise<void> {
-    await this.repo.delete({ principalId, category });
+    await this.repo.delete({ orgId, principalId, category });
   }
 
   // ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ export class NotificationPreferencesService {
   ): Promise<PrincipalNotificationSettings> {
     const normalized = normalizeWebhookUrl(update.webhookUrl);
     const existing = await this.settingsRepo.findOne({
-      where: { principalId },
+      where: { principalId, orgId },
     });
     const merged: PrincipalNotificationSettingsEntity = existing ?? this.settingsRepo.create({
       orgId,

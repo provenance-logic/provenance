@@ -50,6 +50,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       // ADR-002 Phase 5b-8: when the Agent Query Layer forwards identity
       // headers, verify the agent exists and build a proper agent context.
       if (agentId) {
+        // @cross-tenant-by-design: agentId is globally unique; this is the auth path that derives the agent's org from the agent record itself
         const agent = await this.agentRepo.findOne({ where: { agentId } });
         if (!agent) {
           throw new UnauthorizedException('Unknown agent');

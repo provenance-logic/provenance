@@ -156,14 +156,16 @@ function hasKey(objectExpression, name) {
 }
 
 function hasCrossTenantComment(sourceCode, node) {
-  // Scan all comments and find any with the magic phrase whose end-line is
-  // within 3 lines above the call's start line. Line-based scanning avoids
-  // depending on parent-link availability in the visited AST, which varies
-  // between parsers / RuleTester setups.
+  // Scan all comments and find any with the magic phrase that ends within
+  // a reasonable window above the call's start line. The window is
+  // generous (8 lines) to accommodate multi-line `//` magic-comment blocks
+  // that explain the reason in prose. Line-based scanning avoids depending
+  // on parent-link availability in the visited AST, which varies between
+  // parsers / RuleTester setups.
   const callLine = node.loc.start.line;
   const allComments = sourceCode.getAllComments();
   for (const c of allComments) {
-    if (c.loc.end.line < callLine - 3) continue;
+    if (c.loc.end.line < callLine - 8) continue;
     if (c.loc.end.line >= callLine) continue;
     if (ESCAPE_PATTERN.test(c.value)) return true;
   }

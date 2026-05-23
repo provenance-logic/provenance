@@ -115,13 +115,20 @@ ruleTester.run('require-org-filter', rule, {
       errors: [{ messageId: 'missingOrgId' }],
     },
 
-    // Escape comment too far above (5 lines) doesn't apply.
+    // Escape comment too far above (>8 lines) doesn't apply. Window is
+    // generous to accommodate multi-line magic-comment blocks but isn't
+    // unbounded — a comment from a previous function shouldn't waive
+    // the rule for a different function.
     {
       code: [
         '// @cross-tenant-by-design: ok here',
         'function unrelated() { return 1; }',
         'function alsoUnrelated() { return 2; }',
         'function yetAnother() { return 3; }',
+        'function fourth() { return 4; }',
+        'function fifth() { return 5; }',
+        'function sixth() { return 6; }',
+        'function seventh() { return 7; }',
         '',
         'const x = await this.repo.findOne({ where: { id } });',
       ].join('\n'),

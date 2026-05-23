@@ -32,7 +32,7 @@ export class PreferencesService {
     orgId: string,
     principalId: string,
   ): Promise<PrincipalPreferencesResponse> {
-    const row = await this.prefsRepo.findOne({ where: { principalId } });
+    const row = await this.prefsRepo.findOne({ where: { principalId, orgId } });
     if (!row) {
       // No row yet means default empty preferences. The wizard treats
       // a missing onboarding key as "fresh user, show the wizard."
@@ -42,7 +42,6 @@ export class PreferencesService {
         updatedAt: new Date(0).toISOString(),
       };
     }
-    void orgId; // org isolation is handled by the controller + RLS
     return {
       preferences: row.preferences ?? {},
       updatedAt: row.updatedAt.toISOString(),
@@ -54,7 +53,7 @@ export class PreferencesService {
     principalId: string,
     patch: Partial<PrincipalPreferences>,
   ): Promise<PrincipalPreferencesResponse> {
-    const existing = await this.prefsRepo.findOne({ where: { principalId } });
+    const existing = await this.prefsRepo.findOne({ where: { principalId, orgId } });
     if (existing) {
       existing.preferences = { ...existing.preferences, ...patch };
       const saved = await this.prefsRepo.save(existing);
