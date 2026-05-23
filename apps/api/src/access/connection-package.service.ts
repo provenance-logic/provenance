@@ -49,9 +49,11 @@ export const SUPPORTED_SNIPPET_DESTINATIONS: SnippetDestination[] = [
   'tableau',
 ];
 
+export type SnippetLanguage = 'python' | 'yaml' | 'text' | 'json';
+
 export interface PortSnippetResponse {
   destination: SnippetDestination;
-  language: 'python' | 'yaml' | 'text';
+  language: SnippetLanguage;
   code: string | null;
   available: boolean;
   /** Human-readable reason when `available === false`. */
@@ -591,11 +593,12 @@ function quote(s: string): string {
 // the raw JDBC URL string; power_bi / tableau are deferred).
 // ---------------------------------------------------------------------------
 
-function snippetLanguageFor(destination: SnippetDestination): 'python' | 'yaml' | 'text' {
+function snippetLanguageFor(destination: SnippetDestination): SnippetLanguage {
   switch (destination) {
-    case 'python': return 'python';
-    case 'dbt':    return 'yaml';
-    default:       return 'text';
+    case 'python':   return 'python';
+    case 'dbt':      return 'yaml';
+    case 'power_bi': return 'json';
+    default:         return 'text';
   }
 }
 
@@ -622,8 +625,12 @@ function buildSnippet(
     if (details.kind === 'sql_jdbc') return buildSqlJdbcUrl(details);
     return null;
   }
-  // power_bi, tableau — deferred. Snippet endpoint returns available=false with
-  // reason='destination_not_yet_supported' for these.
+  if (destination === 'power_bi') {
+    if (details.kind === 'sql_jdbc') return buildSqlJdbcPowerBiPbids(details);
+    return null;
+  }
+  // tableau — deferred. Snippet endpoint returns available=false with
+  // reason='destination_not_yet_supported'.
   return null;
 }
 
@@ -672,6 +679,58 @@ function buildSqlJdbcUrl(d: SqlJdbcConnectionDetails): string {
     return 'postgresql';
   })();
   return `jdbc:${driver}://${d.host}:${d.port}/${d.database}?sslmode=${d.sslMode}`;
+}
+
+/**
+ * Power BI Data Source file (.pbids) for a SQL/JDBC port — Phase 5.10.
+ *
+ * The output is a JSON document the consumer saves to a `.pbids` file
+ * (e.g. `customer-orders.pbids`) and double-clicks. Power BI Desktop
+ * launches with the connection dialog pre-filled with host + database;
+ * the consumer enters their own credentials per ADR-011 (the platform
+ * never holds the consumer's source-system credentials).
+ *
+ * Per-protocol mapping using the same host/port heuristic as the dbt
+ * and JDBC builders (so a Postgres port renders a postgresql .pbids,
+ * a Snowflake port renders a snowflake .pbids, etc.). Power BI's
+ * `databricks-sql` protocol additionally needs a SQL-warehouse path
+ * that isn't in the SqlJdbcConnectionDetails contract today — the
+ * .pbids omits the path; Power BI prompts the consumer for it on first
+ * connect. Tracked as a follow-up enhancement when the connection-
+ * detail contract grows a `warehousePath` field.
+ *
+ * References: Microsoft .pbids spec
+ * (learn.microsoft.com/en-us/power-bi/connect-data/desktop-data-sources).
+ */
+function buildSqlJdbcPowerBiPbids(d: SqlJdbcConnectionDetails): string {
+  const protocol = pickPowerBiProtocol(d);
+  const address: Record<string, string> = {
+    server: d.host,
+    database: d.database,
+  };
+  const pbids = {
+    version: '0.1',
+    connections: [
+      {
+        details: { protocol, address },
+        // Import is the default; DirectQuery is also supported but
+        // requires the source to expose live-query semantics.
+        // Defaulting to Import keeps the .pbids broadly compatible.
+        mode: 'Import',
+      },
+    ],
+  };
+  return JSON.stringify(pbids, null, 2);
+}
+
+function pickPowerBiProtocol(d: SqlJdbcConnectionDetails): string {
+  if (d.host.includes('snowflakecomputing.com')) return 'snowflake';
+  if (d.host.includes('databricks')) return 'databricks-sql';
+  if (d.port === 3306) return 'mysql';
+  // tds is SQL Server; Provenance doesn't model a SQL Server connector
+  // type today, so postgresql is the catch-all for the remaining
+  // sql_jdbc variants until SQL Server lands.
+  return 'postgresql';
 }
 
 const SEMANTIC_PYTHON_SNIPPET = [

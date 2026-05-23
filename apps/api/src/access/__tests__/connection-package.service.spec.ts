@@ -299,9 +299,73 @@ describe('ConnectionPackageService', () => {
       expect(result?.code).toBe('jdbc:postgresql://db.example.com:5432/orders?sslmode=require');
     });
 
-    it('returns destination_not_yet_supported for power_bi (deferred destination)', async () => {
+    it('Phase 5.10: returns a .pbids JSON for power_bi on a sql_jdbc port (postgres default)', async () => {
       productRepo.findOne.mockResolvedValue(PRODUCT);
       portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('json');
+      expect(result?.code).toBeTruthy();
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.version).toBe('0.1');
+      expect(pbids.connections[0].details.protocol).toBe('postgresql');
+      expect(pbids.connections[0].details.address.server).toBe('db.example.com');
+      expect(pbids.connections[0].details.address.database).toBe('orders');
+      expect(pbids.connections[0].mode).toBe('Import');
+    });
+
+    it('Phase 5.10: detects snowflake protocol from the host suffix', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'xy12345.snowflakecomputing.com',
+          port: 443,
+          database: 'ANALYTICS',
+          schema: 'PUBLIC',
+          authMethod: 'username_password',
+          sslMode: 'require',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'requester-1');
+      expect(result?.available).toBe(true);
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.connections[0].details.protocol).toBe('snowflake');
+    });
+
+    it('Phase 5.10: detects databricks-sql protocol from the host', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'dbc-12345.cloud.databricks.com',
+          port: 443,
+          database: 'main',
+          schema: 'default',
+          authMethod: 'username_password',
+          sslMode: 'require',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'requester-1');
+      expect(result?.available).toBe(true);
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.connections[0].details.protocol).toBe('databricks-sql');
+    });
+
+    it('Phase 5.10: returns destination_not_yet_supported for power_bi on non-sql_jdbc ports', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        interfaceType: 'rest_api',
+        connectionDetails: encryptedEnvelope({
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com',
+          authMethod: 'bearer_token',
+          bearerToken: 'tok',
+        }) as unknown as Record<string, unknown>,
+      }));
       grantRepo.findOne.mockResolvedValue(activeGrant());
       const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'requester-1');
       expect(result?.available).toBe(false);
