@@ -45,6 +45,8 @@ The platform embodies the data mesh principles articulated by Zhamak Dehghani wh
 
 Provenance is a coordination and contract platform. It does not store data, execute pipelines, or provide a centralized query engine for human consumers. It owns the contracts between domains, the lineage graph that connects them, and the governance engine that makes the mesh trustworthy.
 
+> **OSR commitment (2026-05-23).** The Open Source Readiness bar for the consumer surface is consumer-grade click-through, not engineer-grade fallback. The platform commits to **configuration brokerage** — brokering host, catalog name, and tool-specific snippets while the consumer supplies their own source-system identity. Credential brokerage is explicitly out of scope. See [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) for the architectural decision and the [PRD overhaul anchor decisions (2026-05-23)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) for the full decision tree (1-6).
+
 ### Five Foundational Design Principles
 
 1. **Domain sovereignty with interoperability contracts** - domains own their data and pipelines; the platform owns the contracts between them and the lineage graph that connects them
