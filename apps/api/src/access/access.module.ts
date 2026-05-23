@@ -12,6 +12,7 @@ import { AccessService } from './access.service.js';
 import { AccessController } from './access.controller.js';
 import { InternalAccessController } from './internal-access.controller.js';
 import { ConnectionPackageController } from './connection-package.controller.js';
+import { PortSituationController } from './port-situation.controller.js';
 import { InternalServiceGuard } from '../auth/internal-service.guard.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentModule } from '../consent/consent.module.js';
@@ -40,6 +41,11 @@ import { AccessNotificationsTriggerWorker } from './access-notifications-trigger
     AccessNotificationsTriggerWorker,
     InternalServiceGuard,
   ],
-  controllers: [AccessController, InternalAccessController, ConnectionPackageController],
+  controllers: [
+    AccessController,
+    InternalAccessController,
+    ConnectionPackageController,
+    PortSituationController,
+  ],
 })
 export class AccessModule {}

@@ -848,6 +848,7 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   const [contractSchemaRaw, setContractSchemaRaw] = useState('');
   const [slaDescription, setSlaDescription] = useState('');
   const [connectionFields, setConnectionFields] = useState<Record<string, string>>({});
+  const [situationAEligibility, setSituationAEligibility] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -916,6 +917,11 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
         sourceRegistrationId,
         ...(sourceObjectPath.trim() !== '' ? { sourceObjectPath: sourceObjectPath.trim() } : {}),
       } : {}),
+      // F10.15 — only ship the flag when the producer affirmatively opted
+      // in. Default state (unchecked) is Situation B; backend default is
+      // also false, so omitting the field is functionally identical and
+      // keeps the wire payload smaller for the common case.
+      ...(situationAEligibility ? { situationAEligibility: true } : {}),
     };
 
     setSaving(true);
@@ -1005,6 +1011,26 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
               }}
               onPathChange={setSourceObjectPath}
             />
+
+            <Field label="Access">
+              <label className="flex items-start gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={situationAEligibility}
+                  onChange={(e) => setSituationAEligibility(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  Open to all source-system users
+                  <span className="block text-xs text-slate-500 mt-0.5">
+                    Check this if any user who has valid credentials for the
+                    source system can already reach this data — no per-product
+                    access request needed. Leave unchecked if consumers must
+                    request access explicitly. (F10.15 / Phase 5.9.)
+                  </span>
+                </span>
+              </label>
+            </Field>
 
             <Field label="Contract Schema (JSON)" required>
               <textarea

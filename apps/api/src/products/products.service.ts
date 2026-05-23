@@ -535,6 +535,7 @@ export class ProductsService {
       connectionDetailsValidated: false,
       sourceRegistrationId: dto.sourceRegistrationId ?? null,
       sourceObjectPath: dto.sourceObjectPath ?? null,
+      situationAEligibility: dto.situationAEligibility ?? false,
     });
     const saved = await this.portRepo.save(port);
     return this.toPort(saved);
@@ -568,6 +569,7 @@ export class ProductsService {
       port.sourceRegistrationId = dto.sourceRegistrationId;
     }
     if (dto.sourceObjectPath !== undefined) port.sourceObjectPath = dto.sourceObjectPath;
+    if (dto.situationAEligibility !== undefined) port.situationAEligibility = dto.situationAEligibility;
     const connectionDetailsTouched = dto.connectionDetails !== undefined;
     if (connectionDetailsTouched) {
       const effectiveInterfaceType = dto.interfaceType ?? port.interfaceType;
@@ -734,6 +736,7 @@ export class ProductsService {
       connectionDetailsValidated: entity.connectionDetailsValidated ?? false,
       sourceRegistrationId: entity.sourceRegistrationId ?? null,
       sourceObjectPath: entity.sourceObjectPath ?? null,
+      situationAEligibility: entity.situationAEligibility ?? false,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };
