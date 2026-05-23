@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { AllowCrossOrgRead } from '../auth/allow-cross-org-read.decorator.js';
 import { SloService } from './slo.service.js';
 import type { CreateSloDeclarationDto, UpdateSloDeclarationDto, CreateSloEvaluationDto } from './slo.service.js';
 
@@ -35,6 +36,7 @@ export class SloController {
   }
 
   @Get('slos')
+  @AllowCrossOrgRead()
   listDeclarations(
     @Param('orgId') orgId: string,
     @Param('productId') productId: string,
@@ -44,6 +46,7 @@ export class SloController {
   }
 
   @Get('slos/:sloId')
+  @AllowCrossOrgRead()
   getDeclaration(
     @Param('orgId') orgId: string,
     @Param('sloId') sloId: string,
@@ -84,6 +87,7 @@ export class SloController {
   }
 
   @Get('slos/:sloId/evaluations')
+  @AllowCrossOrgRead()
   listEvaluations(
     @Param('orgId') orgId: string,
     @Param('sloId') sloId: string,
@@ -99,6 +103,7 @@ export class SloController {
   // ---------------------------------------------------------------------------
 
   @Get('slo-summary')
+  @AllowCrossOrgRead()
   getSloSummary(
     @Param('orgId') orgId: string,
     @Param('productId') productId: string,

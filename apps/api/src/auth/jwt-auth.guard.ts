@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
+import { ALLOW_CROSS_ORG_READ_KEY } from './allow-cross-org-read.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { RequestContext } from '@provenance/types';
 
@@ -108,8 +109,21 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // Skip when request.user.orgId is empty (the MCP service-account bypass
     // earlier in this guard sets orgId='' for the privileged inter-service
     // path; @AllowNoOrg routes don't carry :orgId in their URLs).
+    //
+    // Skip when the route is marked @AllowCrossOrgRead (B-068). Used by
+    // marketplace-style read endpoints where a consumer in org A is
+    // legitimately reading metadata about a product owned by org B.
+    const allowCrossOrgRead = this.reflector.getAllAndOverride<boolean>(
+      ALLOW_CROSS_ORG_READ_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     const urlOrgId = request.params?.orgId;
-    if (urlOrgId && request.user?.orgId && urlOrgId !== request.user.orgId) {
+    if (
+      !allowCrossOrgRead &&
+      urlOrgId &&
+      request.user?.orgId &&
+      urlOrgId !== request.user.orgId
+    ) {
       throw new ForbiddenException(
         'Org scope mismatch: token is scoped to a different organization than the URL targets',
       );

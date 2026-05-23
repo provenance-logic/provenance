@@ -2,6 +2,7 @@ import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@ne
 import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
+import { ALLOW_CROSS_ORG_READ_KEY } from './allow-cross-org-read.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { RolesGuard } from './roles.guard.js';
 import { OrganizationsController } from '../organizations/organizations.controller.js';
@@ -379,6 +380,78 @@ describe('JwtAuthGuard — cross-org URL/JWT consistency (B-061)', () => {
     // MCP key path returns true before the cross-org check runs, so this
     // should pass regardless of the URL :orgId.
     await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // @AllowCrossOrgRead carve-out (B-068)
+  //
+  // The B-061 guard above rejects every cross-org URL. That's correct for
+  // tenant-scoped writes and owner-only reads, but it breaks the marketplace's
+  // intentional cross-tenant read path. Routes that opt in with the
+  // @AllowCrossOrgRead decorator are exempt from the same-org URL check.
+  // -------------------------------------------------------------------------
+
+  it('@AllowCrossOrgRead allows a cross-org URL :orgId vs JWT orgId mismatch', async () => {
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector({ [ALLOW_CROSS_ORG_READ_KEY]: true }),
+    );
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      { orgId: ACME, principalId: 'p-1' },
+      { orgId: BETA },
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('@AllowCrossOrgRead does NOT bypass the empty-orgId @AllowNoOrg requirement', async () => {
+    // Even when a route is marked @AllowCrossOrgRead, a caller with an empty
+    // provenance_org_id claim is still rejected (only @AllowNoOrg waives the
+    // empty-org check). The two decorators are orthogonal carve-outs.
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector({ [ALLOW_CROSS_ORG_READ_KEY]: true }),
+    );
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      { orgId: '', principalId: 'p-1' },
+      { orgId: BETA },
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+
+    superActivate.mockRestore();
+  });
+
+  it('a route without @AllowCrossOrgRead still rejects cross-org URLs (regression pin)', async () => {
+    // Belt-and-suspenders: confirms that adding the new metadata key doesn't
+    // accidentally affect routes that did NOT opt in. The B-061 guard still
+    // fires for everything else.
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector(),
+    );
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      { orgId: ACME, principalId: 'p-1' },
+      { orgId: BETA },
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+
+    superActivate.mockRestore();
   });
 
   it('rejects an agent JWT that targets a different org than its agent record', async () => {
