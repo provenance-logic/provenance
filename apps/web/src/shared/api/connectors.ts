@@ -3,6 +3,7 @@ import type {
   Connector,
   ConnectorList,
   RegisterConnectorRequest,
+  SourceRegistrationList,
   UpdateConnectorRequest,
 } from '@provenance/types';
 
@@ -33,5 +34,13 @@ export const connectorsApi = {
     api.post<{ status: string }>(
       `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/validate`,
       {},
+    ),
+  /**
+   * Lists registered source objects for a connector (F2.8a producer UI —
+   * the "Pick from discovered objects" picker in the port form).
+   */
+  listSources: (orgId: string, connectorId: string, limit = 100, offset = 0) =>
+    api.get<SourceRegistrationList>(
+      `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/sources?limit=${limit}&offset=${offset}`,
     ),
 };

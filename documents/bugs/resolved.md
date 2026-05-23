@@ -6,6 +6,44 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-070 — Inbound-outbound bridge missing: `port_declarations` no FK to `source_registrations` or `schema_snapshots`
+
+- **Resolved:** 2026-05-23 across two PRs — backend half #179 (Phase 5.8 backend), producer UI #183 (Phase 5.8 frontend half). Closes [F2.8a](../prd/Provenance_PRD_v1.5.md) end-to-end per anchor decision 4
+- **Severity:** Blocker (the consumer-grade publishing flow couldn't run end-to-end without this bridge — discovery results existed in `connectors.schema_snapshots` but no user-facing product surface read them)
+- **Area:** `apps/api/migrations/V33__add_port_source_object_binding.sql`, `apps/api/src/products/product-enrichment.service.ts`, `apps/api/src/products/products.service.ts`, `apps/web/src/features/publishing/ProductDetail.tsx` (new `SourceBindingPicker` component)
+
+**What was wrong.** The platform's inbound and outbound halves were architecturally independent. Inbound wrote to `connectors.schema_snapshots`, `connectors.discovery_crawl_events`, `lineage.emission_log`, and Neo4j. Outbound read from `products.port_declarations.contract_schema` (hand-authored JSONB). The two halves did not compose. The Databricks connector framework (B-063 Layers 1-4) could crawl 10,000 Unity Catalog tables and not a single data product would automatically light up. `ProductEnrichmentService.resolveColumnSchema` and `freshness.lastRefreshedAt` were `null`-returning stubs with "pending FK" notes.
+
+**Fix.** Per [F2.8a](../prd/Provenance_PRD_v1.5.md) (anchor decision 4):
+
+- **Backend half (#179):**
+  - Migration V33 added `port_declarations.source_registration_id UUID NULL REFERENCES connectors.source_registrations(id) ON DELETE RESTRICT` and `source_object_path TEXT NULL` with a partial index on the FK. Both NULLABLE — hand-authored ports stay valid.
+  - Entity / `Port` type / OpenAPI Port + DeclarePortRequest + UpdatePortRequest schemas carry the new fields. `ProductsService.declarePort`/`updatePort` accept the binding with a **same-org validation guard** (prevents cross-org source binding — one org's producer could otherwise expose another org's source-system metadata via schema enrichment).
+  - `ProductEnrichmentService.resolveColumnSchema` consults the bound source's latest `schema_snapshot` and maps `schema_definition.columns` into the `ProductColumnSchema` shape. `resolveFreshness.lastRefreshedAt` populates from the same snapshot's `capturedAt`. New `resolveBoundSnapshot` private helper, called once per `enrich()` and threaded through both consumers to avoid duplicate queries.
+- **Producer UI (#183):**
+  - New `SourceBindingPicker` component on `AddPortForm` (collapsible "Bind to a discovered source (optional)" section).
+  - Two-step picker: connector dropdown (the org's connectors) → source dropdown (the chosen connector's registered source-registrations). On source select, the path field auto-fills with the source's `sourceRef` (e.g. `public.users`, `prod.customer.events`) and stays editable so producers can override (e.g. bind to a view rather than the raw table).
+  - New `connectorsApi.listSources(orgId, connectorId)` client method backed by the existing `GET /organizations/:orgId/connectors/:connectorId/sources` endpoint.
+  - `AddPortForm` includes `sourceRegistrationId` + `sourceObjectPath` in the `DeclarePortRequest` payload when set. 5 new Vitest tests pin the picker behavior (mount → connectors load; connector pick → sources load; source pick → onSourceChange called with sourceRef as defaultPath; empty-source state; load error state; path-edit forwarding).
+
+**Test coverage at closure.** 765/765 API tests passing; 11/11 web tests passing (6 prior + 5 new for the picker).
+
+**B-070's "What this means in practice" gap, closed:**
+- Before: a Databricks Unity Catalog crawl filled `schema_snapshots` that nothing read; outbound was hand-authored.
+- After: a producer creates a port → optionally picks the bound source via the dropdown → backend stores the binding → `get_product` returns `columnSchema` populated from the discovered snapshot and `freshness.lastRefreshedAt` from the snapshot's `capturedAt`.
+
+**Deferred (called out for tracking, not closed by this work):**
+
+- **Auto-population of `contractSchema` + `connectionDetails` from the bound source's snapshot at form time.** B-070's original fix path step 4 included "the port's `contract_schema` and `connection_details` auto-populate from the snapshot." This work ships the binding mechanism + read-time enrichment but not write-time form pre-fill. A producer binding a port still has to type the contract schema separately (B-006 / F2.12 publication rule requires non-empty `contract_schema`). Auto-populating the textarea on source select would close the UX hole — UI-only enhancement on top of the picker. Tracked as a follow-up; not in B-070's strict scope per the bug entry's fix-path framing.
+- **Per-port column schema** (today returns one schema per product from the first bound port). Per-port shape is a contract change deferred to a follow-up if needed.
+- **Multi-source ports via a per-port join table** — explicitly deferred post-OSR per anchor-decisions doc decision 4.
+- **Pipeline-emission-based freshness** (lastRefreshedAt from lineage `emission_log` instead of snapshot `capturedAt`) — possible richer signal if needed; snapshot capturedAt is the simpler defensible starting point.
+- **Edit-time binding** — today `AddPortForm` has the picker; there is no port-edit UI surface in the product detail page. Editing a port's binding requires recreating the port. When/if port-edit UI ships, the picker should be reused there.
+
+**Pattern.** B-070 was the inverse of the B-060 / B-061 / B-063 family ("platform claims X but doesn't do X"). B-070 was **"platform has X and Y as independent pieces that look complete in isolation but don't compose."** The class is harder to catch with a claim-vs-code audit because both halves ARE in code; what's missing is the binding. Persona walkthroughs catch this; static audits don't. Worth keeping as a discipline: every cross-domain claim ("discovery informs the catalog") needs a verified end-to-end test, not just unit tests on each half.
+
+---
+
 ## B-071 — Cross-org access requests structurally broken: submitRequest rejected them and approveRequest could not find them
 
 - **Resolved:** 2026-05-23 — implements [anchor decision 3 (Model A)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) from the 2026-05-23 PRD v1.6 work

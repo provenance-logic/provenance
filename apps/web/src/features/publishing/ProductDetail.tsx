@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { productsApi } from '../../shared/api/products.js';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { accessApi } from '../../shared/api/access.js';
+import { connectorsApi } from '../../shared/api/connectors.js';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import type {
@@ -24,6 +25,8 @@ import type {
   KafkaConnectionDetails,
   FileExportConnectionDetails,
   TestConnectionResponse,
+  Connector,
+  SourceRegistration,
 } from '@provenance/types';
 
 // ---------------------------------------------------------------------------
@@ -848,6 +851,15 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // F2.8a (B-070) producer UI — optional source binding state. Both fields
+  // start empty (the port stays hand-authored unless the producer picks
+  // from the discovered list). selectedConnectorId is local UI state only
+  // — it's not sent to the API; the source_registration row already
+  // carries its connector_id reference.
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string>('');
+  const [sourceRegistrationId, setSourceRegistrationId] = useState<string>('');
+  const [sourceObjectPath, setSourceObjectPath] = useState<string>('');
+
   // Reset connection fields whenever interfaceType changes so stale
   // host/baseUrl values from a previous selection do not bleed across.
   const handleInterfaceTypeChange = (value: OutputPortInterfaceType | '') => {
@@ -897,6 +909,13 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       ...(contractSchema !== undefined ? { contractSchema } : {}),
       ...(slaDescription.trim() !== '' ? { slaDescription: slaDescription.trim() } : {}),
       ...(connectionDetails !== undefined ? { connectionDetails } : {}),
+      // F2.8a — optional source binding. Both fields ship together or
+      // neither (the path alone with no FK doesn't tell the platform
+      // which connector to consult).
+      ...(sourceRegistrationId !== '' ? {
+        sourceRegistrationId,
+        ...(sourceObjectPath.trim() !== '' ? { sourceObjectPath: sourceObjectPath.trim() } : {}),
+      } : {}),
     };
 
     setSaving(true);
@@ -965,6 +984,28 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
               </select>
             </Field>
 
+            <SourceBindingPicker
+              orgId={orgId}
+              selectedConnectorId={selectedConnectorId}
+              sourceRegistrationId={sourceRegistrationId}
+              sourceObjectPath={sourceObjectPath}
+              onConnectorChange={(id) => {
+                setSelectedConnectorId(id);
+                // Changing connector clears the source pick — the prior
+                // source belonged to a different connector.
+                setSourceRegistrationId('');
+                setSourceObjectPath('');
+              }}
+              onSourceChange={(srcId, defaultPath) => {
+                setSourceRegistrationId(srcId);
+                // Pre-fill the path with the source-registration's sourceRef
+                // (e.g. "public.users", "prod.customer.events"). The producer
+                // can edit it.
+                setSourceObjectPath(defaultPath);
+              }}
+              onPathChange={setSourceObjectPath}
+            />
+
             <Field label="Contract Schema (JSON)" required>
               <textarea
                 value={contractSchemaRaw}
@@ -1019,6 +1060,177 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
         </div>
       </form>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SourceBindingPicker — F2.8a producer UI (B-070 close).
+//
+// Optional "Pick from discovered objects" picker for the port form. Two
+// dropdowns: org's connectors, then the chosen connector's registered
+// source objects. On selection, the parent form receives
+// (sourceRegistrationId, defaultPath) — the path defaults to the
+// source-registration's sourceRef (e.g. "public.users",
+// "prod.customer.events") so the common case is one click + accept.
+// The path is editable: producers binding to a view in the source can
+// override the discovered path.
+//
+// When unselected, both fields stay empty and the port ships hand-
+// authored. The backend (V33 + ProductEnrichmentService) only consults
+// the binding when sourceRegistrationId is non-null.
+// ---------------------------------------------------------------------------
+
+interface SourceBindingPickerProps {
+  orgId: string;
+  selectedConnectorId: string;
+  sourceRegistrationId: string;
+  sourceObjectPath: string;
+  onConnectorChange: (connectorId: string) => void;
+  onSourceChange: (sourceRegistrationId: string, defaultPath: string) => void;
+  onPathChange: (path: string) => void;
+}
+
+export function SourceBindingPicker({
+  orgId,
+  selectedConnectorId,
+  sourceRegistrationId,
+  sourceObjectPath,
+  onConnectorChange,
+  onSourceChange,
+  onPathChange,
+}: SourceBindingPickerProps) {
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [sources, setSources] = useState<SourceRegistration[]>([]);
+  const [connectorsLoading, setConnectorsLoading] = useState(false);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Load the org's connectors once on mount. A producer typically has
+  // a small handful of connectors, so a single fetch + dropdown is
+  // appropriate; pagination only matters at scale and is deferred.
+  useEffect(() => {
+    let cancelled = false;
+    setConnectorsLoading(true);
+    setLoadError(null);
+    connectorsApi.list(orgId, 100, 0)
+      .then((result) => {
+        if (cancelled) return;
+        setConnectors(result.items);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(`Could not load connectors: ${(err as Error).message}`);
+      })
+      .finally(() => {
+        if (!cancelled) setConnectorsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [orgId]);
+
+  // Load the chosen connector's source registrations when it changes.
+  useEffect(() => {
+    if (!selectedConnectorId) {
+      setSources([]);
+      return;
+    }
+    let cancelled = false;
+    setSourcesLoading(true);
+    setLoadError(null);
+    connectorsApi.listSources(orgId, selectedConnectorId, 100, 0)
+      .then((result) => {
+        if (cancelled) return;
+        setSources(result.items);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(`Could not load sources: ${(err as Error).message}`);
+      })
+      .finally(() => {
+        if (!cancelled) setSourcesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [orgId, selectedConnectorId]);
+
+  return (
+    <details className="rounded-md border border-slate-200 bg-white p-3">
+      <summary className="cursor-pointer text-sm font-medium text-slate-700">
+        Bind to a discovered source <span className="text-slate-400 font-normal">(optional)</span>
+      </summary>
+      <div className="mt-3 space-y-3">
+        <p className="text-xs text-slate-600">
+          Pick a registered source object to auto-populate this port's schema and
+          freshness from the connector's latest crawl. Leave blank for a hand-authored
+          port.
+        </p>
+
+        <Field label="Connector">
+          <select
+            value={selectedConnectorId}
+            onChange={(e) => onConnectorChange(e.target.value)}
+            className="input"
+            disabled={connectorsLoading}
+          >
+            <option value="">
+              {connectorsLoading ? 'Loading…' : '— select a connector —'}
+            </option>
+            {connectors.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.connectorType})
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        {selectedConnectorId !== '' && (
+          <Field label="Source object">
+            <select
+              value={sourceRegistrationId}
+              onChange={(e) => {
+                const picked = sources.find((s) => s.id === e.target.value);
+                onSourceChange(e.target.value, picked?.sourceRef ?? '');
+              }}
+              className="input"
+              disabled={sourcesLoading}
+            >
+              <option value="">
+                {sourcesLoading
+                  ? 'Loading…'
+                  : sources.length === 0
+                  ? '— no sources registered for this connector —'
+                  : '— select a source —'}
+              </option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.displayName} — {s.sourceRef}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        {sourceRegistrationId !== '' && (
+          <Field label="Object path">
+            <input
+              type="text"
+              value={sourceObjectPath}
+              onChange={(e) => onPathChange(e.target.value)}
+              className="input font-mono text-xs"
+              placeholder="e.g. public.users, prod.customer.events, s3://bucket/prefix/"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              Defaults to the source's registered path; override if this port targets
+              a view or sub-path inside the source.
+            </p>
+          </Field>
+        )}
+
+        {loadError !== null && (
+          <div className="rounded-md bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">
+            {loadError}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 

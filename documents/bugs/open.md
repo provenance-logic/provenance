@@ -69,7 +69,12 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 
 ---
 
-## B-070 — Inbound-outbound bridge missing: `port_declarations` has no FK to `source_registrations` or `schema_snapshots`; connector discovery does not feed any user-facing product surface
+## B-070 — Inbound-outbound bridge missing (RESOLVED 2026-05-23)
+
+**Moved to [resolved.md](resolved.md#B-070-inbound-outbound-bridge-missing-port_declarations-no-fk-to-source_registrations-or-schema_snapshots). ** Backend half closed by #179 (V33 migration + service-layer wiring); producer "Pick from discovered objects" picker closed by #183. The architectural gap is gone end-to-end. **Deferred enhancement** (called out in the closure write-up): auto-populating `contractSchema` + `connectionDetails` from the bound source's latest `schema_snapshot` at form time — a UX polish on top of the picker, tracked as a follow-up.
+
+<details>
+<summary>Original entry (for reference)</summary>
 
 - **Severity:** **Blocker** confirmed by the PRD overhaul — every consumer-grade outbound piece (F10.14, F10.17, F10.18) depends on this bridge. The [consumer-grade outbound reframe](../architecture/consumer-grade-outbound-reframe-2026-05-22.md) promoted this from "non-blocking stub" to load-bearing because consumer-grade publishing depends on "select discovered table → port auto-populated," which this bridge enables.
 - **Status:** Open — **backend half closed 2026-05-23** (migration V33; `PortDeclarationEntity` + `Port` type + OpenAPI carry the new fields; `ProductsService.declarePort`/`updatePort` accept the binding with same-org validation; `ProductEnrichmentService.resolveColumnSchema` and `resolveFreshness.lastRefreshedAt` consult the bound source's latest `schema_snapshot`). **Remaining:** producer "Pick from discovered objects" UI on port create/edit (frontend work; separate PR).
@@ -102,6 +107,8 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 **Estimated lift.** ~3-4 weeks for the bridge itself (FK migration, service-layer wiring, basic UI for "select discovered table" on the port-editing surface). The full publishing-UX flip and the catalog-name abstraction layer are separate scoped work — see the reframe doc's sizing table.
 
 **Pattern — a category beyond B-060 / B-061 / B-063.** Those three were all "the platform claims X but doesn't do X." B-070 is **"the platform has X and Y as independent pieces that look complete in isolation but don't compose."** The B-070 pattern is harder to catch with a claim-vs-code audit because both halves ARE in code; what's missing is the binding. Persona walkthroughs catch this class of bug; static audits do not. Worth adding as a discipline: every cross-domain claim ("discovery informs the catalog") needs a verified end-to-end test, not just unit tests on each half.
+
+</details>
 
 ---
 
