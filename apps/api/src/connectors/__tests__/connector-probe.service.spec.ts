@@ -305,16 +305,21 @@ describe('ConnectorProbeService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Unsupported connector type
+  // Exhaustiveness — a connector row carrying a value outside the
+  // ConnectorType enum (data corruption or a row that escaped V32's
+  // cleanup) must throw, not synthesize healthy. The TypeScript `never`
+  // default branch in ConnectorProbeService.probe() catches it at
+  // compile time for in-bounds values; this test covers the runtime
+  // safety belt by forcing a stale value through a type cast.
   // -------------------------------------------------------------------------
 
-  describe('probe() — unsupported type', () => {
-    it('returns healthy without any live probe for unsupported types', async () => {
-      const result = await service.probe(
-        makeConnector({ connectorType: 'snowflake' }),
-      );
-      expect(result.status).toBe('healthy');
-      expect(result.responseTimeMs).toBeNull();
+  describe('probe() — value outside the enum', () => {
+    it('throws rather than synthesizing healthy for a stale connector type', async () => {
+      await expect(
+        service.probe(
+          makeConnector({ connectorType: 'snowflake' as unknown as 'postgresql' }),
+        ),
+      ).rejects.toThrow(/Unhandled connector type: snowflake/);
       expect(MockPgClient).not.toHaveBeenCalled();
     });
   });

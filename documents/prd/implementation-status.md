@@ -76,14 +76,15 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 3: Connectivity and Source Integration
 
-> **Status warning (2026-05-21).** This domain's "Implemented" entries are the most actively misleading in the doc. The framework exists, but most connector-type-specific implementations don't — see [B-063](../bugs/open.md#B-063) for the full breakdown. The PRD overhaul scheduled for the 2026-05-24 weekend will reconcile.
+> **Status warning (2026-05-21; reconciled by PRD v1.6 work 2026-05-23).** This domain's "Implemented" entries were the most actively misleading in the doc prior to the PRD v1.6 reshape. The 2026-05-23 work (#173 + step 1 of B-063 — enum cut migration V32) reconciled the framing: F3.2 now names PG + S3 + Databricks as the first-class set; F3.2a codifies the tranche discipline for adding more. Snowflake is the next scheduled tranche. See [B-063](../bugs/open.md#B-063).
 
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
 | F3.1 | Connector as First-Class Entity | Implemented | |
-| F3.2 | Connector Library | **Partially implemented (3 of 12 types real)** | postgresql ✅ (probe+schema), s3 ✅ (probe+schema), databricks ✅ (probe+schema+discovery+lineage, shipped 2026-05-21 #142–#146). The other 9 (mysql, snowflake, bigquery, redshift, gcs, azure_blob, kafka, redpanda, rest_api, custom) register but the probe returns synthetic `healthy`. See B-063. |
-| F3.3 | Connector Extensibility | **Partially implemented** | Capability manifest table + service shipped 2026-05-21 (#145, V31). Read-only API. Seeded for Databricks 1.0.0 only. Other connector types have no manifest yet. |
-| F3.4 | Connector Validation | **Partially implemented (3 of 12 types real)** | Real probe for postgresql, s3, databricks. Other 9 return synthetic `healthy` regardless of whether the workspace is reachable. |
+| F3.2 | Connector Library | **Implemented** | postgresql ✅ (probe+schema), s3 ✅ (probe+schema), databricks ✅ (probe+schema+discovery+lineage, shipped 2026-05-21 #142–#146). 9 previously-advertised types retired by V32 (B-063 step 1) — the enum, registration UI, and CHECK constraint now expose only the 3 that work end-to-end. Snowflake next per F3.2a. |
+| F3.2a | Connector Tranche Discipline | **Implemented** | New requirement landed with the 2026-05-23 PRD v1.6 work. Enforcement is structural: `ConnectorType` enum is the gate (TypeScript exhaustiveness in `ConnectorProbeService.probe()` / `inferSchema()` fails the build if a new value is added without a probe branch); migration V32 tightens the CHECK constraint to match. New types ship by extending the enum + migration + adding capability manifest + adding probe/inferSchema branches + adding UI dropdown option — partial-ship is not possible without failing the build. |
+| F3.3 | Connector Extensibility | **Partially implemented** | Capability manifest table + service shipped 2026-05-21 (#145, V31). Read-only API. Seeded for Databricks 1.0.0 only; PG and S3 have no manifest yet (their probes/inference are implemented but the manifest declarations haven't been backfilled). |
+| F3.4 | Connector Validation | **Implemented** | Real probe for postgresql, s3, databricks — the only three connector types in the library after V32. |
 | F3.5 | Connector Health Monitoring | Partially implemented | Health-event recording exists; observability port propagation not verified |
 | F3.6 | Credential Management | Implemented | Secrets Manager integration confirmed; `local-env:VARNAME` sentinel added 2026-05-21 #142 for laptop dev |
 | F3.7 | Connector Scope Isolation | Implemented | |

@@ -50,9 +50,10 @@ export class ConnectorProbeService {
 
   /**
    * Runs a live connectivity check for the connector.
-   * Supports postgresql, s3, and databricks. Other types return a synthetic
-   * healthy result so the connector can be registered without a live probe.
-   * See B-063 for the remaining types' implementation status.
+   * Every `ConnectorType` value has a real probe implementation; the
+   * `never` default enforces this at compile time — adding a new value
+   * to `ConnectorType` without a branch here fails the build. See PRD
+   * F3.2a for the tranche discipline.
    */
   async probe(connector: ConnectorEntity): Promise<ProbeResult> {
     switch (connector.connectorType) {
@@ -62,17 +63,21 @@ export class ConnectorProbeService {
         return this.probeS3(connector);
       case 'databricks':
         return this.probeDatabricks(connector);
-      default:
-        // Unsupported — skip live probe, leave status as pending.
-        return { status: 'healthy', responseTimeMs: null, errorMessage: null };
+      default: {
+        // Exhaustiveness: every ConnectorType must have a branch above.
+        // The runtime throw is reachable only if a row carries a value
+        // outside the enum (data corruption or a stale row that escaped
+        // V32's cleanup) — fail loudly rather than synthesize healthy.
+        const _exhaustive: never = connector.connectorType;
+        throw new Error(`Unhandled connector type: ${String(_exhaustive)}`);
+      }
     }
   }
 
   /**
    * Connects to the external system and infers the source schema.
-   * Today: PostgreSQL (information_schema), S3 (object listing), and
-   * Databricks (Unity Catalog REST). See B-063 for the remaining
-   * connector types' implementation status.
+   * Same exhaustiveness contract as `probe()` — adding a `ConnectorType`
+   * value without an `inferSchema` branch fails the build.
    */
   async inferSchema(
     connector: ConnectorEntity,
@@ -85,8 +90,10 @@ export class ConnectorProbeService {
         return this.introspectS3(connector, source);
       case 'databricks':
         return this.introspectDatabricks(connector, source);
-      default:
-        return { schemaDefinition: {}, columnCount: null, rowEstimate: null };
+      default: {
+        const _exhaustive: never = connector.connectorType;
+        throw new Error(`Unhandled connector type: ${String(_exhaustive)}`);
+      }
     }
   }
 

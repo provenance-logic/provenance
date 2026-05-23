@@ -270,18 +270,17 @@ describe('ConnectorProbeService.probeDatabricks (B-063 Layer 1)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  // ---------- unsupported types are unchanged ----------
+  // ---------- exhaustiveness — values outside the enum throw ----------
 
-  it('still returns synthetic healthy for not-yet-implemented connector types', async () => {
-    const result = await service.probe(
-      makeDatabricksConnector({
-        connectorType: 'snowflake',
-        connectionConfig: {},
-      }),
-    );
-
-    expect(result.status).toBe('healthy');
-    expect(result.responseTimeMs).toBeNull();
+  it('throws rather than synthesizing healthy for a connector type outside the enum', async () => {
+    await expect(
+      service.probe(
+        makeDatabricksConnector({
+          connectorType: 'snowflake' as unknown as 'databricks',
+          connectionConfig: {},
+        }),
+      ),
+    ).rejects.toThrow(/Unhandled connector type: snowflake/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

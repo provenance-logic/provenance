@@ -4,20 +4,26 @@ import type { Uuid, IsoTimestamp, PaginatedList } from './common.js';
 // Enumerations
 // ---------------------------------------------------------------------------
 
+/**
+ * Connector types the platform ships first-class.
+ *
+ * Per PRD F3.2 + F3.2a (2026-05-23 PRD v1.6 reshape closing anchor
+ * decision 5 on B-063), the connector library exposes only types that
+ * work end-to-end at the consumer-grade bar. Earlier versions of this
+ * enum advertised 12 types; only PostgreSQL, S3, and Databricks had
+ * real probes / schema inference, so the other 9 were retired by
+ * migration V32. Snowflake is the next-scheduled addition under the
+ * F3.2a tranche cadence and will be added back here when it ships.
+ *
+ * Adding a new value: implement the probe + inferSchema branches in
+ * ConnectorProbeService (TypeScript exhaustiveness check will fail the
+ * build otherwise), add a CHECK constraint update migration, ship a
+ * capability manifest row, update the registration UI dropdown.
+ */
 export type ConnectorType =
   | 'postgresql'
-  | 'mysql'
-  | 'snowflake'
-  | 'bigquery'
-  | 'redshift'
-  | 'databricks'
   | 's3'
-  | 'gcs'
-  | 'azure_blob'
-  | 'kafka'
-  | 'redpanda'
-  | 'rest_api'
-  | 'custom';
+  | 'databricks';
 
 export type SourceType =
   | 'table'
