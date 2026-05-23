@@ -15,26 +15,21 @@ import type {
 // Lists every connector registered for the active org and exposes a
 // registration form bound to POST /organizations/:orgId/connectors. The
 // form deliberately surfaces connectionConfig as a JSON textarea
-// (default `{}`) rather than rendering 13 connector-type-specific forms —
+// (default `{}`) rather than rendering connector-type-specific forms —
 // per-type field schemas are a follow-on once the operator UX for
 // credentials is settled. credentialArn is a free-text field so the
 // operator can paste an AWS Secrets Manager ARN; raw credentials never
 // hit the UI.
 
+// Per PRD F3.2 + F3.2a (2026-05-23 PRD v1.6 reshape closing anchor
+// decision 5 on B-063): the dropdown exposes only types that ship
+// end-to-end at the consumer-grade bar. Earlier versions advertised 13
+// options; the 10 unimplemented options were retired. Snowflake is the
+// next-scheduled addition under the F3.2a tranche cadence.
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'postgresql',  label: 'PostgreSQL' },
-  { value: 'mysql',       label: 'MySQL' },
-  { value: 'snowflake',   label: 'Snowflake' },
-  { value: 'bigquery',    label: 'BigQuery' },
-  { value: 'redshift',    label: 'Redshift' },
   { value: 'databricks',  label: 'Databricks' },
   { value: 's3',          label: 'S3' },
-  { value: 'gcs',         label: 'GCS' },
-  { value: 'azure_blob',  label: 'Azure Blob' },
-  { value: 'kafka',       label: 'Kafka' },
-  { value: 'redpanda',    label: 'Redpanda' },
-  { value: 'rest_api',    label: 'REST API' },
-  { value: 'custom',      label: 'Custom' },
 ];
 
 const VALIDATION_PILL: Record<ValidationStatus, string> = {

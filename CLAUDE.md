@@ -189,14 +189,16 @@ Connectors that implement discovery mode perform two types of crawling:
 
 **Re-crawl (delta)** — runs on a governance-configurable schedule (platform default: 24 hours). Detects new objects, changed metadata, and updated lineage since the last crawl. Merges delta results without overwriting domain-declared metadata.
 
-**Priority connectors with discovery mode at MVP:**
+**First-class connectors at MVP** (per PRD F3.2 + F3.2a, reflecting the 2026-05-23 PRD v1.6 reshape that closed anchor decision 5 on B-063):
 
-| Connector | Discovery Sources | Lineage Granularity | Metadata Coverage |
-| --- | --- | --- | --- |
-| Databricks | Unity Catalog API | Column-level | High (where Unity Catalog adopted) |
-| dbt | manifest.json + catalog.json | Column-level | High |
-| Snowflake | Information Schema + Access History | Asset-level (column best-effort) | Medium |
-| Fivetran | Metadata API | Asset-level (best-effort upstream) | Low-Medium |
+| Connector | Probe / Schema | Discovery | Lineage Granularity | Status |
+| --- | --- | --- | --- | --- |
+| PostgreSQL | Real | None natively | n/a | Shipped |
+| Amazon S3 | Real | None natively | n/a | Shipped |
+| Databricks | Real | Unity Catalog API | Table-level (column deferred) | Shipped (V31 capability manifest 1.0.0) |
+| Snowflake | — | Information Schema + Access History (planned) | Asset-level + share-aware (planned) | **Planned — next tranche under F3.2a** |
+
+Deferred to post-OSR per anchor-decisions doc decision 5 + OS3.6 / OS3.7: streaming connectors (Kafka, Redpanda) and REST API connectors (their A/B/C user-story shape isn't designed yet); dbt and Fivetran (planned re-framing as a separate "metadata source" category since they describe pipelines rather than host data products). BigQuery and MySQL are queued behind Snowflake in the F3.2a tranche order. The `custom` connector type was retired; whether the platform exposes a generic catch-all is a separate design question.
 
 **Conflict resolution:** Domain-declared metadata takes precedence over discovered metadata unless the governance layer has configured automatic discovery override. Conflicts surfaced to domain team for resolution. Discovered lineage that supplements (does not conflict with) declared lineage is merged automatically and flagged as system-discovered.
 

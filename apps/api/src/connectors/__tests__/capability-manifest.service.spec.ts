@@ -82,7 +82,9 @@ describe('CapabilityManifestService', () => {
 
     it('returns null when no manifest exists for the type', async () => {
       repo.findOne.mockResolvedValue(null);
-      expect(await service.getLatestForType('redshift')).toBeNull();
+      // postgresql is a valid ConnectorType but has no capability manifest
+      // seeded today (V31 seeded Databricks 1.0.0 only).
+      expect(await service.getLatestForType('postgresql')).toBeNull();
     });
   });
 
@@ -90,7 +92,7 @@ describe('CapabilityManifestService', () => {
     it('throws NotFoundException when the type has no manifest', async () => {
       repo.findOne.mockResolvedValue(null);
       await expect(
-        service.getLatestForTypeOrThrow('redshift'),
+        service.getLatestForTypeOrThrow('postgresql'),
       ).rejects.toThrow(NotFoundException);
     });
 

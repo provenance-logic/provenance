@@ -425,20 +425,17 @@ components:
 
     ConnectorType:
       type: string
+      description: |
+        Connector types the platform ships first-class. Per PRD F3.2 + F3.2a
+        (2026-05-23 PRD v1.6 reshape closing anchor decision 5 on B-063),
+        only types that work end-to-end at the consumer-grade bar are
+        exposed. Earlier versions advertised 12 types; the 9 unimplemented
+        types were retired by migration V32. Snowflake is the next-
+        scheduled addition under the F3.2a tranche cadence.
       enum:
         - postgresql
-        - mysql
-        - snowflake
-        - bigquery
-        - redshift
-        - databricks
         - s3
-        - gcs
-        - azure_blob
-        - kafka
-        - redpanda
-        - rest_api
-        - custom
+        - databricks
 
     SourceType:
       type: string
