@@ -105,7 +105,12 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 
 ---
 
-## B-071 — Cross-org access requests are structurally broken: `submitRequest` rejects them, and `approveRequest` can't find them even if accepted
+## B-071 — Cross-org access requests structurally broken (RESOLVED 2026-05-23)
+
+**Moved to [resolved.md](resolved.md#B-071-cross-org-access-requests-structurally-broken-submitrequest-rejected-them-and-approverequest-could-not-find-them).** Per anchor decision 3 (Model A): new `@AllowCrossOrgWriteForApproval` decorator + cross-org service-layer rewrites of `submitRequest` / `approveRequest` / `denyRequest` / `getRequest` / `listRequests` / `listApprovalEvents`. The marketplace cross-org consumer flow now works end-to-end. Placeholder note on cross-org notification routing pending the broader notification architecture decision (still deferred).
+
+<details>
+<summary>Original entry (for reference)</summary>
 
 - **Severity:** High pre-PRD-reshape; **likely Blocker post-Sunday** because the cross-org access-request flow is the operational spine of the data-mesh marketplace, and tonight's #164 closed the upstream half (cross-org reads) without addressing this downstream half.
 - **Status:** Open — architectural, not a quick-fix. The right resolution path is a PRD-level decision on which org owns access-request and access-grant rows in a federated marketplace.
@@ -181,6 +186,8 @@ A reasonable resolution order: settle Model A/B/C, then settle the [B-070](#B-07
 B-068 (which #164 closed) and B-071 are sibling bugs from the same root cause: **the platform's architecture didn't have a coherent cross-org primitive at the time the marketplace was built.** B-061's controller guard was correct for tenant-scoped writes but blocked the marketplace's cross-tenant reads (B-068). Today's same-org access-request flow is correct, but it has no cross-org counterpart (B-071). Both are symptoms of "marketplace cross-tenant semantics are an afterthought" — the kind of finding that only surfaces under a real persona walkthrough, which #162 was the first to do.
 
 The fix scope, post-PRD-decision, is comparable to #164's blast radius for Model A (decorator + service-layer carve-out for the approval endpoints); larger for Models B and C (schema or migration work).
+
+</details>
 
 ---
 

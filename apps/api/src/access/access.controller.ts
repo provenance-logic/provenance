@@ -12,6 +12,8 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
+import { AllowCrossOrgRead } from '../auth/allow-cross-org-read.decorator.js';
+import { AllowCrossOrgWriteForApproval } from '../auth/allow-cross-org-write-for-approval.decorator.js';
 import { ReqContext } from '../auth/request-context.decorator.js';
 import { AccessService } from './access.service.js';
 import type {
@@ -133,16 +135,28 @@ export class AccessController {
     return this.accessService.submitRequest(ctx.orgId, dto, ctx.principalId);
   }
 
+  // @AllowCrossOrgRead per B-071 Model A: both the requester (whose JWT
+  // orgId matches request.orgId) and the product owner (whose JWT orgId
+  // differs from request.orgId) need to read the request detail. The
+  // service-layer principal check enforces the requester-or-owner rule.
   @Get('requests/:requestId')
+  @AllowCrossOrgRead()
   getRequest(
     @ReqContext() ctx: RequestContext,
     @Param('requestId') requestId: string,
   ): Promise<AccessRequest> {
-    return this.accessService.getRequest(ctx.orgId, requestId);
+    return this.accessService.getRequest(ctx.orgId, requestId, ctx.principalId);
   }
 
+  // @AllowCrossOrgWriteForApproval per B-071 Model A: under Model A
+  // (anchor decision 3), the request row lives in the requester's org;
+  // the product owner reaches across to approve. The service-layer
+  // assertCallerCanResolve enforces that the caller owns the product
+  // the request targets — the decorator only relaxes the URL/JWT org
+  // match, not the resource-ownership check.
   @Post('requests/:requestId/approve')
   @Roles('org_admin', 'domain_owner')
+  @AllowCrossOrgWriteForApproval()
   approveRequest(
     @ReqContext() ctx: RequestContext,
     @Param('requestId') requestId: string,
@@ -159,6 +173,7 @@ export class AccessController {
 
   @Post('requests/:requestId/deny')
   @Roles('org_admin', 'domain_owner')
+  @AllowCrossOrgWriteForApproval()
   denyRequest(
     @ReqContext() ctx: RequestContext,
     @Param('requestId') requestId: string,
@@ -186,14 +201,17 @@ export class AccessController {
   // Approval Events
   // ---------------------------------------------------------------------------
 
+  // @AllowCrossOrgRead per B-071 Model A: same shape as getRequest —
+  // requester or owner needs to read; service-layer check enforces it.
   @Get('requests/:requestId/events')
+  @AllowCrossOrgRead()
   listApprovalEvents(
     @ReqContext() ctx: RequestContext,
     @Param('requestId') requestId: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): Promise<ApprovalEventList> {
-    return this.accessService.listApprovalEvents(ctx.orgId, requestId, {
+    return this.accessService.listApprovalEvents(ctx.orgId, requestId, ctx.principalId, {
       limit:  limit  ? parseInt(limit,  10) : 20,
       offset: offset ? parseInt(offset, 10) : 0,
     });

@@ -649,6 +649,64 @@ describe('AccessService', () => {
 
       expect(result.request.status).toBe('approved');
     });
+
+    it('B-071 Model A: grant lands in the requesters org (not the approvers) on cross-org approval', async () => {
+      // Cross-org marketplace flow: requester in org-A, product owned by
+      // beta-industries (owner-1) in org-B. Approver is owner-1 acting
+      // from their own JWT (orgId=org-B).
+      const request = makeRequest({
+        orgId: 'org-A',
+        productId: 'product-cross',
+        requesterPrincipalId: 'consumer-1',
+      });
+      requestRepo.findOne.mockResolvedValue(request);
+      requestRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+      productRepo.findOne.mockResolvedValue(
+        makeProduct({ id: 'product-cross', orgId: 'org-B', ownerPrincipalId: 'owner-1' }),
+      );
+      const grant = makeGrant({
+        approvalRequestId: 'request-1',
+        orgId: 'org-A',
+        granteePrincipalId: 'consumer-1',
+      });
+      grantRepo.create.mockReturnValue(grant);
+      grantRepo.save.mockResolvedValue(grant);
+      eventRepo.create.mockImplementation((d: any) => d);
+      eventRepo.save.mockResolvedValue(makeEvent({ action: 'approved', orgId: 'org-A' }));
+
+      const result = await service.approveRequest(
+        'org-B',
+        'request-1',
+        {},
+        'owner-1',
+        ['domain_owner'],
+      );
+
+      // Grant is created with the requesters orgId (Model A), not the approvers.
+      expect(grantRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-A',
+          granteePrincipalId: 'consumer-1',
+          productId: 'product-cross',
+        }),
+      );
+      // Approval-event records in the requesters org too.
+      expect(eventRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-A',
+          action: 'approved',
+        }),
+      );
+      // Approval notification fires to the requester in their own org.
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-A',
+          category: 'access_request_approved',
+          recipients: ['consumer-1'],
+        }),
+      );
+      expect(result.request.status).toBe('approved');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -756,15 +814,25 @@ describe('AccessService', () => {
     it('throws NotFoundException when the request does not exist', async () => {
       requestRepo.findOne.mockResolvedValue(null);
       await expect(
-        service.listApprovalEvents('org-1', 'missing', { limit: 20, offset: 0 }),
+        service.listApprovalEvents('org-1', 'missing', 'principal-2', {
+          limit: 20,
+          offset: 0,
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('returns paginated events for the request', async () => {
-      requestRepo.findOne.mockResolvedValue(makeRequest());
+    it('returns paginated events when the caller is the requester', async () => {
+      requestRepo.findOne.mockResolvedValue(
+        makeRequest({ requesterPrincipalId: 'principal-2' }),
+      );
       eventRepo.findAndCount.mockResolvedValue([[makeEvent()], 1]);
 
-      const result = await service.listApprovalEvents('org-1', 'request-1', { limit: 20, offset: 0 });
+      const result = await service.listApprovalEvents(
+        'org-1',
+        'request-1',
+        'principal-2',
+        { limit: 20, offset: 0 },
+      );
 
       expect(result.meta.total).toBe(1);
       expect(result.items[0].action).toBe('submitted');
