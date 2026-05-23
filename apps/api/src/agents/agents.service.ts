@@ -138,15 +138,23 @@ export class AgentsService {
     return this.formatAgentResponse(savedAgent, savedClassification, credentials.keycloak_client_secret);
   }
 
-  async getAgent(agentId: string) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+  async getAgent(agentId: string, ctx: RequestContext) {
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
-    const currentClassification = await this.getCurrentClassification(agentId);
+    const currentClassification = await this.getCurrentClassification(
+      agentId,
+      ctx.orgId,
+    );
     return this.formatAgentResponse(agent, currentClassification);
   }
 
-  async listAgents(orgId: string) {
+  async listAgents(orgId: string, ctx: RequestContext) {
+    if (orgId !== ctx.orgId) {
+      throw new ForbiddenException('orgId must match the caller org');
+    }
     const agents = await this.agentRepo.find({
       where: { orgId },
       order: { createdAt: 'DESC' },
@@ -154,7 +162,10 @@ export class AgentsService {
 
     const results = await Promise.all(
       agents.map(async (agent) => {
-        const classification = await this.getCurrentClassification(agent.agentId);
+        const classification = await this.getCurrentClassification(
+          agent.agentId,
+          orgId,
+        );
         return this.formatAgentResponse(agent, classification);
       }),
     );
@@ -178,10 +189,12 @@ export class AgentsService {
     dto: UpdateClassificationDto,
     ctx: RequestContext,
   ) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
-    const current = await this.getCurrentClassification(agentId);
+    const current = await this.getCurrentClassification(agentId, ctx.orgId);
     const currentClassification = current?.classification ?? 'Observed';
 
     if (dto.classification === currentClassification) {
@@ -326,7 +339,9 @@ export class AgentsService {
   // ---------------------------------------------------------------------------
 
   async rotateSecret(agentId: string, ctx: RequestContext) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
     const isOversightContact = ctx.email === agent.humanOversightContact;
@@ -337,7 +352,10 @@ export class AgentsService {
     }
 
     const credentials = await this.keycloakAdmin.rotateClientSecret(agentId);
-    const currentClassification = await this.getCurrentClassification(agentId);
+    const currentClassification = await this.getCurrentClassification(
+      agentId,
+      ctx.orgId,
+    );
 
     return this.formatAgentResponse(agent, currentClassification, credentials.keycloak_client_secret);
   }
@@ -347,7 +365,9 @@ export class AgentsService {
   // ---------------------------------------------------------------------------
 
   async provisionCredentials(agentId: string, ctx: RequestContext) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
     if (!hasGovernanceRole(ctx.roles)) {
@@ -367,7 +387,10 @@ export class AgentsService {
     agent.keycloakClientProvisioned = true;
     await this.agentRepo.save(agent);
 
-    const currentClassification = await this.getCurrentClassification(agentId);
+    const currentClassification = await this.getCurrentClassification(
+      agentId,
+      ctx.orgId,
+    );
     return this.formatAgentResponse(agent, currentClassification, credentials.keycloak_client_secret);
   }
 
@@ -375,12 +398,14 @@ export class AgentsService {
   // B2: Classification history
   // ---------------------------------------------------------------------------
 
-  async getClassificationHistory(agentId: string) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+  async getClassificationHistory(agentId: string, ctx: RequestContext) {
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
     const history = await this.classificationRepo.find({
-      where: { agentId },
+      where: { agentId, orgId: ctx.orgId },
       order: { effectiveFrom: 'DESC' },
     });
 
@@ -401,11 +426,16 @@ export class AgentsService {
   // B4: Oversight endpoint
   // ---------------------------------------------------------------------------
 
-  async getOversight(agentId: string) {
-    const agent = await this.agentRepo.findOne({ where: { agentId } });
+  async getOversight(agentId: string, ctx: RequestContext) {
+    const agent = await this.agentRepo.findOne({
+      where: { agentId, orgId: ctx.orgId },
+    });
     if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
-    const currentClassification = await this.getCurrentClassification(agentId);
+    const currentClassification = await this.getCurrentClassification(
+      agentId,
+      ctx.orgId,
+    );
 
     // Fetch last activity and 24h count from audit log
     let lastActivityAt: string | null = null;
@@ -414,9 +444,9 @@ export class AgentsService {
     try {
       const lastActivity: { occurred_at: string }[] = await this.dataSource.query(
         `SELECT occurred_at FROM audit.audit_log
-         WHERE agent_id = $1 AND action = 'mcp_tool_call'
+         WHERE agent_id = $1 AND org_id = $2 AND action = 'mcp_tool_call'
          ORDER BY occurred_at DESC LIMIT 1`,
-        [agentId],
+        [agentId, ctx.orgId],
       );
       if (lastActivity.length > 0) {
         lastActivityAt = lastActivity[0].occurred_at;
@@ -424,9 +454,9 @@ export class AgentsService {
 
       const countResult: { cnt: number }[] = await this.dataSource.query(
         `SELECT count(*)::int as cnt FROM audit.audit_log
-         WHERE agent_id = $1 AND action = 'mcp_tool_call'
+         WHERE agent_id = $1 AND org_id = $2 AND action = 'mcp_tool_call'
            AND occurred_at >= NOW() - INTERVAL '24 hours'`,
-        [agentId],
+        [agentId, ctx.orgId],
       );
       activityCount24h = countResult[0]?.cnt ?? 0;
     } catch (err) {
@@ -447,9 +477,9 @@ export class AgentsService {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  async getCurrentClassification(agentId: string) {
+  async getCurrentClassification(agentId: string, orgId: string) {
     return this.classificationRepo.findOne({
-      where: { agentId },
+      where: { agentId, orgId },
       order: { effectiveFrom: 'DESC' },
     });
   }

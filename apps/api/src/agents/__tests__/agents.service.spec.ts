@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AgentsService } from '../agents.service.js';
 import { AgentIdentityEntity } from '../entities/agent-identity.entity.js';
 import { AgentTrustClassificationEntity } from '../entities/agent-trust-classification.entity.js';
@@ -24,6 +24,7 @@ const mockAgentRepo = () => ({
 
 const mockClassificationRepo = () => ({
   findOne: jest.fn(),
+  find: jest.fn().mockResolvedValue([]),
   create: jest.fn((dto: Partial<AgentTrustClassificationEntity>) => dto),
   save: jest.fn((entity: Partial<AgentTrustClassificationEntity>) => ({
     classificationId: 'cls-001',
@@ -353,6 +354,125 @@ describe('AgentsService', () => {
       );
 
       expect(result.current_classification).toBe('Supervised');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // B-062 / ADR-010 — explicit-orgId-filter tenant isolation at the service layer
+  //
+  // The B-061 controller-layer guard does NOT fire on agent routes (no :orgId in
+  // the URL today). RLS does NOT load-bear (session variable doesn't persist
+  // across pool connections). So the service-layer findOne MUST filter on orgId
+  // explicitly — otherwise a caller in org A can read an agent record from org B
+  // by knowing the agent's UUID.
+  //
+  // These tests pin the service-layer behavior so a future refactor that drops
+  // the orgId filter fails CI.
+  // ---------------------------------------------------------------------------
+
+  describe('tenant isolation', () => {
+    // When findOne is called with { agentId, orgId }, only return the agent if
+    // the orgIds match (simulating the WHERE clause being honored). This is how
+    // the production database behaves with the explicit-filter pattern.
+    function pinAgentToOrg(agent: AgentIdentityEntity) {
+      agentRepo.findOne.mockImplementation(({ where }: { where: { agentId: string; orgId?: string } }) => {
+        if (where.agentId === agent.agentId && where.orgId === agent.orgId) {
+          return Promise.resolve(agent);
+        }
+        return Promise.resolve(null);
+      });
+    }
+
+    it('getAgent passes orgId to the findOne where clause', async () => {
+      const agent = makeAgent({ orgId: 'org-001' });
+      pinAgentToOrg(agent);
+      classificationRepo.findOne.mockResolvedValue(null);
+
+      await service.getAgent('agent-001', makeCtx({ orgId: 'org-001' }));
+
+      expect(agentRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ agentId: 'agent-001', orgId: 'org-001' }),
+        }),
+      );
+    });
+
+    it('getAgent rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001' }));
+
+      await expect(
+        service.getAgent('agent-001', makeCtx({ orgId: 'org-other' })),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateClassification rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001' }));
+
+      await expect(
+        service.updateClassification(
+          'agent-001',
+          { classification: 'Supervised', reason: 'Cross-org probe should not succeed' },
+          makeCtx({ roles: ['governance_member'], orgId: 'org-other' }),
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rotateSecret rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001' }));
+
+      await expect(
+        service.rotateSecret('agent-001', makeCtx({ roles: ['governance_member'], orgId: 'org-other' })),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('provisionCredentials rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001', keycloakClientProvisioned: false }));
+
+      await expect(
+        service.provisionCredentials(
+          'agent-001',
+          makeCtx({ roles: ['governance_member'], orgId: 'org-other' }),
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('getClassificationHistory rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001' }));
+
+      await expect(
+        service.getClassificationHistory('agent-001', makeCtx({ orgId: 'org-other' })),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('getOversight rejects when ctx.orgId does not match agent.orgId', async () => {
+      pinAgentToOrg(makeAgent({ orgId: 'org-001' }));
+
+      await expect(
+        service.getOversight('agent-001', makeCtx({ orgId: 'org-other' })),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('listAgents rejects when the orgId param does not match ctx.orgId', async () => {
+      // A caller forges the ?orgId= query param to peek at another org's agents.
+      await expect(
+        service.listAgents('org-other', makeCtx({ orgId: 'org-001' })),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(agentRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('getClassificationHistory filters classification rows by orgId, not just by agentId', async () => {
+      const agent = makeAgent({ orgId: 'org-001' });
+      pinAgentToOrg(agent);
+      classificationRepo.find.mockResolvedValue([]);
+
+      await service.getClassificationHistory('agent-001', makeCtx({ orgId: 'org-001' }));
+
+      expect(classificationRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ agentId: 'agent-001', orgId: 'org-001' }),
+        }),
+      );
     });
   });
 });
