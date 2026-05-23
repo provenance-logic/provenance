@@ -342,18 +342,39 @@ export class AccessService {
        * principal. The "approver queue" filter used by the Pending Requests
        * page so a domain owner sees their own actionable workload instead
        * of every request in the org. Joins data_products on product_id.
+       *
+       * Per B-071 Model A (anchor decision 3), cross-org requests live
+       * in the requester's org. When `forApproverPrincipalId` is set,
+       * the orgId filter is dropped — the product-ownership join is the
+       * authorization gate, and a domain owner needs to see incoming
+       * requests against their products regardless of which org each
+       * request came from.
        */
       forApproverPrincipalId?: string;
       limit: number;
       offset: number;
     },
   ): Promise<AccessRequestList> {
+    const isApproverQueue = Boolean(filters.forApproverPrincipalId);
     const qb = this.requestRepo
       .createQueryBuilder('req')
-      .where('req.orgId = :orgId', { orgId })
       .orderBy('req.requestedAt', 'DESC')
       .take(filters.limit)
       .skip(filters.offset);
+
+    if (isApproverQueue) {
+      // @cross-tenant-by-design: the approver queue intentionally
+      // crosses orgs per Model A — drop the `req.orgId` filter and
+      // let the product-ownership join authorize the rows.
+      qb.innerJoin(
+        DataProductEntity,
+        'prod',
+        'prod.id = req.productId AND prod.owner_principal_id = :approver',
+        { approver: filters.forApproverPrincipalId },
+      );
+    } else {
+      qb.where('req.orgId = :orgId', { orgId });
+    }
 
     if (filters.productId) {
       qb.andWhere('req.productId = :productId', { productId: filters.productId });
@@ -365,14 +386,6 @@ export class AccessService {
     }
     if (filters.status) {
       qb.andWhere('req.status = :status', { status: filters.status });
-    }
-    if (filters.forApproverPrincipalId) {
-      qb.innerJoin(
-        DataProductEntity,
-        'prod',
-        'prod.id = req.productId AND prod.owner_principal_id = :approver',
-        { approver: filters.forApproverPrincipalId },
-      );
     }
 
     const [items, total] = await qb.getManyAndCount();
@@ -402,19 +415,20 @@ export class AccessService {
       );
     }
 
-    // 404 / 403 — validate the product exists, belongs to this org, and is published.
-    // @cross-tenant-by-design: post-lookup orgId check is what enforces the same-org requirement;
-    // see B-071 — for the marketplace cross-org access flow, this rejection is itself the bug.
+    // 404 — validate the product exists and is published.
+    // @cross-tenant-by-design: the marketplace is cross-org by design; a
+    // consumer in Org A submitting against a product in Org B is the
+    // central use case of the data-mesh marketplace per anchor decision 3
+    // (Model A). Same-org-only enforcement here was removed by the B-071
+    // fix; the cross-org write is governed instead by the approver-side
+    // ownership check in `assertCallerCanResolve` (which fires on
+    // approve/deny). The request row's `orgId` is the requester's org
+    // (Model A: request and grant live in requester's namespace).
     const product = await this.productRepo.findOne({
       where: { id: dto.productId },
     });
     if (!product) {
       throw new NotFoundException(`Data product ${dto.productId} not found`);
-    }
-    if (product.orgId !== orgId) {
-      throw new ForbiddenException(
-        'Cannot request access to a product that belongs to a different organisation',
-      );
     }
     if (product.status !== 'published') {
       throw new ConflictException(
@@ -480,9 +494,16 @@ export class AccessService {
     }
 
     // F11.6 — notify the product owner of the new access request.
+    // Notification lives in the recipient's (owner's) org rather than
+    // the requester's; this keeps the notification reachable from the
+    // owner's inbox query (which scopes on the owner's orgId). For the
+    // same-org case product.orgId === orgId, no behavior change. For
+    // the cross-org case (Model A: requester in Org A, owner in Org B),
+    // this is the placeholder pending the broader notification cross-
+    // org routing decision deferred by the anchor-decisions doc.
     await this.fireNotification(() =>
       this.notificationsService.enqueue({
-        orgId,
+        orgId: product.orgId,
         category: 'access_request_submitted',
         recipients: [product.ownerPrincipalId],
         payload: {
@@ -490,6 +511,7 @@ export class AccessService {
           productId: product.id,
           productName: product.name,
           requesterPrincipalId,
+          requesterOrgId: orgId,
           justification: saved.justification,
         },
         deepLink: `/access/requests/${saved.id}`,
@@ -501,9 +523,21 @@ export class AccessService {
     return this.toRequest(saved);
   }
 
-  async getRequest(orgId: string, requestId: string): Promise<AccessRequest> {
-    const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
+  async getRequest(
+    orgId: string,
+    requestId: string,
+    callerPrincipalId: string,
+  ): Promise<AccessRequest> {
+    // @cross-tenant-by-design: under B-071 Model A (anchor decision 3),
+    // the request row lives in the requester's org. The reader may be
+    // the requester (orgId match) OR the owner of the product the
+    // request targets (cross-org read). The id is a UUID so any
+    // accidental cross-org leak is bounded by knowledge of the
+    // specific UUID; the `assertCallerCanReadRequest` check below
+    // restricts to requester-or-owner regardless.
+    const request = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
+    await this.assertCallerCanReadRequest(orgId, request, callerPrincipalId);
     return this.toRequest(request);
   }
 
@@ -514,7 +548,13 @@ export class AccessService {
     approvedByPrincipalId: string,
     approvedByRoles: RoleType[],
   ): Promise<AccessRequestApprovalResult> {
-    const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
+    // @cross-tenant-by-design: under B-071 Model A (anchor decision 3),
+    // the request row lives in the requester's org. The approver (owner)
+    // reaches across to update it; `assertCallerCanResolve` below
+    // enforces that the caller owns the product the request targets
+    // (the second-layer ownership check the cross-org write decorator
+    // explicitly relies on).
+    const request = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
     if (request.status !== 'pending') {
       throw new ConflictException(
@@ -538,13 +578,16 @@ export class AccessService {
     request.resolutionNote = dto.note ?? null;
     const savedRequest = await this.requestRepo.save(request);
 
-    // Generate the connection package (F10.8) before saving so that the grant
-    // row carries it in the same transactional write.
-    const connectionPackage = await this.generatePackage(orgId, request.productId);
+    // Generate the connection package (F10.8) using the product's org
+    // (not the approver's), since the product owns the connection
+    // metadata regardless of which org the requester is in. Same value
+    // as approver's org in the same-org case.
+    const connectionPackage = await this.generatePackage(request.orgId, request.productId);
 
-    // Create the resulting access grant.
+    // Create the resulting access grant in the requester's org per
+    // Model A — the grant belongs to the consumer.
     const grant = this.grantRepo.create({
-      orgId,
+      orgId: request.orgId,
       productId: request.productId,
       granteePrincipalId: request.requesterPrincipalId,
       grantedBy: approvedByPrincipalId,
@@ -555,16 +598,24 @@ export class AccessService {
     });
     const savedGrant = await this.grantRepo.save(grant);
 
-    // Record the approved event.
-    await this.recordEvent(orgId, requestId, 'approved', approvedByPrincipalId, dto.note ?? null);
+    // Record the approved event in the request's org (Model A).
+    await this.recordEvent(
+      request.orgId,
+      requestId,
+      'approved',
+      approvedByPrincipalId,
+      dto.note ?? null,
+    );
 
     // Signal the workflow that a human decision was made (best-effort).
     await this.signalWorkflowResolved(request.temporalWorkflowId);
 
-    // F11.7 — notify the requester of the approval.
+    // F11.7 — notify the requester of the approval. Notification lives
+    // in the requester's org (the recipient's namespace) per the
+    // placeholder pattern for cross-org notifications.
     await this.fireNotification(() =>
       this.notificationsService.enqueue({
-        orgId,
+        orgId: request.orgId,
         category: 'access_request_approved',
         recipients: [request.requesterPrincipalId],
         payload: {
@@ -592,7 +643,10 @@ export class AccessService {
     deniedByPrincipalId: string,
     deniedByRoles: RoleType[],
   ): Promise<AccessRequest> {
-    const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
+    // @cross-tenant-by-design: same Model A cross-org write shape as
+    // `approveRequest` — request lives in requester's org; owner
+    // reaches across to deny; ownership check is the second layer.
+    const request = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
     if (request.status !== 'pending') {
       throw new ConflictException(
@@ -615,13 +669,21 @@ export class AccessService {
     request.resolutionNote = dto.note ?? null;
     const saved = await this.requestRepo.save(request);
 
-    await this.recordEvent(orgId, requestId, 'denied', deniedByPrincipalId, dto.note ?? null);
+    // Record the denied event in the request's org (Model A).
+    await this.recordEvent(
+      request.orgId,
+      requestId,
+      'denied',
+      deniedByPrincipalId,
+      dto.note ?? null,
+    );
     await this.signalWorkflowResolved(request.temporalWorkflowId);
 
-    // F11.8 — notify the requester of the denial.
+    // F11.8 — notify the requester of the denial. Notification lives
+    // in the requester's org per the placeholder cross-org pattern.
     await this.fireNotification(() =>
       this.notificationsService.enqueue({
-        orgId,
+        orgId: request.orgId,
         category: 'access_request_denied',
         recipients: [request.requesterPrincipalId],
         payload: {
@@ -675,14 +737,21 @@ export class AccessService {
   async listApprovalEvents(
     orgId: string,
     requestId: string,
+    callerPrincipalId: string,
     options: { limit: number; offset: number },
   ): Promise<ApprovalEventList> {
-    // Verify the request exists and belongs to this org.
-    const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
+    // @cross-tenant-by-design: same Model A read shape as `getRequest`
+    // — request lives in requester's org; events live alongside it;
+    // reader is requester or product owner.
+    const request = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
+    await this.assertCallerCanReadRequest(orgId, request, callerPrincipalId);
 
+    // @cross-tenant-by-design: events filter on the request's orgId
+    // (Model A — events live where the request lives), not the
+    // caller's orgId. The ownership check above is the auth gate.
     const [items, total] = await this.eventRepo.findAndCount({
-      where: { requestId, orgId },
+      where: { requestId, orgId: request.orgId },
       order: { occurredAt: 'DESC' },
       take: options.limit,
       skip: options.offset,
@@ -697,6 +766,46 @@ export class AccessService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Authorizes a read of an access request row under B-071 Model A.
+   * The reader may be (a) the original requester or (b) the owner of
+   * the product the request targets. Org admins in EITHER the
+   * requester's org or the product owner's org also pass — they keep
+   * the platform-admin visibility precedent.
+   *
+   * Callers reach this through `getRequest` and `listApprovalEvents`,
+   * both marked `@AllowCrossOrgRead` at the controller. The decorator
+   * relaxes the URL/JWT org-match guard; this helper enforces the
+   * requester-or-owner constraint at the service layer so cross-org
+   * reads are bounded by the principal's actual relationship to the
+   * request, not just by knowledge of the request UUID.
+   */
+  private async assertCallerCanReadRequest(
+    callerOrgId: string,
+    request: AccessRequestEntity,
+    callerPrincipalId: string,
+  ): Promise<void> {
+    if (request.requesterPrincipalId === callerPrincipalId) return;
+
+    // Product-owner read: load the product (which lives in the owner's
+    // org); the caller is authorized iff the product's owner is the
+    // caller AND the caller's JWT org matches the product's org (the
+    // owner is acting from their own org, not impersonating).
+    // @cross-tenant-by-design: the product lookup is bare-id because
+    // the product may not be in the caller's org under Model A; the
+    // (ownerPrincipalId, orgId) match is the authorization gate.
+    const product = await this.productRepo.findOne({ where: { id: request.productId } });
+    if (
+      product &&
+      product.ownerPrincipalId === callerPrincipalId &&
+      product.orgId === callerOrgId
+    ) {
+      return;
+    }
+
+    throw new NotFoundException(`Access request ${request.id} not found`);
+  }
 
   /**
    * Enforces the federated-governance ownership boundary on approve/deny.

@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
 import { ALLOW_CROSS_ORG_READ_KEY } from './allow-cross-org-read.decorator.js';
+import { ALLOW_CROSS_ORG_WRITE_FOR_APPROVAL_KEY } from './allow-cross-org-write-for-approval.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { RolesGuard } from './roles.guard.js';
 import { OrganizationsController } from '../organizations/organizations.controller.js';
@@ -450,6 +451,55 @@ describe('JwtAuthGuard — cross-org URL/JWT consistency (B-061)', () => {
       .mockReturnValue(true);
 
     await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+
+    superActivate.mockRestore();
+  });
+
+  // -------------------------------------------------------------------------
+  // @AllowCrossOrgWriteForApproval carve-out (B-071, Model A)
+  //
+  // The marketplace approve/deny endpoints need to mutate a request row that
+  // lives in the requester's org while the owner is in a different org. This
+  // decorator relaxes the URL/JWT org match the same way @AllowCrossOrgRead
+  // does for marketplace reads. The service-layer ownership check
+  // (assertCallerCanResolve) is the second layer that confirms the caller
+  // actually owns the product the request targets.
+  // -------------------------------------------------------------------------
+
+  it('@AllowCrossOrgWriteForApproval allows a cross-org URL :orgId vs JWT orgId mismatch', async () => {
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector({ [ALLOW_CROSS_ORG_WRITE_FOR_APPROVAL_KEY]: true }),
+    );
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      { orgId: BETA, principalId: 'owner-1' },
+      { orgId: ACME },
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    superActivate.mockRestore();
+  });
+
+  it('@AllowCrossOrgWriteForApproval does NOT bypass the empty-orgId @AllowNoOrg requirement', async () => {
+    const guard = new JwtAuthGuard(
+      agentRepo as any,
+      mockReflector({ [ALLOW_CROSS_ORG_WRITE_FOR_APPROVAL_KEY]: true }),
+    );
+    const { context } = mockExecutionContext(
+      { authorization: 'Bearer user-jwt' },
+      { orgId: '', principalId: 'owner-1' },
+      { orgId: ACME },
+    );
+    const superActivate = jest
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)), 'canActivate')
+      .mockReturnValue(true);
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
 
     superActivate.mockRestore();
   });

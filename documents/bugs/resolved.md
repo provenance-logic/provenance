@@ -6,6 +6,57 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-071 — Cross-org access requests structurally broken: submitRequest rejected them and approveRequest could not find them
+
+- **Resolved:** 2026-05-23 — implements [anchor decision 3 (Model A)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) from the 2026-05-23 PRD v1.6 work
+- **Severity:** Blocker (upgraded from High by the PRD overhaul — cross-org access flow is the operational spine of the data-mesh marketplace promise)
+- **Area:** `apps/api/src/access/access.service.ts`, `apps/api/src/access/access.controller.ts`, `apps/api/src/auth/` (new `@AllowCrossOrgWriteForApproval` decorator)
+
+**What was wrong.** Two halves of a single architectural gap:
+
+1. **`submitRequest` actively rejected cross-org requests** with a `ForbiddenException` at the line that checked `if (product.orgId !== orgId)`. A consumer in Org A clicking "Request Access" on an Org B product hit a 403 — the central use case of the marketplace.
+2. **`approveRequest` and `denyRequest` filtered request lookups by `orgId = approver's org`,** so even if (1) was removed, the approver in Org B querying their own namespace couldn't find requests that lived in Org A's namespace. The flow was structurally broken on both ends.
+
+Plus `getRequest`, `listRequests` (with `forApprover=me`), and `listApprovalEvents` all carried the same `orgId` filter — fixing only approve/deny would have left a hollow path (owner can mutate the request but can't see it in the queue or detail page).
+
+**Fix.** Per anchor decision 3 / Model A:
+
+- **`access.access_requests` and `access.access_grants` rows live in the requester's org namespace.** That's the existing schema's `orgId` column meaning — `submitRequest` already wrote it that way. No schema change.
+- **New `@AllowCrossOrgWriteForApproval` decorator** at `apps/api/src/auth/allow-cross-org-write-for-approval.decorator.ts`. Same shape as `@AllowCrossOrgRead` (B-068): the `JwtAuthGuard` skips its `:orgId === JWT orgId` check when present. Distinct from `@AllowCrossOrgRead` because writes need a separate audit/review trail and the application points are narrower (approve / deny only).
+- **Service-layer ownership check is the second layer.** `assertCallerCanResolve` (pre-existing per B-059) confirms the caller owns the product the request targets. The decorator only relaxes the URL/JWT match — it never trusts the JWT alone for cross-org writes.
+- **Six service methods updated** (each marked `@cross-tenant-by-design`):
+  - `submitRequest` — drop the line-414 `ForbiddenException`; product is looked up bare-id since cross-org is the central use case.
+  - `approveRequest` — request lookup by id only; grant lands in `request.orgId` (requester's, Model A); approval event records in `request.orgId`; approval notification routes to requester in their org; connection package generated under the product's org.
+  - `denyRequest` — same shape as approve.
+  - `getRequest` — adds `callerPrincipalId` arg; bare-id lookup; new `assertCallerCanReadRequest` helper authorizes requester-or-product-owner.
+  - `listRequests` — when `forApproverPrincipalId` is set, drops the `req.orgId` filter; the product-ownership join is the authorization gate. Same-org path unchanged.
+  - `listApprovalEvents` — adds `callerPrincipalId` arg; same Model A read shape as `getRequest`.
+- **Controllers wire the decorators:** `approve` and `deny` get `@AllowCrossOrgWriteForApproval`; `getRequest` and `listApprovalEvents` get `@AllowCrossOrgRead` (read-side analog).
+- **Notification routing (placeholder under the deferred cross-org notification decision):** notifications land in the recipient's org — submit notification (to owner) in `product.orgId`; approve/deny notifications (to requester) in `request.orgId`. Same-org behavior unchanged. The broader cross-org notification architecture remains a deferred item per the anchor-decisions doc.
+
+**Test coverage.**
+- New `JwtAuthGuard` tests for `@AllowCrossOrgWriteForApproval` (cross-org allowed; empty-orgId still rejected). 24/24 jwt-auth-guard tests passing.
+- Rewrote the pre-B-071 "rejects with ForbiddenException when consumer in org A requests access to product owned by org B" test to assert the new Model A behavior (request succeeds; row lands in requester's org).
+- New cross-org approve test: requester in Org A, product owned by Org B → grant lands in `org-A`, event records in `org-A`, notification routes to requester in `org-A`.
+- Total: 752/752 API tests passing.
+
+**B-071's "What the consumer flow looks like today" gaps, all closed:**
+- Consumer in Org A clicks cross-org product in marketplace → ✅ works (B-068, prior).
+- Consumer requests access → ✅ works (this PR — submitRequest accepts cross-org).
+- Owner in Org B sees request in their queue → ✅ works (this PR — `listRequests` with `forApprover=me` drops orgId filter).
+- Owner reads request detail → ✅ works (this PR — `getRequest` with read authorization).
+- Owner approves / denies → ✅ works (this PR — decorator + cross-org write).
+- Consumer sees their grant → ✅ works (grant lives in requester's org; existing `listGrants` finds it).
+
+**Pattern.** B-068 and B-071 are siblings — both surfaced by the persona walkthrough that produced the 2026-05-22 reframe doc. B-068 closed the read half via `@AllowCrossOrgRead`; B-071 closes the write half via `@AllowCrossOrgWriteForApproval`. The shape is identical: narrow decorator + service-layer ownership check + audit trail on scope violations. Future approval-shaped cross-org writes (e.g., owner-initiated connection-reference activation in Domain 12) can follow the same pattern.
+
+**Deferred (not closed by this PR, called out for tracking):**
+- **Cross-org notification routing architecture.** This PR uses the simplest placeholder (notification lives in recipient's org). The anchor-decisions doc lists the broader cross-org notification routing as a separate downstream decision.
+- **`product-enrichment.service.ts` `hasActiveGrant`.** Looks up grants by `(productOrgId, productId, principalId)`. Under Model A, cross-org grants live in the requester's org, so this lookup will return null for cross-org grants. Not in B-071's strict scope but should be visited before the consumer-grade outbound work (Phase 5.10-5.13) starts exercising cross-org grants in earnest.
+- **B-062 / RLS sticky-connection interaction.** The cross-org INSERTs and updates in this PR rely on the current platform reality where service-layer queries run as the table owner (bypasses RLS). When B-062's per-request sticky connection lands, the cross-org notification INSERT in particular will need a `SET LOCAL` or BYPASSRLS-aware path. Tracked as a Phase 6 hardening item.
+
+---
+
 ## B-068 — Marketplace cross-org URL break: B-061's `JwtAuthGuard` rejected legitimate cross-tenant marketplace reads
 
 - **Resolved:** 2026-05-22 (late session)

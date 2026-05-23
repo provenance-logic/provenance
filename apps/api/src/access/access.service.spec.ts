@@ -237,16 +237,40 @@ describe('AccessService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('rejects with ForbiddenException when a consumer in org A requests access to a product owned by org B', async () => {
+    it('accepts a cross-org request (consumer in org A, product owned by org B) per B-071 Model A', async () => {
+      // Pre-B-071 this rejected with ForbiddenException. Anchor decision 3
+      // (Model A) makes cross-org requests the central marketplace use
+      // case — the request row lives in the requester's org (org-A here);
+      // the cross-org write is governed at approve/deny time by
+      // assertCallerCanResolve, not by the submit-side org check.
       grantRepo.findOne.mockResolvedValue(null);
-      // Product exists but belongs to a different org.
+      requestRepo.findOne.mockResolvedValue(null);
       productRepo.findOne.mockResolvedValue(makeProduct({ orgId: 'org-B' }));
+      requestRepo.create.mockImplementation((dto: Partial<unknown>) => dto as never);
+      requestRepo.save.mockImplementation((req: { orgId?: string } & Record<string, unknown>) =>
+        Promise.resolve({
+          ...req,
+          id: 'request-cross-org',
+          requestedAt: new Date(),
+          resolvedAt: null,
+          resolvedBy: null,
+          resolutionNote: null,
+          temporalWorkflowId: null,
+          updatedAt: new Date(),
+        } as never),
+      );
 
-      await expect(
-        service.submitRequest('org-A', { productId: 'product-1' }, 'principal-2'),
-      ).rejects.toThrow(ForbiddenException);
+      const result = await service.submitRequest(
+        'org-A',
+        { productId: 'product-1' },
+        'principal-2',
+      );
 
-      expect(requestRepo.save).not.toHaveBeenCalled();
+      expect(result).toBeDefined();
+      // The request row carries the requester's org (Model A) — not the product's.
+      expect(requestRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: 'org-A', productId: 'product-1' }),
+      );
     });
   });
 

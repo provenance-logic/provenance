@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 import { ALLOW_NO_ORG_KEY } from './allow-no-org.decorator.js';
 import { ALLOW_CROSS_ORG_READ_KEY } from './allow-cross-org-read.decorator.js';
+import { ALLOW_CROSS_ORG_WRITE_FOR_APPROVAL_KEY } from './allow-cross-org-write-for-approval.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { RequestContext } from '@provenance/types';
 
@@ -114,13 +115,26 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // Skip when the route is marked @AllowCrossOrgRead (B-068). Used by
     // marketplace-style read endpoints where a consumer in org A is
     // legitimately reading metadata about a product owned by org B.
+    //
+    // Skip also when the route is marked @AllowCrossOrgWriteForApproval
+    // (B-071, Model A). Used by the narrow set of marketplace-approval
+    // WRITE endpoints (approve / deny) where an owner in org B mutates
+    // a request row that lives in the requester's (org A's) namespace.
+    // The service layer is still required to validate that the caller
+    // owns the product the request targets — the decorator only relaxes
+    // the URL-vs-JWT org match, not the resource-ownership check.
     const allowCrossOrgRead = this.reflector.getAllAndOverride<boolean>(
       ALLOW_CROSS_ORG_READ_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    const allowCrossOrgWriteForApproval = this.reflector.getAllAndOverride<boolean>(
+      ALLOW_CROSS_ORG_WRITE_FOR_APPROVAL_KEY,
       [context.getHandler(), context.getClass()],
     );
     const urlOrgId = request.params?.orgId;
     if (
       !allowCrossOrgRead &&
+      !allowCrossOrgWriteForApproval &&
       urlOrgId &&
       request.user?.orgId &&
       urlOrgId !== request.user.orgId
