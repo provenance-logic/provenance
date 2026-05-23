@@ -9,7 +9,7 @@ import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js'
 import { AccessRequestEntity } from '../../access/entities/access-request.entity.js';
 import { SchemaSnapshotEntity } from '../../connectors/entities/schema-snapshot.entity.js';
 import { EncryptionService } from '../../common/encryption.service.js';
-import type { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
+import { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
 
 const mockRepo = () => ({
   findOne: jest.fn().mockResolvedValue(null),
@@ -59,6 +59,8 @@ const makePort = (overrides: Partial<PortDeclarationEntity> = {}): PortDeclarati
   }) as unknown as Record<string, unknown>,
   connectionDetailsEncrypted: true,
   connectionDetailsValidated: false,
+  sourceRegistrationId: null,
+  sourceObjectPath: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   product: null as any,
@@ -95,6 +97,7 @@ describe('ProductEnrichmentService', () => {
         { provide: getRepositoryToken(AccessGrantEntity),     useFactory: mockRepo },
         { provide: getRepositoryToken(AccessRequestEntity),   useFactory: mockRepo },
         { provide: getRepositoryToken(SchemaSnapshotEntity),  useFactory: mockRepo },
+        { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
         { provide: EncryptionService,                         useFactory: mockEncryptionService },
       ],
     }).compile();
@@ -164,6 +167,8 @@ describe('ProductEnrichmentService', () => {
         measuredValue: 0.99,
         evaluatedAt: new Date('2024-01-02T00:00:00Z'),
       });
+      // Default: no bound port → lastRefreshedAt stays null (the hand-
+      // authored / unbound fallback). Pre-B-070 this was the only path.
       await expect(service.resolveFreshness('org-1', 'product-1')).resolves.toEqual({
         lastRefreshedAt: null,
         sloType: 'freshness',
@@ -171,6 +176,87 @@ describe('ProductEnrichmentService', () => {
         measuredValue: 0.99,
         evaluatedAt: '2024-01-02T00:00:00.000Z',
       });
+    });
+
+    it('B-070 / F2.8a: populates lastRefreshedAt from the bound source snapshot when a port has a source binding', async () => {
+      sloDeclRepo.findOne.mockResolvedValueOnce({ id: 'slo-1', sloType: 'freshness' });
+      sloEvalRepo.findOne.mockResolvedValueOnce({
+        passed: true,
+        measuredValue: 0.95,
+        evaluatedAt: new Date('2024-01-02T00:00:00Z'),
+      });
+      const boundSnapshot = {
+        capturedAt: new Date('2024-01-01T12:00:00Z'),
+      } as never;
+
+      const result = await service.resolveFreshness('org-1', 'product-1', boundSnapshot);
+
+      expect(result?.lastRefreshedAt).toBe('2024-01-01T12:00:00.000Z');
+      expect(result?.evaluatedAt).toBe('2024-01-02T00:00:00.000Z');
+    });
+  });
+
+  describe('resolveColumnSchema (B-070 / F2.8a)', () => {
+    it('returns null when no bound snapshot is provided', async () => {
+      await expect(service.resolveColumnSchema(null)).resolves.toBeNull();
+      await expect(service.resolveColumnSchema()).resolves.toBeNull();
+    });
+
+    it('returns null when the snapshot has no columns array', async () => {
+      const snapshot = {
+        schemaDefinition: { type: 's3_prefix', objectCount: 42 },
+        columnCount: null,
+        rowEstimate: null,
+        capturedAt: new Date('2024-01-01T00:00:00Z'),
+      } as never;
+      await expect(service.resolveColumnSchema(snapshot)).resolves.toBeNull();
+    });
+
+    it('maps schema_definition.columns into the ProductColumnSchema shape', async () => {
+      const snapshot = {
+        schemaDefinition: {
+          columns: [
+            { name: 'id', type: 'uuid', nullable: false },
+            { name: 'amount', type: 'numeric', nullable: true },
+            { name: 'created_at', type: 'timestamptz' }, // nullable defaults to true when absent
+          ],
+        },
+        columnCount: 3,
+        rowEstimate: 42000,
+        capturedAt: new Date('2024-01-01T12:00:00Z'),
+      } as never;
+
+      const result = await service.resolveColumnSchema(snapshot);
+
+      expect(result).toEqual({
+        columns: [
+          { name: 'id', type: 'uuid', nullable: false },
+          { name: 'amount', type: 'numeric', nullable: true },
+          { name: 'created_at', type: 'timestamptz', nullable: true },
+        ],
+        columnCount: 3,
+        rowEstimate: 42000,
+        capturedAt: '2024-01-01T12:00:00.000Z',
+      });
+    });
+
+    it('skips columns missing name or type rather than throwing', async () => {
+      const snapshot = {
+        schemaDefinition: {
+          columns: [
+            { name: 'id', type: 'uuid', nullable: false },
+            { name: 'malformed' }, // no type → skipped
+            { type: 'text' },      // no name → skipped
+          ],
+        },
+        columnCount: 1,
+        rowEstimate: null,
+        capturedAt: new Date('2024-01-01T00:00:00Z'),
+      } as never;
+
+      const result = await service.resolveColumnSchema(snapshot);
+      expect(result?.columns).toHaveLength(1);
+      expect(result?.columns[0].name).toBe('id');
     });
   });
 

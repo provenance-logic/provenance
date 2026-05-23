@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { DomainEntity } from '../organizations/entities/domain.entity.js';
 import { SloDeclarationEntity } from '../observability/entities/slo-declaration.entity.js';
@@ -17,6 +17,7 @@ import type {
   ProductFreshness,
   ProductAccessStatus,
   ProductColumnSchema,
+  ProductColumnSchemaColumn,
   ConnectionDetails,
   ConnectionDetailsPreview,
   OutputPortInterfaceType,
@@ -50,16 +51,22 @@ export class ProductEnrichmentService {
     @InjectRepository(AccessGrantEntity)     private readonly accessGrantRepo:   Repository<AccessGrantEntity>,
     @InjectRepository(AccessRequestEntity)   private readonly accessRequestRepo: Repository<AccessRequestEntity>,
     @InjectRepository(SchemaSnapshotEntity)  private readonly schemaSnapshotRepo: Repository<SchemaSnapshotEntity>,
+    @InjectRepository(PortDeclarationEntity) private readonly portRepo:          Repository<PortDeclarationEntity>,
     private readonly encryptionService: EncryptionService,
   ) {}
 
   async enrich(product: EnrichableProduct, ctx?: RequestContext): Promise<ProductEnrichmentFields> {
+    // resolveBoundSnapshot is the shared lookup behind both the
+    // columnSchema and freshness enrichments — both read the latest
+    // schema snapshot of the first source-bound output port (F2.8a).
+    // Done once here and threaded through to avoid two queries.
+    const boundSnapshot = await this.resolveBoundSnapshot(product.orgId, product.id);
     const [owner, domainTeam, freshness, accessStatus, columnSchema] = await Promise.all([
       this.resolveOwner(product.orgId, product.ownerPrincipalId),
       this.resolveDomainTeam(product.orgId, product.domainId),
-      this.resolveFreshness(product.orgId, product.id),
+      this.resolveFreshness(product.orgId, product.id, boundSnapshot),
       ctx ? this.resolveAccessStatus(product.orgId, product.id, ctx) : Promise.resolve(null),
-      this.resolveColumnSchema(),
+      this.resolveColumnSchema(boundSnapshot),
     ]);
     return { owner, domainTeam, freshness, accessStatus, columnSchema };
   }
@@ -86,7 +93,11 @@ export class ProductEnrichmentService {
     } catch { return null; }
   }
 
-  async resolveFreshness(orgId: string, productId: string): Promise<ProductFreshness | null> {
+  async resolveFreshness(
+    orgId: string,
+    productId: string,
+    boundSnapshot?: SchemaSnapshotEntity | null,
+  ): Promise<ProductFreshness | null> {
     try {
       const decl = await this.sloDeclRepo.findOne({
         where: { orgId, productId, sloType: 'freshness', active: true },
@@ -98,8 +109,16 @@ export class ProductEnrichmentService {
         order: { evaluatedAt: 'DESC' },
       });
       if (!evaluation) return null;
+      // F2.8a — when an output port is bound to a discovered source,
+      // the latest schema_snapshot's captured_at is "when the platform
+      // last saw the source's schema" — the closest defensible proxy
+      // for source-side freshness in the absence of pipeline emission
+      // data. Pre-B-070 this was always null with a "pending FK" note.
+      const snapshot = boundSnapshot === undefined
+        ? await this.resolveBoundSnapshot(orgId, productId)
+        : boundSnapshot;
       return {
-        lastRefreshedAt: null,
+        lastRefreshedAt: snapshot?.capturedAt.toISOString() ?? null,
         sloType: decl.sloType,
         passed: evaluation.passed,
         measuredValue: evaluation.measuredValue ?? null,
@@ -135,11 +154,71 @@ export class ProductEnrichmentService {
     } catch { return null; }
   }
 
-  // No direct product-to-schema_snapshot FK exists yet.
-  // When a linking mechanism is added, this will query schemaSnapshotRepo.
-  resolveColumnSchema(): Promise<ProductColumnSchema | null> {
-    void this.schemaSnapshotRepo;
-    return Promise.resolve(null);
+  /**
+   * F2.8a (closes B-070). Returns the latest schema snapshot for the
+   * product's first source-bound output port, shaped as a
+   * `ProductColumnSchema`. A product can have multiple output ports
+   * each bound to a different source object; today's contract returns
+   * one schema per product, so the first bound port wins. Per-port
+   * schemas are a follow-up if/when needed.
+   *
+   * Returns null when the product has no bound port, the bound source
+   * has no captured snapshot, or the snapshot's schema_definition
+   * doesn't carry a `columns` array (e.g. S3-prefix snapshots).
+   */
+  resolveColumnSchema(
+    boundSnapshot?: SchemaSnapshotEntity | null,
+  ): Promise<ProductColumnSchema | null> {
+    if (boundSnapshot === undefined || boundSnapshot === null) {
+      return Promise.resolve(null);
+    }
+    const def = boundSnapshot.schemaDefinition as { columns?: unknown };
+    if (!Array.isArray(def.columns)) return Promise.resolve(null);
+    const columns: ProductColumnSchemaColumn[] = (def.columns as Array<Record<string, unknown>>)
+      .filter((c) => typeof c.name === 'string' && typeof c.type === 'string')
+      .map((c) => ({
+        name: c.name as string,
+        type: c.type as string,
+        nullable: c.nullable !== false,
+      }));
+    if (columns.length === 0) return Promise.resolve(null);
+    return Promise.resolve({
+      columns,
+      columnCount: boundSnapshot.columnCount ?? columns.length,
+      rowEstimate: boundSnapshot.rowEstimate ?? null,
+      capturedAt: boundSnapshot.capturedAt.toISOString(),
+    });
+  }
+
+  /**
+   * F2.8a — Resolves the latest schema snapshot for the first output
+   * port of `productId` that has a non-NULL source binding. Returns
+   * null when no ports are bound or the bound source has no captured
+   * snapshot yet. Used by both `resolveColumnSchema` (for the columns)
+   * and `resolveFreshness` (for the capturedAt timestamp).
+   */
+  private async resolveBoundSnapshot(
+    orgId: string,
+    productId: string,
+  ): Promise<SchemaSnapshotEntity | null> {
+    try {
+      const boundPort = await this.portRepo.findOne({
+        where: {
+          orgId,
+          productId,
+          portType: 'output',
+          sourceRegistrationId: Not(IsNull()),
+        },
+        order: { createdAt: 'ASC' },
+      });
+      if (!boundPort || !boundPort.sourceRegistrationId) return null;
+      return await this.schemaSnapshotRepo.findOne({
+        where: { orgId, sourceRegistrationId: boundPort.sourceRegistrationId },
+        order: { capturedAt: 'DESC' },
+      });
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------

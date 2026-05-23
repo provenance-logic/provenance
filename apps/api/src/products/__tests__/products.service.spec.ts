@@ -11,6 +11,7 @@ import { PortDeclarationEntity } from '../entities/port-declaration.entity.js';
 import { ProductVersionEntity } from '../entities/product-version.entity.js';
 import { LifecycleEventEntity } from '../entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
+import { SourceRegistrationEntity } from '../../connectors/entities/source-registration.entity.js';
 import { GovernanceService } from '../../governance/governance.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
@@ -112,6 +113,8 @@ const makeOutputPortEntity = (
   },
   connectionDetailsValidated: false,
   connectionDetailsEncrypted: false,
+  sourceRegistrationId: null,
+  sourceObjectPath: null,
   createdAt: now,
   updatedAt: now,
   product: null as any,
@@ -131,6 +134,8 @@ const makeDiscoveryPortEntity = (): PortDeclarationEntity => ({
   connectionDetails: null,
   connectionDetailsValidated: false,
   connectionDetailsEncrypted: false,
+  sourceRegistrationId: null,
+  sourceObjectPath: null,
   createdAt: now,
   updatedAt: now,
   product: null as any,
@@ -177,6 +182,7 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(ProductVersionEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(LifecycleEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(PrincipalEntity), useFactory: mockPrincipalRepo },
+        { provide: getRepositoryToken(SourceRegistrationEntity), useFactory: mockRepo },
         { provide: GovernanceService, useFactory: mockGovernanceService },
         { provide: KafkaProducerService, useFactory: mockKafkaProducerService },
         { provide: SearchIndexingService, useValue: { indexProduct: jest.fn().mockResolvedValue(undefined), removeProduct: jest.fn().mockResolvedValue(undefined), deleteFromIndex: jest.fn().mockResolvedValue(undefined) } },

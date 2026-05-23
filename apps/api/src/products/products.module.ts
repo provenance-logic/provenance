@@ -14,6 +14,7 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.entity.js';
+import { SourceRegistrationEntity } from '../connectors/entities/source-registration.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { SearchModule } from '../search/search.module.js';
@@ -40,6 +41,7 @@ export { ProductsService };
       AccessGrantEntity,
       AccessRequestEntity,
       SchemaSnapshotEntity,
+      SourceRegistrationEntity,
     ]),
     GovernanceModule,
     KafkaModule,

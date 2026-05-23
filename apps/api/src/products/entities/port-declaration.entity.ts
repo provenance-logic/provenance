@@ -48,6 +48,16 @@ export class PortDeclarationEntity {
   @Column({ name: 'connection_details_encrypted', type: 'boolean', default: false })
   connectionDetailsEncrypted!: boolean;
 
+  // F2.8a (closes B-070) — optional binding to a registered source
+  // object. When set, the port's schema initializes from the bound
+  // source's latest schema_snapshot and freshness consults the same.
+  // When null, the port is hand-authored. See migration V33.
+  @Column({ name: 'source_registration_id', type: 'uuid', nullable: true })
+  sourceRegistrationId!: string | null;
+
+  @Column({ name: 'source_object_path', type: 'text', nullable: true })
+  sourceObjectPath!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

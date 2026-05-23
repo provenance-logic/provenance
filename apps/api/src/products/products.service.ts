@@ -14,6 +14,7 @@ import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 import { ProductVersionEntity } from './entities/product-version.entity.js';
 import { LifecycleEventEntity } from './entities/lifecycle-event.entity.js';
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
+import { SourceRegistrationEntity } from '../connectors/entities/source-registration.entity.js';
 import { GovernanceService } from '../governance/governance.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
@@ -59,6 +60,8 @@ export class ProductsService {
     private readonly lifecycleEventRepo: Repository<LifecycleEventEntity>,
     @InjectRepository(PrincipalEntity)
     private readonly principalRepo: Repository<PrincipalEntity>,
+    @InjectRepository(SourceRegistrationEntity)
+    private readonly sourceRegRepo: Repository<SourceRegistrationEntity>,
     private readonly governanceService: GovernanceService,
     private readonly kafkaProducerService: KafkaProducerService,
     private readonly searchIndexingService: SearchIndexingService,
@@ -509,6 +512,15 @@ export class ProductsService {
     const { connectionDetails, connectionDetailsEncrypted } =
       await this.prepareConnectionDetails(dto.interfaceType, dto.connectionDetails);
 
+    // F2.8a — validate source binding (if present) belongs to the same org.
+    // The DB FK enforces existence; this check prevents binding to a
+    // cross-org source. Cross-org source binding would let one org's
+    // producer expose another org's source-system metadata via the
+    // port's schema enrichment.
+    if (dto.sourceRegistrationId !== undefined) {
+      await this.assertSourceBindingInOrg(orgId, dto.sourceRegistrationId);
+    }
+
     const port = this.portRepo.create({
       orgId,
       productId,
@@ -521,6 +533,8 @@ export class ProductsService {
       connectionDetails,
       connectionDetailsEncrypted,
       connectionDetailsValidated: false,
+      sourceRegistrationId: dto.sourceRegistrationId ?? null,
+      sourceObjectPath: dto.sourceObjectPath ?? null,
     });
     const saved = await this.portRepo.save(port);
     return this.toPort(saved);
@@ -545,6 +559,15 @@ export class ProductsService {
     if (dto.interfaceType !== undefined) port.interfaceType = dto.interfaceType;
     if (dto.contractSchema !== undefined) port.contractSchema = dto.contractSchema;
     if (dto.slaDescription !== undefined) port.slaDescription = dto.slaDescription;
+    // F2.8a — source binding can be set, cleared (explicit null), or
+    // left untouched. Same-org validation applies on any non-null set.
+    if (dto.sourceRegistrationId !== undefined) {
+      if (dto.sourceRegistrationId !== null) {
+        await this.assertSourceBindingInOrg(orgId, dto.sourceRegistrationId);
+      }
+      port.sourceRegistrationId = dto.sourceRegistrationId;
+    }
+    if (dto.sourceObjectPath !== undefined) port.sourceObjectPath = dto.sourceObjectPath;
     const connectionDetailsTouched = dto.connectionDetails !== undefined;
     if (connectionDetailsTouched) {
       const effectiveInterfaceType = dto.interfaceType ?? port.interfaceType;
@@ -709,9 +732,33 @@ export class ProductsService {
       connectionDetails: null,
       connectionDetailsPreview: null,
       connectionDetailsValidated: entity.connectionDetailsValidated ?? false,
+      sourceRegistrationId: entity.sourceRegistrationId ?? null,
+      sourceObjectPath: entity.sourceObjectPath ?? null,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * F2.8a — validates that a port's source binding target exists and
+   * is in the same org as the port (caller). The DB FK already
+   * enforces existence; this check prevents the cross-org case where
+   * a producer could otherwise bind a port to a source registered in
+   * a different org (which would let one org's port expose another
+   * org's source-system metadata via schema enrichment).
+   */
+  private async assertSourceBindingInOrg(
+    orgId: string,
+    sourceRegistrationId: string,
+  ): Promise<void> {
+    const source = await this.sourceRegRepo.findOne({
+      where: { id: sourceRegistrationId, orgId },
+    });
+    if (!source) {
+      throw new NotFoundException(
+        `Source registration ${sourceRegistrationId} not found in this organisation`,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

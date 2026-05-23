@@ -133,6 +133,15 @@ export interface Port {
   /** Redacted view surfaced to authenticated principals without a grant. */
   connectionDetailsPreview: ConnectionDetailsPreview | null;
   connectionDetailsValidated: boolean;
+  /**
+   * F2.8a (closes B-070). Optional binding to a registered source object
+   * in the connector framework. When set, the port's schema and freshness
+   * derive from the bound source's latest schema_snapshot; the producer
+   * may still override per-field via contractSchema. Null = hand-authored
+   * port (no source-side discovery binding).
+   */
+  sourceRegistrationId: Uuid | null;
+  sourceObjectPath:     string | null;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -145,6 +154,9 @@ export interface DeclarePortRequest {
   contractSchema?: Record<string, unknown>;
   slaDescription?: string;
   connectionDetails?: ConnectionDetails;
+  /** F2.8a — optional binding to a discovered source object. */
+  sourceRegistrationId?: Uuid;
+  sourceObjectPath?:     string;
 }
 
 export interface UpdatePortRequest {
@@ -154,6 +166,12 @@ export interface UpdatePortRequest {
   contractSchema?: Record<string, unknown>;
   slaDescription?: string;
   connectionDetails?: ConnectionDetails;
+  /**
+   * F2.8a — optional binding to a discovered source object. Pass `null`
+   * explicitly to unbind a previously-bound port.
+   */
+  sourceRegistrationId?: Uuid | null;
+  sourceObjectPath?:     string | null;
 }
 
 /**

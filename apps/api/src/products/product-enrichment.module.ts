@@ -8,6 +8,7 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.entity.js';
+import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SchemaSnapshotEntity } from '../connectors/entities/schema-snapshot.ent
       AccessGrantEntity,
       AccessRequestEntity,
       SchemaSnapshotEntity,
+      PortDeclarationEntity,
     ]),
   ],
   providers: [ProductEnrichmentService],
