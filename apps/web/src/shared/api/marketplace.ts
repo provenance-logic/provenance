@@ -80,5 +80,53 @@ export const marketplaceApi = {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
       return api.get<AccessRequestList>(`/marketplace/products/${productId}/access-requests?${params.toString()}`);
     },
+
+    /**
+     * Per-port snippet generation for the consumer-grade outbound flow.
+     * Returns `{ available: false, reason: 'request_access_required' }` when
+     * the caller has neither product ownership nor an active access grant.
+     */
+    snippet: (
+      productOrgId: string,
+      productId: string,
+      portId: string,
+      destination: SnippetDestination,
+    ): Promise<PortSnippetResponse> =>
+      api.get<PortSnippetResponse>(
+        `/organizations/${productOrgId}/products/${productId}/ports/${portId}/snippet?destination=${destination}`,
+      ),
   },
 };
+
+// ---------------------------------------------------------------------------
+// Per-port snippet types
+// ---------------------------------------------------------------------------
+
+export type SnippetDestination =
+  | 'python'
+  | 'dbt'
+  | 'sql_client'
+  | 'jdbc'
+  | 'power_bi'
+  | 'tableau';
+
+export const SNIPPET_DESTINATIONS: { value: SnippetDestination; label: string }[] = [
+  { value: 'python',     label: 'Python' },
+  { value: 'sql_client', label: 'SQL client' },
+  { value: 'jdbc',       label: 'JDBC URL' },
+  { value: 'dbt',        label: 'dbt' },
+  { value: 'power_bi',   label: 'Power BI' },
+  { value: 'tableau',    label: 'Tableau' },
+];
+
+export interface PortSnippetResponse {
+  destination: SnippetDestination;
+  language: 'python' | 'yaml' | 'text';
+  code: string | null;
+  available: boolean;
+  reason?:
+    | 'request_access_required'
+    | 'destination_not_yet_supported'
+    | 'port_has_no_connection_details'
+    | 'unsupported_interface_type';
+}
