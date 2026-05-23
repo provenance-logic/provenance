@@ -305,6 +305,8 @@ This document tracks the implementation status of every requirement in the PRD. 
 
 ## Domain 10: Self-Serve Infrastructure
 
+> **PRD reframe note (2026-05-23).** F10.5, F10.6, F10.7, F10.8, F10.10 were reframed in the PRD v1.6 work to align with [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md)'s configuration-brokerage commitment. The substantive requirement: connection details capture *configuration* (host, catalog name, authentication method *declaration*) — never *user credentials*. An implementation review should inspect `apps/api/src/products/connection-details.schemas.ts` to confirm the per-interface-type Zod schemas capture method declarations only and that no credential material is stored in the connection-details payload; if any field captures a credential, plan a migration to remove it as part of the consumer-grade outbound work. The F10.14-F10.19 requirements are NEW work added by the same PRD v1.6 reshape; status entries below reflect implementation reality (none implemented yet except F10.17 partial via #166).
+
 | ID | Requirement | Status | Notes |
 | --- | --- | --- | --- |
 | F10.1 | Self-Service User Registration | Implemented | Keycloak user signup + login verified end-to-end on dev.provenancelogic.com |
@@ -320,6 +322,12 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F10.11 | Guided Schema Authoring | Not implemented | |
 | F10.12 | Schema Import from Connector | Partially implemented | Basic import exists; guided experience not implemented |
 | F10.13 | Schema Import from Upstream Product | Not implemented | |
+| F10.14 | Catalog Name as User-Facing Primitive | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work. Source-side view mechanism for PG / Snowflake / Databricks; UI-only fallback for S3. Producer DDL-generator UX deferred to design. |
+| F10.15 | Situation Detection per Port | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work. Producer declaration (primary) + probe-based verification (fallback); directory integration deferred per OS10.4. |
+| F10.16 | Cross-Org Consumption Primitives per Source Type | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work. Snowflake shares + Delta Sharing as primary cross-org primitives; S3 via bucket-policy; PG = contact-the-owner only. Anchored by anchor-decisions doc 6b. |
+| F10.17 | Destination Snippet Generation | **Partially implemented** | `ConnectionPackageService.generateSnippetForPort` shipped 2026-05-22 (#166) — 6 destinations (Python real for all 6 interface types; dbt + sql_client + jdbc real for sql_jdbc; power_bi + tableau deferred). Frontend tool-picker dropdown in `PortsTab` replaces the static `CONSUMPTION_GUIDANCE` placeholder. First concrete consumer-grade outbound piece. Remaining: full Power BI and Tableau snippet shapes; integration with F10.14 catalog-name addressing; integration with F10.15 situation routing. |
+| F10.18 | Connection Test from the Connect Flow | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work. Runs as consumer's identity; never persists the consumer credential per ADR-011. Distinct from F10.7 publication-time reachability check. |
+| F10.19 | Credential Lifespan UX | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work. 14-day / 7-day warnings; one-click renewal; Situation B renewal re-triggers approval workflow per F10.15 routing. |
 
 ---
 

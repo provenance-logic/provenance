@@ -1006,6 +1006,8 @@ This domain makes Dehghani's third data mesh principle - self-serve data infrast
 
 The key insight driving this domain: a data product without usable connection details is not a data product. It is documentation. The platform shall ensure that publishing a data product means publishing something a data engineer can actually use.
 
+> **The OSR bar for the consumer surface is consumer-grade click-through, not engineer-grade fallback.** Per [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md), the platform brokers *configuration*, not *credentials*. The consumer supplies their own source-system identity (their existing Snowflake account, Postgres role, AWS principal); the platform generates configuration snippets for their tool of choice and routes them through the right situation (A/B/C) per F10.15. The four-persona claim (AI Agent, Domain Team, Data Consumer, Governance Member) becomes architecturally load-bearing here — none of the four requires raw `connection_details` literacy at OSR. See [PRD overhaul anchor decisions (2026-05-23)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) decisions 1, 2, 6a, 6b, 6c for the framing source.
+
 ### Functional Requirements
 
 #### User Registration and Account Creation
@@ -1025,38 +1027,43 @@ Domain owners shall manage their team without platform administrator involvement
 #### Port Connection Details as a Required Field
 
 **F10.5 - Connection Details Schema by Port Type**
-Every output port type shall have a defined connection details schema specifying the required and optional fields for that port type. The platform shall enforce completeness of required fields at publication time (F2.12). The connection details schemas are:
+Every output port type shall have a defined connection details schema specifying the required and optional fields for that port type. The platform shall enforce completeness of required fields at publication time (F2.12). Per [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md), the schema captures **configuration** (where the data lives, how to address it, what authentication *method* the source expects) — never **user credentials** (those remain the consumer's own). Authentication-method fields name the method (e.g., "OAuth 2.0", "IAM role", "SASL/SCRAM") without capturing the credential material. The connection details schemas are:
 
-- **SQL/JDBC**: host, port, database name, schema name, authentication method (username/password, IAM, certificate), SSL mode, JDBC URL template (auto-generated from fields)
-- **REST API**: base URL, authentication method (API key, OAuth 2.0, bearer token), required headers, rate limit information, API version
-- **GraphQL**: endpoint URL, authentication method, introspection endpoint
-- **Streaming topic (Kafka)**: bootstrap servers, topic name, authentication method (SASL/PLAIN, SASL/SCRAM, mTLS), consumer group prefix, schema registry URL if applicable
-- **File/object export**: storage endpoint (S3, GCS, ADLS), bucket/container name, path prefix, authentication method, file format, compression
+- **SQL/JDBC**: host, port, database name, schema name, authentication method declaration (e.g., username-and-password expected, IAM role assumption expected, certificate-based), SSL mode, JDBC URL template (auto-generated from fields)
+- **REST API**: base URL, authentication method declaration (API key, OAuth 2.0, bearer token), required headers, rate limit information, API version
+- **GraphQL**: endpoint URL, authentication method declaration, introspection endpoint
+- **Streaming topic (Kafka)**: bootstrap servers, topic name, authentication method declaration (SASL/PLAIN, SASL/SCRAM, mTLS), consumer group prefix, schema registry URL if applicable
+- **File/object export**: storage endpoint (S3, GCS, ADLS), bucket/container name, path prefix, authentication method declaration, file format, compression
 - **Semantic query endpoint**: automatically populated by the platform when the port is registered with the federated query layer; not manually configured
 
 **F10.6 - Connection Details Confidentiality**
-Connection details shall be stored encrypted at rest. Full connection details shall be surfaced only to principals with an active access grant for that output port. Principals without a grant shall see a redacted preview (host only, no credentials) sufficient to understand what system they would be connecting to. The full details including credentials are revealed only at access grant time.
+Connection details shall be stored encrypted at rest as defense in depth, even though under [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md)'s configuration-brokerage model they do not contain user credentials. Full connection details shall be surfaced only to principals with an active access grant for that output port. Principals without a grant shall see a redacted preview (catalog name, port type, and high-level source identifier) sufficient to understand what data product they would be connecting to without revealing the operational topology of the source system. Full details are revealed at access grant time. The platform never stores, holds, or proxies the consumer's authentication credentials against the source — those remain the consumer's own per ADR-011.
 
 **F10.7 - Connection Details Validation**
-The platform shall validate connection details at publication time by performing a connectivity check against the declared endpoint using the provided credentials. A port with connection details that fail validation shall not be publishable. Validation failure shall surface a specific error message indicating what failed.
+The platform shall validate connection details at publication time by performing a reachability check against the declared endpoint. Where the producer has declared a service-account identity for validation purposes, the platform may use it to verify the endpoint responds; otherwise validation asserts only that the endpoint is network-reachable. Validation **does not** use the consumer's credentials — the consumer's identity is not known to the platform at publication time, per [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md). End-to-end validation against the consumer's own identity is performed at connect time per F10.18. A port with connection details that fail publication-time validation shall not be publishable; the failure message shall name what failed (DNS, TCP, TLS, HTTP-level handshake) without speculating about credentials the platform does not hold.
 
 #### Connection Package Generation
 
-**F10.8 - Connection Package Generation at Access Grant**
-When an access grant is issued, the platform shall automatically generate a connection package appropriate to the output port type. The connection package is a ready-to-use artifact that a data engineer, human or agent, can use immediately without additional configuration. Connection packages by port type:
+**F10.8 - Connection Package Generation**
+The platform shall make a connection package available for any authorized consumer-product pair. Lifecycle and authorization trigger differ by principal type per [ADR-008](../architecture/adr/ADR-008-connection-reference-and-package-relationship.md):
 
-- **SQL/JDBC**: JDBC connection string (copy-ready), Python connection snippet (psycopg2, snowflake-connector, or appropriate driver), sample SELECT query against the actual schema with real column names, data dictionary (column names, types, descriptions)
-- **REST API**: curl example for a representative endpoint, Postman collection (JSON, importable), Python requests snippet, endpoint reference with authentication configured
+- **Human consumers:** one connection package per active access grant.
+- **AI agents:** one connection package per active connection reference (Domain 12), with scope inherited from the reference.
+
+Per [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md), the connection package contains **configuration only — never credentials**. The user's authentication to the source remains their own. Snippets are generated lazily, on demand, per the consumer's destination-tool selection (see F10.17). Connection packages by port type:
+
+- **SQL/JDBC**: JDBC connection string template (consumer fills in their own credential at run time), Python connection snippet (psycopg2, snowflake-connector, or appropriate driver — connects via the consumer's own identity), sample SELECT query against the actual schema with real column names addressed by catalog name (F10.14), data dictionary (column names, types, descriptions)
+- **REST API**: curl example for a representative endpoint (with placeholders for the consumer's own auth header), Postman collection (JSON, importable), Python requests snippet, endpoint reference with the authentication-method declaration from F10.5
 - **GraphQL**: Apollo Studio link if available, example query against the actual schema, Python gql snippet
-- **Streaming topic (Kafka)**: Kafka consumer configuration (properties file format), Python kafka-python or confluent-kafka snippet, schema definition if schema registry is configured
-- **File/object export**: AWS CLI / gsutil / azcopy command to list/download, Python boto3 / google-cloud-storage / azure-storage-blob snippet, file format documentation
+- **Streaming topic (Kafka)**: Kafka consumer configuration template (consumer supplies their own SASL credentials), Python kafka-python or confluent-kafka snippet, schema definition if schema registry is configured
+- **File/object export**: AWS CLI / gsutil / azcopy command to list/download (consumer authenticates with their own cloud principal), Python boto3 / google-cloud-storage / azure-storage-blob snippet, file format documentation
 - **Semantic query endpoint**: MCP tool reference with example invocations, Python MCP client snippet
 
 **F10.9 - Agent Integration Package**
-For any data product with a semantic query output port or any port accessible to agents, the platform shall generate an agent integration guide at access grant time. The guide shall include: the MCP tool calls to discover and query this product, an example agent prompt that demonstrates finding and using this product, the trust score and what it means for agent decision-making, and the governance policy version in effect. This makes the agent consumption path as clear as the human consumption path.
+For any data product with a semantic query output port or any port accessible to agents, the platform shall generate an agent integration guide on connection-reference activation. The guide shall include: the MCP tool calls to discover and query this product, an example agent prompt that demonstrates finding and using this product, the trust score and what it means for agent decision-making, and the governance policy version in effect. This makes the agent consumption path as clear as the human consumption path.
 
 **F10.10 - Connection Package Refresh**
-When a connection detail changes (e.g., credential rotation, endpoint migration), the platform shall regenerate connection packages for all active access grants and notify affected consumers via the notification system (Domain 11). Connection packages shall be versioned so consumers can see when their package was last updated.
+When an underlying connection detail changes (e.g., endpoint migration, catalog-name view rename per F10.14, schema evolution that affects the snippet), the platform shall regenerate connection packages for all active grants and active connection references and notify affected consumers via the notification system (Domain 11). Refresh of a per-agent package follows ADR-008's per-connection-reference invalidation semantics — packages tied to a Suspended, Expired, or Revoked reference are invalidated, not regenerated. Connection packages shall be versioned so consumers can see when their package was last updated.
 
 #### Schema Authoring Guided Experience
 
@@ -1068,6 +1075,54 @@ When a connector has inferred a schema, the schema authoring experience shall of
 
 **F10.13 - Schema Import from Upstream Product**
 When a data product declares an input port referencing another product's output port, the schema authoring experience shall offer import of the upstream product's schema as a starting point for the output port schema. This accelerates schema authoring for transformation products that pass through or extend upstream fields.
+
+#### Consumer Connect Flow (Consumer-Grade Outbound)
+
+These requirements implement the consumer-grade click-through commitment from [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) and decisions 6a, 6b, 6c of the [PRD overhaul anchor decisions](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md). They are the Power Bar test surface: a non-engineer lands on a product page, picks a tool, and ends up connected — without writing JSON, parsing a JDBC URL, or asking a data engineer for help.
+
+**F10.14 - Catalog Name as User-Facing Primitive**
+The platform shall present each data product to consumers by its catalog name (e.g., `customer-360`) — never the physical naming of the underlying source object (e.g., `prod_warehouse_v2.sales_mart.customer_360_legacy_2024`). The catalog name is the addressing primitive in every consumer-facing surface: product detail page, snippets generated under F10.17, sample queries, and the connection package contents under F10.8. Physical-name translation mechanism per source type:
+
+- **PostgreSQL, Snowflake, Databricks**: Producer creates a view in the source system named to match the catalog name; the port binds to the view; snippets reference the view name. Source-side translation; the abstraction stays intact when the consumer leaves Provenance.
+- **Amazon S3**: UI-only abstraction. Provenance shows the catalog name; snippets reference the bucket/prefix path directly because S3 has no view primitive. The abstraction leak is acknowledged as a known limitation for object storage sources and named in the consumer-facing UX.
+
+The platform should offer producers a one-click DDL generator for the source-side view at port creation/edit time where supported, but DDL execution remains in the producer's source system (data plane stays in domain per Constraint 3 and ADR-011).
+
+**F10.15 - Situation Detection per Port**
+The platform shall determine which consumer-access situation applies at the connect-flow entry point, per the trichotomy in [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md):
+
+- **Situation A**: Consumer has source-system access broadly enough to reach this product without explicit per-product GRANT (e.g., share open to PUBLIC, role-based GRANT to a broad role).
+- **Situation B**: Consumer has a source-system account but no per-product access; per-product GRANT required.
+- **Situation C**: Consumer has no source-system account at all.
+
+Detection is **layered**:
+
+1. **Producer declaration (primary)**: per port, the producer marks `situation_a_eligibility` explicitly (e.g., "this product is exposed via a share open to all members of the source").
+2. **Probe-based verification (fallback)**: when a consumer reaches the connect flow for a port marked Situation-A-eligible, the platform may run a non-side-effecting probe (e.g., `SELECT 1` from the catalog name) against the consumer's identity to confirm the producer's declaration. Returns a confidence signal; not a hard gate.
+3. **Directory integration (post-OSR hardening)**: querying the source's identity primitive (e.g., Snowflake account list, AWS IAM lookup) to determine whether the consumer has a source-system account. Deferred per OS10.4; would require platform-side credentials to the source's identity API and is therefore credential-broker-adjacent infrastructure that the configuration-brokerage commitment defers indefinitely.
+
+The connect flow shall route the consumer to the appropriate path based on detected situation: A → directly to the connection package (F10.8); B → access request workflow (Domain 6) with the manual-GRANT acknowledgment from F10.16; C → plain-language explanation and a contact-the-owner link.
+
+**F10.16 - Cross-Org Consumption Primitives per Source Type**
+The data mesh marketplace is cross-org by design. The platform shall use native source-system primitives for cross-org consumption where they exist, and acknowledge the gap honestly where they do not. Per-source-type mapping:
+
+| Source type | Primary cross-org primitive | Fallback |
+|---|---|---|
+| Snowflake | Native data shares — Provenance brokers the share name + sharing-account-id metadata as part of the connection package; consumer connects via their own Snowflake account | Contact-the-owner (Situation C) |
+| Databricks | Delta Sharing — same shape as Snowflake shares | Contact-the-owner |
+| Amazon S3 | Bucket-policy grants to external AWS principals — friction acknowledged; the owner adds the consumer's AWS principal ARN to the bucket policy as part of Situation B approval | Contact-the-owner |
+| PostgreSQL | None — Postgres has no native cross-org primitive | Contact-the-owner only |
+
+For Postgres products in cross-org consumption, the marketplace surface still functions (browse, request access, owner approves) but actual consumption requires the owner's manual GRANT in their own Postgres — exactly the Situation B human bottleneck named in ADR-011 decision 4. The PRD calls this gap out explicitly rather than papering over it.
+
+**F10.17 - Destination Snippet Generation**
+The platform shall generate consumer-facing snippets per the consumer's destination-tool selection. At OSR, six destination tools are first-class: **Python**, **SQL client (generic)**, **Power BI**, **Tableau**, **JDBC** (raw connection string for tools not in the first five), and **dbt** (profiles.yml entry). Snippets are generated lazily on consumer tool selection — the connection package (F10.8) is the conceptual container; each snippet is generated when the consumer picks a tool. Snippets contain configuration only, never credentials (ADR-011). Each snippet addresses the data by catalog name (F10.14), uses the appropriate per-source-type connection mechanism (F10.16), and is verified-as-correct via the connection-test path (F10.18). Snippet templates are per-(source-type × destination-tool) and shipped as part of the connector's capability set under Domain 3.
+
+**F10.18 - Connection Test from the Connect Flow**
+The platform shall expose a connection-test action in the consumer connect flow that allows the consumer to verify, from within Provenance, that the configuration in their selected snippet will succeed when run against their own identity in their own tool. The connection test runs as the consumer's identity (the consumer authenticates with the source via a brief, in-flow auth step appropriate to the source type — typically a tool-launched OAuth flow or the consumer pasting a credential into a transient form that the platform forwards once and discards). The platform never persists the consumer's credential per ADR-011. The test result is one of: success (the consumer's identity reaches the catalog name); permission-denied (consumer's identity exists in the source but does not have access — surfaces the access-request path); not-found (the catalog name does not resolve — surfaces a producer-misconfiguration signal); unreachable (network/DNS/TLS failure — surfaces a platform-or-source operational issue). The test result informs but does not gate the consumer's onward action — they may proceed without testing.
+
+**F10.19 - Credential Lifespan UX**
+For access grants with a TTL (typical case), the platform shall notify the consumer at 14 days and again at 7 days before expiry, with a one-click renewal option in-product. If the original access was Situation A (open to all source-system users), renewal is automatic and the notification is informational. If the original access was Situation B (required owner approval), renewal re-triggers the same approval workflow — the platform never silently extends a Situation B grant. On expiry, the platform surfaces a clear expiry message and routes the consumer to the renewal flow rather than silently failing their connection. Per ADR-011, these TTLs apply to platform-issued *grants*, not to the consumer's own source-system credentials — credential lifecycle remains the consumer's responsibility.
 
 ### Non-Functional Requirements
 
@@ -1081,9 +1136,11 @@ When a data product declares an input port referencing another product's output 
 
 ### Out of Scope
 
-- **OS10.1** - Platform-managed credential provisioning (the platform documents credentials; it does not create database users or API keys in external systems)
+- **OS10.1** - Credential brokerage. Per [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md), the platform brokers configuration, not credentials. It does not mint, hold, proxy, or rotate user credentials against source systems. It does not create database users or API keys in external systems. The Situation B "owner provisions permission" step in F10.15 remains manual in the source system; the platform tracks time-to-access as the operational metric named in ADR-011 but does not automate the GRANT itself at OSR
 - **OS10.2** - [POST-MVP] SSO for connection packages (consuming SSO-authenticated data sources)
 - **OS10.3** - [POST-MVP] Interactive query sandbox within the platform
+- **OS10.4** - [POST-OSR HARDENING] Source-system directory integration for situation detection (F10.15 layer 3). Querying the source's identity primitive (Snowflake account list, AWS IAM lookup, etc.) requires platform-side credentials to the source's identity API and is therefore credential-broker-adjacent infrastructure. Deferred indefinitely under the configuration-brokerage commitment; a future ADR may revisit if and when the long-term Situation B GRANT automation work is scheduled
+- **OS10.5** - [POST-OSR] Automated source-system credential federation — the eventual automation of Situation B's manual GRANT step. Tracked in [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) as the long-term path beyond OSR; would require a future ADR (likely "Source-system service-account integration for delegated GRANT-on-behalf-of-owner") and is credential-broker-adjacent infrastructure
 
 ---
 
