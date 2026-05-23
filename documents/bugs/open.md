@@ -91,7 +91,7 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 2. **Implicit "domain teams hand-author" assumption.** The publishing flow today is: create a product, declare ports, hand-write contract schema, hand-write connection_details. Discovery is treated as augmentation, not as authoritative source.
 3. **"Non-blocking stub" framing.** Both `resolveColumnSchema` and `freshness.lastRefreshedAt` were marked non-blocking in F5.15 / 5.4 work because UI fallback "works." The framing assumed the bar for "works" was engineering-grade. The consumer-grade reframe sets a higher bar.
 
-**Fix path (post-PRD-reshape; this is design work for the weekend, not engineering for tonight).**
+**Fix path (post-PRD-reshape; design work, not a one-PR engineering job).**
 
 1. **Add a foreign key from `port_declarations` to `source_registrations`** (or a new join table if one port can be backed by multiple sources). Migration V32+.
 2. **Extend `ProductEnrichmentService.resolveColumnSchema` to consult `schema_snapshots`** via the FK; reconcile with hand-authored `contract_schema` per CLAUDE.md's conflict-resolution rule ("domain-declared takes precedence unless governance configures auto-override").
@@ -174,7 +174,7 @@ For same-org flows (acme consumer on acme product), all three steps work. The da
 
 The right resolution path is a PRD-session decision on Model A/B/C. **Don't act on B-071 in code before that conversation lands.** The reframe doc ([#162](../architecture/consumer-grade-outbound-reframe-2026-05-22.md)) sized the consumer-grade outbound work assuming this question is answered; the answer feeds the connection-broker design.
 
-A reasonable Sunday-conversation order: settle Model A/B/C, then settle the [B-070](#B-070) inbound-outbound bridge (which has its own ownership question for `port_declarations` ↔ `source_registrations`), then re-thread the connection-package and snippet-generator flows under the chosen model.
+A reasonable resolution order: settle Model A/B/C, then settle the [B-070](#B-070) inbound-outbound bridge (which has its own ownership question for `port_declarations` ↔ `source_registrations`), then re-thread the connection-package and snippet-generator flows under the chosen model.
 
 ### Pattern
 
