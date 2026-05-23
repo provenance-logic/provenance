@@ -115,7 +115,7 @@ export class NotificationsController {
     @ReqContext() ctx: RequestContext,
     @Param('category') category: NotificationCategory,
   ): Promise<void> {
-    return this.preferencesService.reset(ctx.principalId, category);
+    return this.preferencesService.reset(ctx.orgId, ctx.principalId, category);
   }
 
   @Get('settings')

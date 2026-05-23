@@ -337,7 +337,7 @@ export class ConnectorsService {
     if (!connector) throw new NotFoundException(`Connector ${connectorId} not found`);
 
     const duplicate = await this.sourceRepo.findOne({
-      where: { connectorId, sourceRef: dto.sourceRef },
+      where: { connectorId, orgId, sourceRef: dto.sourceRef },
     });
     if (duplicate) {
       throw new ConflictException(
@@ -510,7 +510,7 @@ export class ConnectorsService {
 
       for (const table of walk.tables) {
         const existing = await this.sourceRepo.findOne({
-          where: { connectorId, sourceRef: table.fullName },
+          where: { connectorId, orgId, sourceRef: table.fullName },
         });
         if (existing) {
           sourcesSkipped++;

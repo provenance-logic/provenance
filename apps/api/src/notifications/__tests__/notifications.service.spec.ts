@@ -503,7 +503,7 @@ describe('NotificationsService', () => {
       const result = await service.markRead(ORG_ID, PRINCIPAL_A, 'notif-2');
 
       expect(repo.update).toHaveBeenCalledWith(
-        { id: 'notif-2' },
+        { id: 'notif-2', orgId: ORG_ID },
         expect.objectContaining({ readAt: expect.any(Date) }),
       );
       expect(result.id).toBe('notif-2');
@@ -545,7 +545,7 @@ describe('NotificationsService', () => {
       const result = await service.dismiss(ORG_ID, PRINCIPAL_A, 'notif-4');
 
       expect(repo.update).toHaveBeenCalledWith(
-        { id: 'notif-4' },
+        { id: 'notif-4', orgId: ORG_ID },
         expect.objectContaining({ dismissedAt: expect.any(Date) }),
       );
       expect(result.id).toBe('notif-4');

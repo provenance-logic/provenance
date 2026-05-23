@@ -1,3 +1,9 @@
+/* eslint-disable provenance/require-org-filter --
+ * Seed controller is a dev/bootstrap @Public path; every repository call
+ * here is intentionally cross-tenant. Individual call-site annotations
+ * would just add noise — disable the rule for the whole file with the
+ * justification documented here. See documents/architecture/adr/ADR-010-rls-by-default.md.
+ */
 import {
   Body,
   Controller,

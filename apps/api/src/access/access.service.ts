@@ -403,6 +403,8 @@ export class AccessService {
     }
 
     // 404 / 403 — validate the product exists, belongs to this org, and is published.
+    // @cross-tenant-by-design: post-lookup orgId check is what enforces the same-org requirement;
+    // see B-071 — for the marketplace cross-org access flow, this rejection is itself the bug.
     const product = await this.productRepo.findOne({
       where: { id: dto.productId },
     });

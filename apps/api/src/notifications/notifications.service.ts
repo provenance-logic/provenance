@@ -87,7 +87,7 @@ export class NotificationsService {
     }
 
     const principalContacts = needEmailLookup
-      ? await this.loadPrincipalContacts(input.recipients)
+      ? await this.loadPrincipalContacts(input.orgId, input.recipients)
       : new Map<string, PrincipalEntity>();
     const webhookUrls = needWebhookLookup
       ? await this.preferences.loadWebhookUrls(input.orgId, input.recipients)
@@ -216,7 +216,7 @@ export class NotificationsService {
       return this.toDto(row);
     }
     const readAt = new Date();
-    await this.repo.update({ id: row.id }, { readAt });
+    await this.repo.update({ id: row.id, orgId }, { readAt });
     return this.toDto({ ...row, readAt });
   }
 
@@ -230,7 +230,7 @@ export class NotificationsService {
       return this.toDto(row);
     }
     const dismissedAt = new Date();
-    await this.repo.update({ id: row.id }, { dismissedAt });
+    await this.repo.update({ id: row.id, orgId }, { dismissedAt });
     return this.toDto({ ...row, dismissedAt });
   }
 
@@ -239,10 +239,11 @@ export class NotificationsService {
   // ---------------------------------------------------------------------------
 
   private async loadPrincipalContacts(
+    orgId: string,
     principalIds: string[],
   ): Promise<Map<string, PrincipalEntity>> {
     const rows = await this.principalRepo.find({
-      where: { id: In(principalIds) },
+      where: { id: In(principalIds), orgId },
     });
     return new Map(rows.map((r) => [r.id, r]));
   }

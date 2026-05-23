@@ -60,6 +60,7 @@ export class InvitationsService {
     dto: CreateInvitationRequest,
     invitedByPrincipalId: string,
   ): Promise<Invitation> {
+    // @cross-tenant-by-design: org-by-primary-key lookup (id IS the orgId)
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     if (!org) throw new NotFoundException(`Organization ${orgId} not found`);
 
@@ -170,6 +171,7 @@ export class InvitationsService {
       );
     }
 
+    // @cross-tenant-by-design: org-by-primary-key lookup (id IS the orgId)
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     if (!org) throw new NotFoundException(`Organization ${orgId} not found`);
 
@@ -355,6 +357,7 @@ export class InvitationsService {
     const config = getConfig();
     const acceptUrl = `${config.APP_BASE_URL.replace(/\/$/, '')}/accept-invite?token=${encodeURIComponent(invitation.token)}`;
 
+    // @cross-tenant-by-design: principal-by-id lookup for invitation email rendering; the principal's orgId was already validated upstream
     const inviter = await this.principalRepo.findOne({
       where: { id: invitedByPrincipalId },
     });

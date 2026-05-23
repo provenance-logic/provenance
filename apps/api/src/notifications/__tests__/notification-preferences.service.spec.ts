@@ -164,8 +164,9 @@ describe('NotificationPreferencesService', () => {
 
   describe('reset', () => {
     it('deletes the preference row', async () => {
-      await service.reset(PRINCIPAL_A, 'slo_violation');
+      await service.reset('org-1', PRINCIPAL_A, 'slo_violation');
       expect(repo.delete).toHaveBeenCalledWith({
+        orgId: 'org-1',
         principalId: PRINCIPAL_A,
         category: 'slo_violation',
       });

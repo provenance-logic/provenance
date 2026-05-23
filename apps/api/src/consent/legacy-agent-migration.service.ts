@@ -76,6 +76,7 @@ export class LegacyAgentMigrationService {
    *   - No active connection reference for the (org, agent, product) triple
    */
   async runMigration(): Promise<{ provisioned: number; skipped: number }> {
+    // @cross-tenant-by-design: operator-invoked one-time migration that scans grants across all orgs
     const candidateGrants = await this.grantRepo.find({
       where: { revokedAt: IsNull() },
     });

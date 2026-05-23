@@ -77,7 +77,7 @@ describe('GovernanceNotificationsTriggerWorker', () => {
       }),
     );
     expect(gracePeriodRepo.update).toHaveBeenCalledWith(
-      { id: 'gp-1' },
+      { id: 'gp-1', orgId: ORG },
       expect.objectContaining({ expiryWarningSentAt: expect.any(Date) }),
     );
     const enqueueArg = notificationsService.enqueue.mock.calls[0][0] as {

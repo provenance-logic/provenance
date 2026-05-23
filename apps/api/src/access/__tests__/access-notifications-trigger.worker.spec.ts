@@ -89,7 +89,7 @@ describe('AccessNotificationsTriggerWorker', () => {
       );
       // Idempotency stamp set so the next cron pass skips this row.
       expect(requestRepo.update).toHaveBeenCalledWith(
-        { id: 'req-1' },
+        { id: 'req-1', orgId: ORG },
         expect.objectContaining({ slaWarningSentAt: expect.any(Date) }),
       );
     });
@@ -144,7 +144,7 @@ describe('AccessNotificationsTriggerWorker', () => {
       expect(enqueueArg.recipients.sort()).toEqual([OWNER, 'gov-1', 'gov-2'].sort());
       expect(enqueueArg.dedupKey).toBe('access_request_sla_breach:req-2');
       expect(requestRepo.update).toHaveBeenCalledWith(
-        { id: 'req-2' },
+        { id: 'req-2', orgId: ORG },
         expect.objectContaining({ slaBreachNotifiedAt: expect.any(Date) }),
       );
     });
@@ -199,7 +199,7 @@ describe('AccessNotificationsTriggerWorker', () => {
         }),
       );
       expect(grantRepo.update).toHaveBeenCalledWith(
-        { id: 'grant-1' },
+        { id: 'grant-1', orgId: ORG },
         expect.objectContaining({ expiryWarningSentAt: expect.any(Date) }),
       );
     });

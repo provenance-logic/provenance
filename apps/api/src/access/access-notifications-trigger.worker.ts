@@ -81,7 +81,7 @@ export class AccessNotificationsTriggerWorker {
 
     let count = 0;
     for (const request of eligible) {
-      const product = await this.productRepo.findOne({ where: { id: request.productId } });
+      const product = await this.productRepo.findOne({ where: { id: request.productId, orgId: request.orgId } });
       if (!product) continue;
       try {
         await this.notificationsService.enqueue({
@@ -99,7 +99,7 @@ export class AccessNotificationsTriggerWorker {
           deepLink: `/access/requests/${request.id}`,
           dedupKey: `access_request_sla_warning:${request.id}`,
         });
-        await this.requestRepo.update({ id: request.id }, { slaWarningSentAt: new Date() });
+        await this.requestRepo.update({ id: request.id, orgId: request.orgId }, { slaWarningSentAt: new Date() });
         count++;
       } catch (err) {
         this.logger.error(
@@ -127,7 +127,7 @@ export class AccessNotificationsTriggerWorker {
 
     let count = 0;
     for (const request of eligible) {
-      const product = await this.productRepo.findOne({ where: { id: request.productId } });
+      const product = await this.productRepo.findOne({ where: { id: request.productId, orgId: request.orgId } });
       if (!product) continue;
       const governanceMembers = await this.governancePrincipals(request.orgId);
       // Recipients: product owner (the original approver) + all governance
@@ -150,7 +150,7 @@ export class AccessNotificationsTriggerWorker {
           deepLink: `/governance/access-requests/${request.id}`,
           dedupKey: `access_request_sla_breach:${request.id}`,
         });
-        await this.requestRepo.update({ id: request.id }, { slaBreachNotifiedAt: new Date() });
+        await this.requestRepo.update({ id: request.id, orgId: request.orgId }, { slaBreachNotifiedAt: new Date() });
         count++;
       } catch (err) {
         this.logger.error(
@@ -180,7 +180,7 @@ export class AccessNotificationsTriggerWorker {
 
     let count = 0;
     for (const grant of eligible) {
-      const product = await this.productRepo.findOne({ where: { id: grant.productId } });
+      const product = await this.productRepo.findOne({ where: { id: grant.productId, orgId: grant.orgId } });
       try {
         await this.notificationsService.enqueue({
           orgId: grant.orgId,
@@ -196,7 +196,7 @@ export class AccessNotificationsTriggerWorker {
           deepLink: `/marketplace/products/${grant.productId}`,
           dedupKey: `access_grant_expiring:${grant.id}`,
         });
-        await this.grantRepo.update({ id: grant.id }, { expiryWarningSentAt: new Date() });
+        await this.grantRepo.update({ id: grant.id, orgId: grant.orgId }, { expiryWarningSentAt: new Date() });
         count++;
       } catch (err) {
         this.logger.error(
