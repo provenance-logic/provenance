@@ -101,12 +101,12 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F3.20 | CI/CD Integration | Not implemented | |
 | F3.21 | Semantic Query Port Registration | Implemented | MCP routing in place |
 | F3.22 | Agent Source Discovery | Implemented | |
-| F3.23 | Connector Discovery Mode | **Partially implemented (1 of 4 priority connectors)** | Databricks discovery crawl framework shipped 2026-05-21 #144 (V30 `discovery_crawl_events` table + walker + `POST /connectors/:id/crawl`). Auto-crawl on registration shipped #145. dbt, Snowflake, Fivetran: not implemented. |
+| F3.23 | Connector Discovery Mode | **Implemented for Databricks (the one shipped first-class connector per F3.2)** | Databricks discovery crawl framework shipped 2026-05-21 #144 (V30 `discovery_crawl_events` table + walker + `POST /connectors/:id/crawl`). Auto-crawl on registration shipped #145. Snowflake (next tranche) and PG / S3 (no discovery primitive) per F3.2 / F3.2a. |
 | F3.23a | Discovery Metadata Taxonomy | **Partially implemented** | `capability_manifests.capabilities_doc` JSONB carries per-category coverage levels (Databricks: structural=high, descriptive=medium, operational=low, quality=none, governance=low). `discovery_coverage_scores` table referenced by CLAUDE.md not yet created. |
 | F3.24 | Discovery Scope: Databricks | **Substantively implemented 2026-05-21** | Layers 1–4 shipped via PRs #142–#146. Live-verified end-to-end against a real workspace: 10 tables, 10 schema snapshots, 9 lineage edges into Neo4j. Deferred: column-level lineage (Layer 4b), push-side notebook (Layer 5), Temporal scheduled re-crawls (Layer 3c), legacy hive-metastore fallback. |
-| F3.25 | Discovery Scope: dbt | Not implemented | Same shape as Databricks would be — manifest.json parser + lineage projection. See B-063 weekend conversation. |
-| F3.26 | Discovery Scope: Snowflake | Not implemented | information_schema introspection + access_history lineage. See B-063. |
-| F3.27 | Discovery Scope: Fivetran | Not implemented | Metadata API + best-effort upstream lineage. See B-063. |
+| ~~F3.25~~ | ~~Discovery Scope: dbt~~ | **Removed from PRD** | Deferred per OS3.7 — dbt is a metadata source rather than a data source; planned post-OSR re-framing into a separate "metadata source" category. |
+| F3.26 | Discovery Scope: Snowflake | **Planned — next tranche under F3.2a** | information_schema introspection + access_history lineage. Cross-org consumption via Snowflake data shares per Domain 10. Scheduled as the first tranche addition after OSR-set close. |
+| ~~F3.27~~ | ~~Discovery Scope: Fivetran~~ | **Removed from PRD** | Deferred per OS3.7 — same logic as dbt; planned post-OSR re-framing. |
 | F3.28 | Discovery Re-crawl | **Not implemented (manual + on-registration only)** | Auto-crawl on connector registration (#145) and operator-triggered re-crawl (`POST /connectors/:id/crawl`, #144) ship. Scheduled / cadenced re-crawl per the manifest's `re_crawl_interval_hours_default` would require Temporal — deferred. |
 | F3.29 | Discovery Conflict Resolution | Not implemented | CLAUDE.md describes the rule ("Domain-declared metadata takes precedence over discovered metadata unless governance configures auto-override"); no enforcement code exists. Discovered-but-conflicting metadata isn't currently flagged. |
 

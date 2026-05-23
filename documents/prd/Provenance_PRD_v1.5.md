@@ -253,13 +253,22 @@ When a data product is produced or transformed by an AI agent, the product defin
 
 ## Domain 3: Connectivity and Source Integration
 
+> A deliberate design decision: the connector library ships only types that work end-to-end at the consumer-grade bar (ADR-011). "Registration succeeds but operations are stubs" is not a shipping shape. New connector types are added in tranches per F3.2a; see [PRD overhaul anchor decisions (2026-05-23)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) decision 5 for the framing.
+
 ### Functional Requirements
 
 **F3.1 - Connector as First-Class Entity**
 The platform shall provide a connector framework through which domain teams register external data sources. Connectors are owned by domains and represent authenticated links between the platform control plane and domain infrastructure.
 
 **F3.2 - Connector Library**
-The platform shall ship with pre-built connectors covering: Relational Databases (PostgreSQL, MySQL/MariaDB, SQL Server, Oracle, Cloud Spanner), Cloud Warehouses/Lakehouses (Snowflake, BigQuery, Redshift, Databricks, Microsoft Fabric), NoSQL (MongoDB, Cassandra, DynamoDB, Elasticsearch/OpenSearch), Streaming (Kafka, Kinesis, Pub/Sub, Event Hubs, Pulsar), Object Storage (S3, GCS, ADLS, SFTP), SaaS Applications (Salesforce, HubSpot, ServiceNow, Workday, Stripe), APIs (Generic REST, Generic GraphQL), and Ingestion Platforms (Fivetran).
+The platform ships first-class connectors for **PostgreSQL**, **Amazon S3**, and **Databricks**. "First-class" means the connector implements, end-to-end at the consumer-grade bar: connectivity probe (F3.4), schema inference (F3.9), capability manifest (F3.3), discovery mode where the source supports it (F3.23–F3.23a), situation-detection signal (Domain 10), and the per-source elements of the connection package (Domain 10).
+
+**Snowflake** is the next-scheduled addition under the F3.2a tranche cadence and is treated as Planned, not Shipped, until it meets the F3.2 bar.
+
+Additional connector types are added in tranches by demand — see [Appendix B](#appendix-b-post-mvp-candidate-registry) for the post-OSR queue. Streaming (Kafka, Redpanda), REST APIs, and custom connectors are deferred until their user-story shape is designed; see OS3.6.
+
+**F3.2a - Connector Tranche Discipline**
+New connector types shall be added one tranche at a time, each shipping end-to-end at the F3.2 bar. A connector type may not be exposed in the registration UI, the connector-type enum, or the capability-manifest list until it meets the F3.2 bar. "Experimental" or "Beta" labels on partially-implemented types are not a permitted shipping shape — either the type works end-to-end or it is not in the library. Tranche cadence target: one source type per 6–8 weeks of focused engineering.
 
 **F3.3 - Connector Extensibility**
 The platform shall provide a documented connector SDK for custom connector development. All connectors, pre-built and custom, shall declare a capability manifest at registration time. The capability manifest is a structured, machine-readable declaration of supported capabilities including: discovery metadata categories supported, metadata fields per category, whether discovery mode is implemented, and lineage granularity (asset-level, column-level, or none). Capability manifests are immutable for a given connector version. The platform shall validate capability manifests at registration time and reject connectors with malformed or incomplete manifests.
@@ -327,17 +336,11 @@ Connectors for supported systems shall implement a discovery mode that, upon suc
 **F3.23a - Discovery Metadata Taxonomy**
 Connectors implementing discovery mode shall populate metadata across five standard categories where the connected system exposes them: Structural Metadata (schemas, tables, columns, data types, key relationships), Descriptive Metadata (asset names, descriptions, tags, classifications), Operational Metadata (ownership, stewardship, timestamps, refresh cadence, SLO declarations), Quality Metadata (data quality tests, freshness expectations, completeness signals), and Governance Metadata (sensitivity classifications, access control policies, regulatory designations, retention policies). Connectors shall report a discovery coverage score per category. The taxonomy is governance-configurable but governance extensions may only apply to connectors that have declared support in their capability manifest.
 
-**F3.24 - Discovery Scope: Databricks**
-The Databricks connector shall implement discovery mode against Unity Catalog. On registration, the platform shall ingest table and column-level metadata, ownership, tags, and descriptions; column-level lineage from Unity Catalog's lineage API; and notebook and job lineage where available.
+**F3.24 - Discovery Scope: Databricks** *(Shipped)*
+The Databricks connector implements discovery mode against Unity Catalog. On registration the platform ingests table-level metadata, ownership, tags, and descriptions; table-level lineage from Unity Catalog's lineage API; and job lineage where available. **Column-level lineage** is deferred enrichment — the Unity Catalog `column-lineage` endpoint is the planned source; not in the OSR scope.
 
-**F3.25 - Discovery Scope: dbt**
-The dbt connector shall implement discovery mode by ingesting the dbt project manifest (manifest.json) and catalog (catalog.json), extracting full node-level and column-level lineage, model and column descriptions, test definitions as quality metadata, and source declarations as upstream lineage edges.
-
-**F3.26 - Discovery Scope: Snowflake**
-The Snowflake connector shall implement discovery mode against Snowflake's Information Schema and Access History, ingesting table and column metadata, query history-derived lineage, and object ownership as governance metadata.
-
-**F3.27 - Discovery Scope: Fivetran**
-The Fivetran connector shall implement discovery mode via the Fivetran Metadata API, ingesting schema mappings, sync cadence as observability metadata, and making best-effort attempts to represent upstream source systems as lineage nodes. Partial lineage is recorded and flagged as incomplete rather than omitted.
+**F3.26 - Discovery Scope: Snowflake** *(Planned — next tranche under F3.2a)*
+The Snowflake connector, when added under the F3.2a tranche cadence, shall implement discovery mode against Snowflake's Information Schema and Access History, ingesting table and column metadata, query history-derived lineage, and object ownership as governance metadata. Cross-org consumption shall use native Snowflake data shares (see Domain 10).
 
 **F3.28 - Discovery Re-crawl**
 Connectors implementing discovery mode shall support configurable re-crawl schedules performing delta discovery. Re-crawl frequency shall be governance-configurable with a platform default of 24 hours.
@@ -363,9 +366,11 @@ Where discovered metadata conflicts with domain-declared metadata, the platform 
 
 - **OS3.1** - Data extraction, transformation, or loading
 - **OS3.2** - Pipeline execution environment
-- **OS3.3** - [POST-MVP] Schema inference for streaming, NoSQL, file sources
+- **OS3.3** - [POST-MVP] Schema inference for NoSQL and file sources
 - **OS3.4** - [POST-MVP] Managed private connectivity
 - **OS3.5** - Cross-domain connector sharing
+- **OS3.6** - [DEFERRED PENDING USER-STORY DESIGN] Streaming connectors (Kafka, Redpanda), REST API connectors, and the generic `custom` connector type. The Situation A/B/C trichotomy from the consumer-grade outbound user story (ADR-011, [reframe doc](../architecture/consumer-grade-outbound-reframe-2026-05-22.md) Q5) does not map cleanly to topic-level ACLs (streaming), OAuth-scope semantics (REST), or arbitrary identity primitives (custom). Each requires its own user story before its connector can ship under F3.2a. The `custom` type may be removed from the connector enum entirely depending on the design outcome
+- **OS3.7** - [POST-MVP] Discovery scope for dbt (manifest.json / catalog.json ingestion) and Fivetran (Metadata API ingestion). Both are *metadata sources* rather than data sources in the Domain 3 sense — they do not host data products, they describe pipelines that produce them. Post-OSR they will likely be re-framed as a separate "metadata source" category rather than added to the connector library; tracked in [Appendix B](#appendix-b-post-mvp-candidate-registry)
 
 ## Domain 4: Governance Engine
 
@@ -1444,7 +1449,10 @@ When the platform sustains more than 50 concurrent MCP sessions over a 24-hour p
 | Sub-tenancy / business-unit hierarchy | 1 | Enterprise sales driver |
 | Scale beyond 200 domains / 50K products | 1 | Architectural growth path |
 | AI-assisted data product definition authoring | 2, 7 | High-value, strong candidate for first post-MVP release |
-| Schema inference for streaming, NoSQL, file sources | 3 | Natural connector library extension |
+| Connector tranche queue: BigQuery, MySQL, then by demand | 3 | Tranche cadence per F3.2a — one type per ~6-8 weeks of focused engineering, each shipping end-to-end at the F3.2 bar |
+| Streaming, REST API, and `custom` connector types | 3 | Deferred pending user-story design per OS3.6 — A/B/C trichotomy doesn't map cleanly to topic-level ACLs, OAuth scopes, or arbitrary identity primitives |
+| dbt and Fivetran as a separate "metadata source" category | 3 | Per OS3.7 — these describe pipelines rather than host data products; re-framing planned post-OSR |
+| Schema inference for NoSQL and file sources | 3 | Natural connector library extension under the F3.2a tranche cadence |
 | Managed private connectivity | 3 | Enterprise security requirement |
 | Policy-as-code authoring | 4 | Sophisticated governance teams |
 | Native GRC platform integrations | 4 | Enterprise compliance driver |
