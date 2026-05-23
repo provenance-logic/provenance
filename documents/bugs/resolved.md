@@ -120,7 +120,7 @@ Non-legacy refs keep their existing white-card styling unchanged.
 
 **Fix.** Rewrote the security rule to name the actually-in-force layer (AQL `ConnectionReferenceGuard`) and flag infrastructure-level enforcement as Phase 6 hardening, not MVP.
 
-**Pattern.** Same family as B-064 / B-065 / B-066 — CLAUDE.md "Never Violate" rules drifted toward describing the Phase 6 production target rather than the MVP reality. Three of these were caught in the security-rules section alone by the 2026-05-22 audit; worth a section-by-section pass on remaining CLAUDE.md claims during the 2026-05-24 weekend overhaul.
+**Pattern.** Same family as B-064 / B-065 / B-066 — CLAUDE.md "Never Violate" rules drifted toward describing the Phase 6 production target rather than the MVP reality. Three of these were caught in the security-rules section alone by the 2026-05-22 audit; worth a section-by-section pass on remaining CLAUDE.md claims during the 2026-05-23/24 PRD v1.6 overhaul.
 
 ---
 
@@ -158,7 +158,7 @@ Non-legacy refs keep their existing white-card styling unchanged.
 | `consent.consent_records` | V18 comment said "will add audit.consent_records table" — never created. Audit log substitutes per F12.11. |
 | `observability.observability_snapshots` | Doesn't exist; no observability snapshot mechanism. |
 
-**Fix.** Replaced the schema list with one that matches what `\dt` would show. Inline annotations name where data for the misnamed-table concepts actually lives (e.g. JSONB columns, enum-like role values). The two truly-missing tables are removed pending the weekend overhaul: `discovery_coverage_scores` is part of the B-063 discovery framework conversation; `observability_snapshots` was never used and is dropped from the doc.
+**Fix.** Replaced the schema list with one that matches what `\dt` would show. Inline annotations name where data for the misnamed-table concepts actually lives (e.g. JSONB columns, enum-like role values). The two truly-missing tables are removed pending the PRD v1.6 overhaul: `discovery_coverage_scores` is part of the B-063 discovery framework conversation; `observability_snapshots` was never used and is dropped from the doc.
 
 **Pattern.** Schema-list drift is its own category of documentation rot — tables get renamed, data gets restructured into JSONB columns, projection tables get planned-but-never-built. A periodic "diff CLAUDE.md schema list against `\dt`" check would catch this class of drift at PR time rather than in an audit months later.
 
