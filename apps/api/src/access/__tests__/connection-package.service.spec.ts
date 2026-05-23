@@ -48,6 +48,8 @@ const makePort = (
   }) as unknown as Record<string, unknown>,
   connectionDetailsEncrypted: true,
   connectionDetailsValidated: false,
+  sourceRegistrationId: null,
+  sourceObjectPath: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   product: null as any,

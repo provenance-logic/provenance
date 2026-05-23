@@ -557,6 +557,24 @@ components:
         connectionDetailsValidated:
           type: boolean
           description: Whether automated validation (F10.7) has succeeded. Currently manual.
+        sourceRegistrationId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          nullable: true
+          description: |
+            F2.8a (closes B-070). Optional binding to a registered source
+            object in the connector framework. When set, the port's schema
+            and freshness derive from the bound source's latest
+            schema_snapshot. Null = hand-authored port (no source-side
+            discovery binding).
+        sourceObjectPath:
+          type: string
+          nullable: true
+          description: |
+            F2.8a. Path inside the bound source's namespace (e.g.,
+            'prod.customer.events' for a Unity Catalog three-part name,
+            'topic.user_signups' for Kafka, 's3://bucket/prefix/' for S3).
+            Interpretation deferred to the connector type.
         createdAt:
           $ref: "#/components/schemas/Timestamp"
         updatedAt:
@@ -590,6 +608,14 @@ components:
           description: |
             Port connection details keyed by the declared interfaceType.
             Stored encrypted at rest. Must match the port's interfaceType.
+        sourceRegistrationId:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            F2.8a — optional binding to a discovered source object. When
+            both this and sourceObjectPath are set, the source must be in
+            the producer's org (validated at write time).
+        sourceObjectPath:
+          type: string
 
     UpdatePortRequest:
       type: object
@@ -613,6 +639,14 @@ components:
           maxLength: 500
         connectionDetails:
           $ref: "#/components/schemas/ConnectionDetails"
+        sourceRegistrationId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          nullable: true
+          description: F2.8a — pass null to unbind a previously-bound port.
+        sourceObjectPath:
+          type: string
+          nullable: true
 
     PortList:
       type: object

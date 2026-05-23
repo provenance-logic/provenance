@@ -644,6 +644,8 @@ export class MarketplaceService {
       connectionDetails: null,
       connectionDetailsPreview: null,
       connectionDetailsValidated: entity.connectionDetailsValidated ?? false,
+      sourceRegistrationId: entity.sourceRegistrationId ?? null,
+      sourceObjectPath: entity.sourceObjectPath ?? null,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };
