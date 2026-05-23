@@ -97,6 +97,7 @@ export class OrganizationsService {
   }
 
   async createOrganization(dto: CreateOrganizationRequest): Promise<Organization> {
+    // @cross-tenant-by-design: slug uniqueness check before the org exists — no orgId applies yet
     const existing = await this.orgRepo.findOne({ where: { slug: dto.slug } });
     if (existing) {
       throw new ConflictException(`Organization with slug '${dto.slug}' already exists`);
@@ -113,12 +114,14 @@ export class OrganizationsService {
   }
 
   async getOrganization(orgId: string): Promise<Organization> {
+    // @cross-tenant-by-design: org-by-primary-key lookup — the B-061 controller guard ensures URL :orgId equals JWT orgId
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     if (!org) throw new NotFoundException(`Organization ${orgId} not found`);
     return this.toOrganization(org);
   }
 
   async updateOrganization(orgId: string, dto: UpdateOrganizationRequest): Promise<Organization> {
+    // @cross-tenant-by-design: org-by-primary-key lookup — B-061 controller guard enforces caller-org match
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     if (!org) throw new NotFoundException(`Organization ${orgId} not found`);
     if (dto.name !== undefined) org.name = dto.name;
@@ -164,6 +167,7 @@ export class OrganizationsService {
   }
 
   private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    // @cross-tenant-by-design: keycloak_subject is globally unique; same pattern as products/governance ensurePrincipal
     const existing = await this.principalRepo.findOne({
       where: { keycloakSubject: ctx.keycloakSubject },
     });
@@ -598,6 +602,7 @@ export class OrganizationsService {
       );
     }
 
+    // @cross-tenant-by-design: self-serve slug uniqueness — caller has no org yet (@AllowNoOrg path)
     const existing = await this.orgRepo.findOne({ where: { slug: dto.slug } });
     if (existing) {
       throw new ConflictException(`Organization with slug '${dto.slug}' already exists`);

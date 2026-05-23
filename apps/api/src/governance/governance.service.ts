@@ -564,6 +564,7 @@ export class GovernanceService {
   // ---------------------------------------------------------------------------
 
   private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    // @cross-tenant-by-design: keycloak_subject is globally unique (one Keycloak user → one principal); see service-org-filter audit
     const existing = await this.principalRepo.findOne({
       where: { keycloakSubject: ctx.keycloakSubject },
     });

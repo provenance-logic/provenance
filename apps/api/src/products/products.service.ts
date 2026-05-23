@@ -641,6 +641,7 @@ export class ProductsService {
   // ---------------------------------------------------------------------------
 
   private async ensurePrincipal(orgId: string, ctx: RequestContext): Promise<PrincipalEntity> {
+    // @cross-tenant-by-design: keycloak_subject is globally unique; same pattern as governance.service.ts ensurePrincipal
     const existing = await this.principalRepo.findOne({
       where: { keycloakSubject: ctx.keycloakSubject },
     });
