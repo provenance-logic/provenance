@@ -121,7 +121,7 @@ export const SNIPPET_DESTINATIONS: { value: SnippetDestination; label: string }[
 
 export interface PortSnippetResponse {
   destination: SnippetDestination;
-  language: 'python' | 'yaml' | 'text' | 'json';
+  language: 'python' | 'yaml' | 'text' | 'json' | 'xml';
   code: string | null;
   available: boolean;
   reason?:
