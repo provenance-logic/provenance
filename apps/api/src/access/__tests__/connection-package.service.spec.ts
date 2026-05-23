@@ -372,6 +372,102 @@ describe('ConnectionPackageService', () => {
       expect(result?.reason).toBe('destination_not_yet_supported');
     });
 
+    it('Phase 5.10: returns a .tds XML for tableau on a sql_jdbc port (postgres default)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('xml');
+      expect(result?.code).toBeTruthy();
+      const tds = result!.code as string;
+      expect(tds).toContain(`<?xml version='1.0' encoding='utf-8'?>`);
+      expect(tds).toContain(`class='postgres'`);
+      expect(tds).toContain(`server='db.example.com'`);
+      expect(tds).toContain(`dbname='orders'`);
+      expect(tds).toContain(`port='5432'`);
+      expect(tds).toContain(`authentication='username-password'`);
+    });
+
+    it('Phase 5.10: detects snowflake class from the host suffix and omits port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'xy12345.snowflakecomputing.com',
+          port: 443,
+          database: 'ANALYTICS',
+          schema: 'PUBLIC',
+          authMethod: 'username_password',
+          sslMode: 'require',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'requester-1');
+      expect(result?.available).toBe(true);
+      const tds = result!.code as string;
+      expect(tds).toContain(`class='snowflake'`);
+      // Snowflake on 443 uses an implicit port — Tableau infers from class.
+      expect(tds).not.toContain(`port='443'`);
+    });
+
+    it('Phase 5.10: detects databricks_aws class from the host', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'dbc-12345.cloud.databricks.com',
+          port: 443,
+          database: 'main',
+          schema: 'default',
+          authMethod: 'username_password',
+          sslMode: 'require',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'requester-1');
+      expect(result?.available).toBe(true);
+      const tds = result!.code as string;
+      expect(tds).toContain(`class='databricks_aws'`);
+    });
+
+    it('Phase 5.10: XML-escapes special characters in product slug and connection fields', async () => {
+      productRepo.findOne.mockResolvedValue({ ...PRODUCT, slug: 'orders<&"test' });
+      portRepo.findOne.mockResolvedValue(makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'db.example.com',
+          port: 5432,
+          database: `orders&main`,
+          schema: 'public',
+          authMethod: 'username_password',
+          sslMode: 'require',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'requester-1');
+      const tds = result!.code as string;
+      expect(tds).toContain(`formatted-name='orders&lt;&amp;&quot;test'`);
+      expect(tds).toContain(`dbname='orders&amp;main'`);
+    });
+
+    it('Phase 5.10: returns destination_not_yet_supported for tableau on non-sql_jdbc ports', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        interfaceType: 'rest_api',
+        connectionDetails: encryptedEnvelope({
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com',
+          authMethod: 'bearer_token',
+          bearerToken: 'tok',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('destination_not_yet_supported');
+    });
+
     it('returns destination_not_yet_supported when dbt is requested for a rest_api port', async () => {
       productRepo.findOne.mockResolvedValue(PRODUCT);
       portRepo.findOne.mockResolvedValue(makePort({

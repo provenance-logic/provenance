@@ -49,7 +49,7 @@ export const SUPPORTED_SNIPPET_DESTINATIONS: SnippetDestination[] = [
   'tableau',
 ];
 
-export type SnippetLanguage = 'python' | 'yaml' | 'text' | 'json';
+export type SnippetLanguage = 'python' | 'yaml' | 'text' | 'json' | 'xml';
 
 export interface PortSnippetResponse {
   destination: SnippetDestination;
@@ -598,6 +598,7 @@ function snippetLanguageFor(destination: SnippetDestination): SnippetLanguage {
     case 'python':   return 'python';
     case 'dbt':      return 'yaml';
     case 'power_bi': return 'json';
+    case 'tableau':  return 'xml';
     default:         return 'text';
   }
 }
@@ -629,8 +630,10 @@ function buildSnippet(
     if (details.kind === 'sql_jdbc') return buildSqlJdbcPowerBiPbids(details);
     return null;
   }
-  // tableau — deferred. Snippet endpoint returns available=false with
-  // reason='destination_not_yet_supported'.
+  if (destination === 'tableau') {
+    if (details.kind === 'sql_jdbc') return buildSqlJdbcTableauTds(details, productSlug);
+    return null;
+  }
   return null;
 }
 
@@ -731,6 +734,82 @@ function pickPowerBiProtocol(d: SqlJdbcConnectionDetails): string {
   // type today, so postgresql is the catch-all for the remaining
   // sql_jdbc variants until SQL Server lands.
   return 'postgresql';
+}
+
+/**
+ * Tableau Data Source file (.tds) for a SQL/JDBC port — Phase 5.10.
+ *
+ * The output is an XML document the consumer saves to a `.tds` file
+ * (e.g. `customer-orders.tds`) and double-clicks. Tableau Desktop
+ * launches with the connection dialog pre-filled with host + database;
+ * the consumer enters their own credentials per ADR-011 (the platform
+ * never holds the consumer's source-system credentials).
+ *
+ * Per-class mapping mirrors the dbt / JDBC URL / Power BI builders'
+ * host-detection heuristic. Tableau's `databricks_aws` class is the
+ * conservative pick for Databricks workspaces — newer Tableau versions
+ * also expose `databricks` (with an HTTP path for SQL warehouses),
+ * but `databricks_aws` parses across more Tableau versions. The exact
+ * connection attributes Tableau accepts vary by version; this builder
+ * emits the minimum set (`server`, `dbname`, optional `port` and
+ * `authentication`) so the .tds is broadly compatible. The consumer
+ * fills in any version-specific fields in Tableau's connection dialog
+ * after the .tds opens.
+ *
+ * References: Tableau TDS file format documentation
+ * (help.tableau.com — XML format spec).
+ */
+function buildSqlJdbcTableauTds(d: SqlJdbcConnectionDetails, productSlug: string): string {
+  const tableauClass = pickTableauClass(d);
+  const attrs: string[] = [
+    `class='${tableauClass}'`,
+    `server='${xmlEscape(d.host)}'`,
+    `dbname='${xmlEscape(d.database)}'`,
+  ];
+  // Snowflake on port 443 + Databricks SQL are implicit-port; only emit
+  // the port attr where Tableau actually expects it as a discriminator.
+  if (tableauClass === 'postgres' || tableauClass === 'mysql') {
+    attrs.push(`port='${d.port}'`);
+  }
+  // The authentication attribute is informational at the .tds level —
+  // it tells Tableau which credential prompt to show. Map our internal
+  // authMethod onto Tableau's vocabulary.
+  const tableauAuth = pickTableauAuth(d.authMethod);
+  if (tableauAuth) {
+    attrs.push(`authentication='${tableauAuth}'`);
+  }
+  return [
+    `<?xml version='1.0' encoding='utf-8'?>`,
+    `<datasource formatted-name='${xmlEscape(productSlug)}' version='10.5' inline='true'>`,
+    `  <connection ${attrs.join(' ')}>`,
+    `  </connection>`,
+    `</datasource>`,
+  ].join('\n');
+}
+
+function pickTableauClass(d: SqlJdbcConnectionDetails): string {
+  if (d.host.includes('snowflakecomputing.com')) return 'snowflake';
+  if (d.host.includes('databricks')) return 'databricks_aws';
+  if (d.port === 3306) return 'mysql';
+  return 'postgres';
+}
+
+function pickTableauAuth(authMethod: SqlJdbcConnectionDetails['authMethod']): string | null {
+  switch (authMethod) {
+    case 'username_password': return 'username-password';
+    case 'iam':               return 'iam';
+    case 'certificate':       return 'certificate';
+    default:                  return null;
+  }
+}
+
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/'/g, '&apos;')
+    .replace(/"/g, '&quot;');
 }
 
 const SEMANTIC_PYTHON_SNIPPET = [
