@@ -1,7 +1,13 @@
 # ADR-010: Row-Level Security as Backstop; Explicit-OrgId-Filter as Load-Bearing Tenant Isolation
 
 **Date:** May 22, 2026
-**Status:** Accepted (2026-05-23) — design adopted; implementation step 2 (`agents.service.ts` load-bearing fix) landed via the B-062 first-implementation PR. Steps 1 (ESLint rule), 3 (URL-param convention check), and 5 (smoke-test cross-tenant layer) still TBD; see [B-062](../../bugs/open.md#B-062) for the remaining-work checklist.
+**Status:** Accepted (2026-05-22 / 2026-05-23) — design adopted; **step 1 fully closed end-to-end as of 2026-05-22 late session.** Closure breakdown:
+
+- Step 2 (`agents.service.ts` load-bearing fix) — landed in #161.
+- Audit pass on all tenant-scoped services to scope step 1 — landed in #165 (`documents/audits/service-org-filter-audit-2026-05-22.md`). 136 queries classified; 85% explicit-filtered before #161, zero Tier-4 real leaks beyond what #161 closed.
+- Step 1 (ESLint rule `provenance/require-org-filter`) — landed in #167 at WARN level, then tightened to ERROR in #168 after the Tier-3 mechanical cleanup landed in the same PR.
+
+Remaining: step 3 (URL-param convention CI check — `:orgId` must be exactly `orgId`), step 5 (smoke-test cross-tenant layer, depends on B-060 CI half). The underlying B-062 RLS-by-default work itself (per-request sticky connection) remains a Phase 6 hardening item.
 **Author:** Provenance Platform Team
 
 ---

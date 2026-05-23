@@ -6,6 +6,33 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-068 — Marketplace cross-org URL break: B-061's `JwtAuthGuard` rejected legitimate cross-tenant marketplace reads
+
+- **Resolved:** 2026-05-22 (late session)
+- **PR:** [#164](https://github.com/provenance-logic/provenance/pull/164)
+- **Severity:** High (would have upgraded to Blocker post-PRD-reshape — every consumer-flow path begins with marketplace discovery and the data-mesh marketplace is cross-tenant by design)
+- **Area:** `apps/api/src/auth/jwt-auth.guard.ts`, marketplace read controllers (`trust-score`, `lineage`, `observability/slo`)
+
+**What was wrong.** PR #140 (B-061 fix) extended `JwtAuthGuard.canActivate` with `if (request.params.orgId && request.params.orgId !== request.user.orgId) throw 403`. The check is correct for tenant-scoped resource paths (editing your own product, mutating your own grant) but it also rejected every marketplace cross-tenant read. Logged in as `analyst@acme.example.com`, clicking into any beta-industries product returned "Org scope mismatch: token is scoped to a different organization than the URL targets." 4 of 16 published seed products landed in this case. The marketplace's central use case — the data mesh marketplace exists to surface other-org products — was structurally broken.
+
+**Fix.** New `@AllowCrossOrgRead` decorator at `apps/api/src/auth/allow-cross-org-read.decorator.ts`, orthogonal to the existing `@AllowNoOrg`. The guard skips its `:orgId === JWT orgId` check when the decorator is present; JWT validity, principal type, and non-empty `provenance_org_id` claim are still enforced. Applied to 9 GET endpoints across 3 controllers:
+
+- `TrustScoreController`: `GET (current)`, `GET history`
+- `LineageController`: `GET upstream`, `GET downstream`, `GET impact`
+- `SloController`: `GET slos`, `GET slos/:sloId`, `GET slos/:sloId/evaluations`, `GET slo-summary`
+
+Write/mutation endpoints (POST recompute, POST lineage events, POST/PATCH/DELETE SLO declarations and evaluations) intentionally **not** decorated. Three new guard tests pin the behavior; 738/738 API tests passing.
+
+**Verified end-to-end on dev.** Acme analyst GET on beta-industries trust-score returns 200 with real data; POST recompute on the same product still 403s. Control case (acme analyst on own product trust-score) still 200.
+
+**What's NOT closed by this PR.**
+- **Heavier restructure of org-scoped marketplace routes onto `/marketplace/products/:id/*` and dropping the per-org variants.** Deferred to post-PRD-reshape; the lighter cut closes the functional break without coupling to a route migration.
+- **B-071 — the write-side counterpart** (cross-org access REQUESTS are structurally broken). Same root cause family but a deeper architectural question; filed separately and pending PRD-session decision on Model A/B/C for access-request org ownership.
+
+**Pattern.** B-068 and [B-071](open.md#B-071) are sibling bugs from the same root cause: the platform's tenant-isolation primitives didn't include a coherent cross-org marketplace shape at the time the access flow was built. B-068 was the read side (now closed); B-071 is the write side (open, architectural). B-061 was a security fix that traded a narrow real leak for a broader functional break that wasn't caught at merge time. The adversarial-review-at-merge rule added to CLAUDE.md by PR #134 was designed to catch this class of issue — "what's the worst caller scenario?" should have also asked "what's the legitimate caller scenario this might break?" The persona walkthrough caught it instead.
+
+---
+
 ## B-006 — Add Port UI now enforces contract schema on output ports at authoring time
 
 - **Resolved:** 2026-05-22
