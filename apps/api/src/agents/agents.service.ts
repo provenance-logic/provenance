@@ -83,6 +83,10 @@ export class AgentsService {
 
   async registerAgent(dto: CreateAgentDto, ctx: RequestContext) {
     // B4: Validate human_oversight_contact belongs to a known principal
+    // @cross-tenant-by-design: principal email is globally unique; we look up
+    // the oversight contact across all orgs to validate the email belongs to
+    // a known platform user, and then check `oversightPrincipal.orgId === orgId`
+    // before adding to the recipient set.
     const oversightPrincipal = await this.principalRepo.findOne({
       where: { email: dto.human_oversight_contact },
     });
@@ -313,6 +317,9 @@ export class AgentsService {
   ): Promise<string[]> {
     const ids = new Set<string>();
 
+    // @cross-tenant-by-design: same pattern as registerAgent — email is the
+    // globally-unique lookup key; the post-lookup `orgId === orgId` check
+    // at the next line is what enforces tenant isolation.
     const oversightPrincipal = await this.principalRepo.findOne({
       where: { email: oversightContactEmail },
     });

@@ -2,7 +2,7 @@
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
-  plugins: ['@typescript-eslint'],
+  plugins: ['@typescript-eslint', 'provenance'],
   extends: [
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
@@ -23,6 +23,19 @@ module.exports = {
       argsIgnorePattern: '^_',
       varsIgnorePattern: '^_',
     }],
+
+    // ADR-010 / B-062 — every TypeORM repo call against a tenant-scoped
+    // entity must explicitly filter on `orgId`. Magic-comment escape hatch
+    // (`// @cross-tenant-by-design: <reason>`) for intentional cross-tenant
+    // lookups (marketplace global reads, ensurePrincipal helpers, slug
+    // uniqueness pre-creation, org-by-id, etc.).
+    //
+    // Started at 'warn' so the audit's known Tier-3 sites (slo.service.ts
+    // evaluation queries, product-enrichment helpers, notifications.service.ts
+    // updates) surface without failing CI. Tighten to 'error' once those
+    // mechanical cleanup PRs land. See:
+    // documents/audits/service-org-filter-audit-2026-05-22.md
+    'provenance/require-org-filter': 'warn',
   },
   overrides: [
     {
