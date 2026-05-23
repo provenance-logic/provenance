@@ -142,6 +142,13 @@ export interface Port {
    */
   sourceRegistrationId: Uuid | null;
   sourceObjectPath:     string | null;
+  /**
+   * F10.15 layer 1 (Phase 5.9) — producer declaration that this port is
+   * open to all source-system principals (Situation A); no per-product
+   * grant is required at the consumer connect flow. Default false
+   * (Situation B — grant required).
+   */
+  situationAEligibility: boolean;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -157,6 +164,8 @@ export interface DeclarePortRequest {
   /** F2.8a — optional binding to a discovered source object. */
   sourceRegistrationId?: Uuid;
   sourceObjectPath?:     string;
+  /** F10.15 — defaults to false (Situation B); set true for open-access ports. */
+  situationAEligibility?: boolean;
 }
 
 export interface UpdatePortRequest {
@@ -172,6 +181,46 @@ export interface UpdatePortRequest {
    */
   sourceRegistrationId?: Uuid | null;
   sourceObjectPath?:     string | null;
+  /** F10.15 — explicit boolean toggles the eligibility; undefined leaves untouched. */
+  situationAEligibility?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// F10.15 (Phase 5.9) — Consumer-flow situation detection
+// ---------------------------------------------------------------------------
+
+export type PortSituation = 'A' | 'B';
+
+export type SituationRecommendedNext =
+  | 'view_snippet'
+  | 'request_access';
+
+export interface PortSituationResponse {
+  portId: Uuid;
+  productId: Uuid;
+  /**
+   * 'A' = open to all source-system principals (producer-declared via
+   *   `situationAEligibility = true`); no per-product grant required.
+   * 'B' = per-product grant required.
+   *
+   * 'C' (consumer has no source-system account at all) is not yet
+   * surfaced — its detection requires the layer-2 probe or directory
+   * integration (post-OSR per OS10.4). Until then the endpoint reports
+   * A or B only.
+   */
+  situation: PortSituation;
+  /**
+   * UX hint for the consumer connect flow:
+   * - 'view_snippet' when the consumer can use the port immediately
+   *   (Situation A, or Situation B + active grant).
+   * - 'request_access' when Situation B applies and the consumer
+   *   has no active grant.
+   */
+  recommendedNext: SituationRecommendedNext;
+  /** True when the caller has an active access grant for this product. */
+  callerHasActiveGrant: boolean;
+  /** Whether the producer marked this port Situation-A-eligible. */
+  declaredSituationAEligible: boolean;
 }
 
 /**

@@ -575,6 +575,13 @@ components:
             'prod.customer.events' for a Unity Catalog three-part name,
             'topic.user_signups' for Kafka, 's3://bucket/prefix/' for S3).
             Interpretation deferred to the connector type.
+        situationAEligibility:
+          type: boolean
+          description: |
+            F10.15 layer 1 (Phase 5.9) — producer declaration that this
+            port is open to all source-system principals (Situation A);
+            no per-product grant is required at the consumer connect
+            flow. Default false (Situation B — grant required).
         createdAt:
           $ref: "#/components/schemas/Timestamp"
         updatedAt:
@@ -616,6 +623,9 @@ components:
             the producer's org (validated at write time).
         sourceObjectPath:
           type: string
+        situationAEligibility:
+          type: boolean
+          description: F10.15 — default false (Situation B); set true for open-access ports.
 
     UpdatePortRequest:
       type: object
@@ -647,6 +657,9 @@ components:
         sourceObjectPath:
           type: string
           nullable: true
+        situationAEligibility:
+          type: boolean
+          description: F10.15 — explicit boolean toggles eligibility; undefined leaves untouched.
 
     PortList:
       type: object

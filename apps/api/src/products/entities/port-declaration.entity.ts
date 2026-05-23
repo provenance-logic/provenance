@@ -58,6 +58,14 @@ export class PortDeclarationEntity {
   @Column({ name: 'source_object_path', type: 'text', nullable: true })
   sourceObjectPath!: string | null;
 
+  // F10.15 layer 1 (Phase 5.9) — producer declaration. When true, this
+  // port is open to all source-system principals (Situation A); no
+  // per-product grant is required at the consumer connect flow. Default
+  // false (Situation B — per-product grant required). Layer-2 probe
+  // verification (separate follow-up) catches mis-declarations.
+  @Column({ name: 'situation_a_eligibility', type: 'boolean', default: false })
+  situationAEligibility!: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

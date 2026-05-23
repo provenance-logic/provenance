@@ -10,6 +10,7 @@ import type {
   ConnectionPackage,
   ConnectionPackagePort,
   OutputPortInterfaceType,
+  PortSituationResponse,
   SqlJdbcConnectionDetails,
   RestApiConnectionDetails,
   GraphQlConnectionDetails,
@@ -199,6 +200,69 @@ export class ConnectionPackageService {
     if (grant.revokedAt) return false;
     if (grant.expiresAt && grant.expiresAt <= new Date()) return false;
     return true;
+  }
+
+  /**
+   * F10.15 layer 1 (Phase 5.9) — Resolves the consumer-flow situation
+   * for a given (port, caller) pair using producer declaration as the
+   * primary signal:
+   *
+   * - Situation A: the producer marked the port `situationAEligibility = true`.
+   *   The consumer can use the port immediately; no per-product grant
+   *   is required. recommendedNext = 'view_snippet'.
+   * - Situation B: the producer left the port at the default
+   *   `situationAEligibility = false`. The consumer needs a per-product
+   *   grant. recommendedNext = 'view_snippet' if the caller already
+   *   has an active grant; 'request_access' otherwise.
+   *
+   * Returns null if the product or port doesn't exist (mapped to 404
+   * at the controller).
+   *
+   * Layer 2 (probe-based verification) and layer 3 (directory
+   * integration / Situation C detection) are separate follow-ups per
+   * F10.15. Until they ship, this layer reports A or B only.
+   */
+  async resolveSituationForPort(
+    productOrgId: string,
+    productId: string,
+    portId: string,
+    requesterPrincipalId: string,
+  ): Promise<PortSituationResponse | null> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId: productOrgId },
+    });
+    if (!product) return null;
+
+    const port = await this.portRepo.findOne({
+      where: { id: portId, orgId: productOrgId, productId },
+    });
+    if (!port) return null;
+
+    const isOwner = product.ownerPrincipalId === requesterPrincipalId;
+    const hasGrant = isOwner
+      || (await this.hasActiveGrant(productOrgId, productId, requesterPrincipalId));
+
+    const declaredSituationAEligible = port.situationAEligibility === true;
+
+    if (declaredSituationAEligible) {
+      return {
+        portId: port.id,
+        productId: product.id,
+        situation: 'A',
+        recommendedNext: 'view_snippet',
+        callerHasActiveGrant: hasGrant,
+        declaredSituationAEligible: true,
+      };
+    }
+
+    return {
+      portId: port.id,
+      productId: product.id,
+      situation: 'B',
+      recommendedNext: hasGrant ? 'view_snippet' : 'request_access',
+      callerHasActiveGrant: hasGrant,
+      declaredSituationAEligible: false,
+    };
   }
 
   async generateForProduct(orgId: string, productId: string): Promise<ConnectionPackage | null> {

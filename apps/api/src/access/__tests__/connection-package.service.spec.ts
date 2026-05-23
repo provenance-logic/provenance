@@ -50,6 +50,7 @@ const makePort = (
   connectionDetailsValidated: false,
   sourceRegistrationId: null,
   sourceObjectPath: null,
+  situationAEligibility: false,
   createdAt: new Date(),
   updatedAt: new Date(),
   product: null as any,
@@ -512,6 +513,103 @@ describe('ConnectionPackageService', () => {
       const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
       expect(result?.available).toBe(false);
       expect(result?.reason).toBe('request_access_required');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 5.9 / F10.15 layer 1 — Situation detection
+  // ---------------------------------------------------------------------------
+
+  describe('resolveSituationForPort', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    function activeGrant() {
+      return {
+        id: 'grant-1',
+        orgId: 'org-1',
+        productId: 'product-1',
+        granteePrincipalId: 'requester-1',
+        grantedAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        revokedAt: null,
+      };
+    }
+
+    it('returns null when the product does not exist', async () => {
+      productRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSituationForPort('org-1', 'missing', 'port-1', 'requester-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the port does not exist', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'missing', 'requester-1');
+      expect(result).toBeNull();
+    });
+
+    it('Situation A when the producer declared situationAEligibility = true (no grant needed)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: true }));
+      grantRepo.findOne.mockResolvedValue(null); // no grant
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', 'requester-1');
+      expect(result?.situation).toBe('A');
+      expect(result?.recommendedNext).toBe('view_snippet');
+      expect(result?.declaredSituationAEligible).toBe(true);
+      expect(result?.callerHasActiveGrant).toBe(false);
+    });
+
+    it('Situation B + view_snippet when caller has an active grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: false }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', 'requester-1');
+      expect(result?.situation).toBe('B');
+      expect(result?.recommendedNext).toBe('view_snippet');
+      expect(result?.callerHasActiveGrant).toBe(true);
+    });
+
+    it('Situation B + request_access when caller has no active grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: false }));
+      grantRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', 'requester-1');
+      expect(result?.situation).toBe('B');
+      expect(result?.recommendedNext).toBe('request_access');
+      expect(result?.callerHasActiveGrant).toBe(false);
+    });
+
+    it('product owner is treated as having a grant regardless of grant table state', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: false }));
+      // No grant table entry — owner path short-circuits.
+      grantRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', PRODUCT.ownerPrincipalId);
+      expect(result?.situation).toBe('B');
+      expect(result?.recommendedNext).toBe('view_snippet');
+      expect(result?.callerHasActiveGrant).toBe(true);
+    });
+
+    it('A overrides grant-check — the caller does not need a grant when the port is open', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: true }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', 'requester-1');
+      expect(result?.situation).toBe('A');
+      expect(result?.recommendedNext).toBe('view_snippet');
+      // The caller-has-grant flag is still reported truthfully so the UI can
+      // surface "you have a grant but this port is open to everyone anyway."
+      expect(result?.callerHasActiveGrant).toBe(true);
+    });
+
+    it('treats a revoked grant as no grant (Situation B + request_access)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: false }));
+      grantRepo.findOne.mockResolvedValue({ ...activeGrant(), revokedAt: new Date() });
+      const result = await svc.resolveSituationForPort('org-1', 'product-1', 'port-1', 'requester-1');
+      expect(result?.situation).toBe('B');
+      expect(result?.recommendedNext).toBe('request_access');
+      expect(result?.callerHasActiveGrant).toBe(false);
     });
   });
 });
