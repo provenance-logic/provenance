@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { marketplaceApi } from '../../shared/api/marketplace.js';
+import {
+  marketplaceApi,
+  SNIPPET_DESTINATIONS,
+  type SnippetDestination,
+  type PortSnippetResponse,
+} from '../../shared/api/marketplace.js';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import { AccessRequestSlideOver } from './AccessRequestSlideOver.js';
@@ -25,32 +30,11 @@ import type {
 // connection details are the port owner's responsibility to fill in.
 // ---------------------------------------------------------------------------
 
-const CONSUMPTION_GUIDANCE: Record<OutputPortInterfaceType, { heading: string; body: string }> = {
-  sql_jdbc: {
-    heading: 'Connect via JDBC',
-    body:    'jdbc:<driver>://<host>:<port>/<database>?user=<principal>&sslmode=require',
-  },
-  rest_api: {
-    heading: 'Call the REST API',
-    body:    'curl -H "Authorization: Bearer $TOKEN" https://<base-url>/<resource>',
-  },
-  graphql: {
-    heading: 'Query via GraphQL',
-    body:    'POST https://<base-url>/graphql  with  { query }  — send an access token in Authorization',
-  },
-  streaming_topic: {
-    heading: 'Subscribe to the topic',
-    body:    'Topic: <topic-name>  ·  Brokers: <broker-list>  ·  Schema registry: <registry-url>',
-  },
-  file_object_export: {
-    heading: 'Read the exported files',
-    body:    '<bucket>/<prefix>/<partition>/...  — access via object-store SDK with the granted IAM role',
-  },
-  semantic_query_endpoint: {
-    heading: 'Query with natural language (agents)',
-    body:    'MCP tool: semantic_search  ·  arg: { productId, query }  — requires an agent trust classification',
-  },
-};
+// CONSUMPTION_GUIDANCE was a static per-interface-type placeholder template
+// that rendered literal `<host>` / `<base-url>` placeholders on every product
+// detail page. It was the inverted-UX side of B-069. Replaced by the
+// `SnippetPicker` component below, which lets the consumer pick their tool
+// and fetches a real snippet from `GET .../ports/:portId/snippet?destination=`.
 
 // ---------------------------------------------------------------------------
 // Style maps
@@ -487,7 +471,152 @@ function ConnectionDetailsPanel({ port }: { port: Port }) {
   return null;
 }
 
-function PortsTab({ ports }: { ports: Port[] }) {
+/**
+ * Consumer-grade snippet picker (closes B-069 partial — replaces the static
+ * CONSUMPTION_GUIDANCE placeholder template). Lets the user choose a tool
+ * from a dropdown; the snippet is fetched on demand from the per-port
+ * snippet endpoint and rendered in a code block with copy-to-clipboard.
+ *
+ * Visibility mirrors the F10.6 connection-details rule: a user without
+ * ownership or an active access grant gets `available: false` with a
+ * pointer to the request-access flow. Cross-org grants are still on the
+ * known-limit list (see B-071 / the inbound-outbound bridge).
+ *
+ * Destinations:
+ *   - python: real generators for all 6 interface types (preexisting)
+ *   - dbt: profiles.yml fragment for sql_jdbc (this PR)
+ *   - sql_client / jdbc: bare JDBC URL for sql_jdbc (this PR)
+ *   - power_bi / tableau: deferred — returns "not yet supported"
+ */
+function SnippetPicker({
+  productOrgId,
+  productId,
+  portId,
+}: {
+  productOrgId: string;
+  productId: string;
+  portId: string;
+}) {
+  const [destination, setDestination] = useState<SnippetDestination>('python');
+  const [snippet, setSnippet]         = useState<PortSnippetResponse | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [copied, setCopied]           = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setCopied(false);
+    marketplaceApi.products
+      .snippet(productOrgId, productId, portId, destination)
+      .then((s) => {
+        if (cancelled) return;
+        setSnippet(s);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : 'Failed to load snippet');
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [productOrgId, productId, portId, destination]);
+
+  const handleCopy = () => {
+    if (!snippet?.code) return;
+    void navigator.clipboard.writeText(snippet.code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-lg p-3 mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <label className="text-xs font-semibold text-slate-700">How to consume:</label>
+        <select
+          value={destination}
+          onChange={(e) => setDestination(e.target.value as SnippetDestination)}
+          className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
+        >
+          {SNIPPET_DESTINATIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        {snippet?.code && (
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="ml-auto text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-700"
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        )}
+      </div>
+
+      {loading && (
+        <div className="text-xs text-slate-400 italic px-2 py-3">Loading snippet…</div>
+      )}
+
+      {!loading && error && (
+        <div className="text-xs text-red-600 px-2 py-3">{error}</div>
+      )}
+
+      {!loading && !error && snippet && !snippet.available && (
+        <SnippetUnavailable reason={snippet.reason} />
+      )}
+
+      {!loading && !error && snippet?.available && snippet.code && (
+        <pre className="text-xs font-mono bg-slate-900 text-slate-100 rounded p-3 overflow-x-auto whitespace-pre">
+          {snippet.code}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function SnippetUnavailable({ reason }: { reason: PortSnippetResponse['reason'] }) {
+  switch (reason) {
+    case 'request_access_required':
+      return (
+        <div className="text-xs text-slate-600 px-2 py-3 bg-slate-50 rounded">
+          You need an active access grant on this product before the snippet renders with real connection
+          details. Use the Request Access action above to start the approval flow.
+        </div>
+      );
+    case 'destination_not_yet_supported':
+      return (
+        <div className="text-xs text-amber-700 px-2 py-3 bg-amber-50 rounded">
+          A snippet for this tool / interface combination is not yet generated. Pick another destination from the
+          dropdown, or check back later.
+        </div>
+      );
+    case 'port_has_no_connection_details':
+      return (
+        <div className="text-xs text-slate-600 px-2 py-3 bg-slate-50 rounded">
+          This port has not yet been wired with connection details. The product owner needs to populate them
+          before a snippet can be generated.
+        </div>
+      );
+    default:
+      return (
+        <div className="text-xs text-slate-600 px-2 py-3 bg-slate-50 rounded">
+          Snippet is not available for this port.
+        </div>
+      );
+  }
+}
+
+function PortsTab({
+  ports,
+  productOrgId,
+  productId,
+}: {
+  ports: Port[];
+  productOrgId: string;
+  productId: string;
+}) {
   const outputPorts = ports.filter((p) => p.portType === 'output');
 
   if (outputPorts.length === 0) {
@@ -501,8 +630,7 @@ function PortsTab({ ports }: { ports: Port[] }) {
   return (
     <div className="space-y-4">
       {outputPorts.map((port) => {
-        const fields   = extractFieldsFromContract(port.contractSchema);
-        const guidance = port.interfaceType ? CONSUMPTION_GUIDANCE[port.interfaceType] : null;
+        const fields = extractFieldsFromContract(port.contractSchema);
 
         return (
           <div key={port.id} className="bg-white border border-slate-200 rounded-xl p-5">
@@ -529,14 +657,7 @@ function PortsTab({ ports }: { ports: Port[] }) {
 
             <ConnectionDetailsPanel port={port} />
 
-            {guidance && (
-              <div className="border border-brand-100 bg-brand-50 rounded-lg p-3 mb-3">
-                <p className="text-xs font-semibold text-brand-800 mb-1">How to consume — {guidance.heading}</p>
-                <code className="block text-xs font-mono text-brand-900 whitespace-pre-wrap break-all">
-                  {guidance.body}
-                </code>
-              </div>
-            )}
+            <SnippetPicker productOrgId={productOrgId} productId={productId} portId={port.id} />
 
             {fields.length > 0 ? (
               <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -929,7 +1050,7 @@ export function ProductDetailPage() {
       <div id={`tabpanel-${activeTab}`} role="tabpanel" aria-label={activeTab}>
         {activeTab === 'overview' && <OverviewTab product={product} />}
         {activeTab === 'schema'   && <SchemaTab   productId={productId} />}
-        {activeTab === 'ports'    && <PortsTab    ports={product.ports} />}
+        {activeTab === 'ports'    && <PortsTab    ports={product.ports} productOrgId={product.orgId} productId={product.id} />}
         {activeTab === 'lineage'  && <LineageExplorer productId={productId} orgId={product.orgId} />}
         {activeTab === 'slos'     && <ObservabilityDashboard productId={productId} orgId={product.orgId} />}
         {activeTab === 'access'   && (

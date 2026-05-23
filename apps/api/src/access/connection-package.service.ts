@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
+import { AccessGrantEntity } from './entities/access-grant.entity.js';
 import { EncryptionService, type EncryptedEnvelope } from '../common/encryption.service.js';
 import type {
   ConnectionDetails,
@@ -15,6 +16,51 @@ import type {
   KafkaConnectionDetails,
   FileExportConnectionDetails,
 } from '@provenance/types';
+
+// ---------------------------------------------------------------------------
+// Per-port snippet generation (consumer-grade outbound, B-069 partial close)
+//
+// The user story (see consumer-grade-outbound-reframe-2026-05-22.md) wants
+// the consumer to pick their tool from a list and receive a ready-to-use
+// configuration snippet. Tonight ships:
+//   - `python`: all 6 interface types (reuses existing per-type generators)
+//   - `dbt`: sql_jdbc only (new generator below)
+//   - other destinations return { available: false, reason: 'destination_not_yet_supported' }
+//
+// Snippet visibility mirrors the connection_details disclosure rule
+// (F10.6): user must own the product OR have an active access grant on it.
+// Without one, the response is { available: false, reason: 'request_access_required' }.
+// ---------------------------------------------------------------------------
+
+export type SnippetDestination =
+  | 'python'
+  | 'dbt'
+  | 'sql_client'
+  | 'jdbc'
+  | 'power_bi'
+  | 'tableau';
+
+export const SUPPORTED_SNIPPET_DESTINATIONS: SnippetDestination[] = [
+  'python',
+  'dbt',
+  'sql_client',
+  'jdbc',
+  'power_bi',
+  'tableau',
+];
+
+export interface PortSnippetResponse {
+  destination: SnippetDestination;
+  language: 'python' | 'yaml' | 'text';
+  code: string | null;
+  available: boolean;
+  /** Human-readable reason when `available === false`. */
+  reason?:
+    | 'request_access_required'
+    | 'destination_not_yet_supported'
+    | 'port_has_no_connection_details'
+    | 'unsupported_interface_type';
+}
 
 interface PortArtifacts {
   interfaceType: OutputPortInterfaceType;
@@ -40,8 +86,118 @@ export class ConnectionPackageService {
     private readonly productRepo: Repository<DataProductEntity>,
     @InjectRepository(PortDeclarationEntity)
     private readonly portRepo: Repository<PortDeclarationEntity>,
+    @InjectRepository(AccessGrantEntity)
+    private readonly grantRepo: Repository<AccessGrantEntity>,
     private readonly encryptionService: EncryptionService,
   ) {}
+
+  // ---------------------------------------------------------------------------
+  // Per-port + per-destination snippet generation (consumer-grade outbound)
+  // ---------------------------------------------------------------------------
+
+  async generateSnippetForPort(
+    productOrgId: string,
+    productId: string,
+    portId: string,
+    destination: SnippetDestination,
+    requesterPrincipalId: string,
+  ): Promise<PortSnippetResponse | null> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId: productOrgId },
+    });
+    if (!product) return null;
+
+    const port = await this.portRepo.findOne({
+      where: { id: portId, orgId: productOrgId, productId },
+    });
+    if (!port) return null;
+    if (!port.interfaceType) {
+      return {
+        destination,
+        language: snippetLanguageFor(destination),
+        code: null,
+        available: false,
+        reason: 'unsupported_interface_type',
+      };
+    }
+
+    const isOwner = product.ownerPrincipalId === requesterPrincipalId;
+    const hasGrant = isOwner || (await this.hasActiveGrant(productOrgId, productId, requesterPrincipalId));
+
+    if (!hasGrant) {
+      return {
+        destination,
+        language: snippetLanguageFor(destination),
+        code: null,
+        available: false,
+        reason: 'request_access_required',
+      };
+    }
+
+    // Semantic query endpoints have no decryptable connection_details — the
+    // python snippet is platform-static.
+    if (port.interfaceType === 'semantic_query_endpoint') {
+      if (destination === 'python') {
+        return {
+          destination,
+          language: 'python',
+          code: SEMANTIC_PYTHON_SNIPPET,
+          available: true,
+        };
+      }
+      return {
+        destination,
+        language: snippetLanguageFor(destination),
+        code: null,
+        available: false,
+        reason: 'destination_not_yet_supported',
+      };
+    }
+
+    const details = await this.decryptPortDetails(port);
+    if (!details) {
+      return {
+        destination,
+        language: snippetLanguageFor(destination),
+        code: null,
+        available: false,
+        reason: 'port_has_no_connection_details',
+      };
+    }
+
+    const code = buildSnippet(details, destination, product.slug);
+    if (code === null) {
+      return {
+        destination,
+        language: snippetLanguageFor(destination),
+        code: null,
+        available: false,
+        reason: 'destination_not_yet_supported',
+      };
+    }
+
+    return {
+      destination,
+      language: snippetLanguageFor(destination),
+      code,
+      available: true,
+    };
+  }
+
+  private async hasActiveGrant(
+    orgId: string,
+    productId: string,
+    principalId: string,
+  ): Promise<boolean> {
+    const grant = await this.grantRepo.findOne({
+      where: { orgId, productId, granteePrincipalId: principalId },
+      order: { grantedAt: 'DESC' },
+    });
+    if (!grant) return false;
+    if (grant.revokedAt) return false;
+    if (grant.expiresAt && grant.expiresAt <= new Date()) return false;
+    return true;
+  }
 
   async generateForProduct(orgId: string, productId: string): Promise<ConnectionPackage | null> {
     const product = await this.productRepo.findOne({ where: { id: productId, orgId } });
@@ -424,6 +580,98 @@ function buildFilePython(d: FileExportConnectionDetails): string {
 
 function quote(s: string): string {
   return JSON.stringify(s);
+}
+
+// ---------------------------------------------------------------------------
+// Per-destination snippet dispatch.
+//
+// Returns null when the (interface, destination) pair isn't supported tonight.
+// The dbt destination is sql_jdbc-only; sql_client / jdbc / power_bi / tableau
+// are sql_jdbc-only too but only minimally implemented (sql_client / jdbc are
+// the raw JDBC URL string; power_bi / tableau are deferred).
+// ---------------------------------------------------------------------------
+
+function snippetLanguageFor(destination: SnippetDestination): 'python' | 'yaml' | 'text' {
+  switch (destination) {
+    case 'python': return 'python';
+    case 'dbt':    return 'yaml';
+    default:       return 'text';
+  }
+}
+
+function buildSnippet(
+  details: ConnectionDetails,
+  destination: SnippetDestination,
+  productSlug: string,
+): string | null {
+  if (destination === 'python') {
+    switch (details.kind) {
+      case 'sql_jdbc':          return buildSqlJdbcPython(details);
+      case 'rest_api':          return buildRestPython(details);
+      case 'graphql':           return buildGraphQlPython(details);
+      case 'streaming_topic':   return buildKafkaPython(details);
+      case 'file_object_export': return buildFilePython(details);
+      default:                  return null;
+    }
+  }
+  if (destination === 'dbt') {
+    if (details.kind === 'sql_jdbc') return buildSqlJdbcDbt(details, productSlug);
+    return null;
+  }
+  if (destination === 'sql_client' || destination === 'jdbc') {
+    if (details.kind === 'sql_jdbc') return buildSqlJdbcUrl(details);
+    return null;
+  }
+  // power_bi, tableau — deferred. Snippet endpoint returns available=false with
+  // reason='destination_not_yet_supported' for these.
+  return null;
+}
+
+/**
+ * dbt profiles.yml entry for a Postgres / Snowflake / Databricks JDBC port.
+ * The output is intended to be pasted into ~/.dbt/profiles.yml under a new
+ * profile name; the consumer fills in the user/password via env vars.
+ */
+function buildSqlJdbcDbt(d: SqlJdbcConnectionDetails, productSlug: string): string {
+  const driver = (() => {
+    if (d.host.includes('snowflakecomputing.com') || d.port === 443) return 'snowflake';
+    if (d.host.includes('databricks')) return 'databricks';
+    if (d.port === 3306) return 'mysql';
+    return 'postgres';
+  })();
+  const profileName = `provenance_${productSlug.replace(/-/g, '_')}`;
+  const lines = [
+    `${profileName}:`,
+    `  target: dev`,
+    `  outputs:`,
+    `    dev:`,
+    `      type: ${driver}`,
+    `      host: ${d.host}`,
+    `      port: ${d.port}`,
+    `      database: ${d.database}`,
+    `      schema: ${d.schema}`,
+    `      user: "{{ env_var('DBT_USER') }}"`,
+    `      password: "{{ env_var('DBT_PASSWORD') }}"`,
+    `      sslmode: ${d.sslMode}`,
+    `      threads: 4`,
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Bare JDBC URL — the same value the connection package's `jdbcUrl` artifact
+ * carries. Exposed under both `sql_client` and `jdbc` destinations so a user
+ * picking either gets the URL string to paste into their tool's connection
+ * dialog.
+ */
+function buildSqlJdbcUrl(d: SqlJdbcConnectionDetails): string {
+  if (d.jdbcUrlTemplate && d.jdbcUrlTemplate.length > 0) return d.jdbcUrlTemplate;
+  const driver = (() => {
+    if (d.host.includes('snowflakecomputing.com') || d.port === 443) return 'snowflake';
+    if (d.port === 3306) return 'mysql';
+    return 'postgresql';
+  })();
+  return `jdbc:${driver}://${d.host}:${d.port}/${d.database}?sslmode=${d.sslMode}`;
 }
 
 const SEMANTIC_PYTHON_SNIPPET = [

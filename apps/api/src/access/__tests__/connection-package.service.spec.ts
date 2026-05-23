@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConnectionPackageService } from '../connection-package.service.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../../products/entities/port-declaration.entity.js';
+import { AccessGrantEntity } from '../entities/access-grant.entity.js';
 import { EncryptionService } from '../../common/encryption.service.js';
 
 const mockRepo = () => ({
@@ -57,6 +58,7 @@ describe('ConnectionPackageService', () => {
   let svc: ConnectionPackageService;
   let productRepo: ReturnType<typeof mockRepo>;
   let portRepo: ReturnType<typeof mockRepo>;
+  let grantRepo: ReturnType<typeof mockRepo>;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -64,6 +66,7 @@ describe('ConnectionPackageService', () => {
         ConnectionPackageService,
         { provide: getRepositoryToken(DataProductEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(AccessGrantEntity), useFactory: mockRepo },
         {
           provide: EncryptionService,
           useValue: {
@@ -79,6 +82,7 @@ describe('ConnectionPackageService', () => {
     svc = module.get(ConnectionPackageService);
     productRepo = module.get(getRepositoryToken(DataProductEntity));
     portRepo = module.get(getRepositoryToken(PortDeclarationEntity));
+    grantRepo = module.get(getRepositoryToken(AccessGrantEntity));
   });
 
   it('returns null when the product has no output ports', async () => {
@@ -225,5 +229,127 @@ describe('ConnectionPackageService', () => {
     const pkg = await svc.generateForProduct('org-1', 'product-1');
     expect(pkg!.ports).toHaveLength(1);
     expect(pkg!.ports[0].portId).toBe('port-1');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-port snippet generation (B-069 partial / consumer-grade outbound)
+  // ---------------------------------------------------------------------------
+
+  describe('generateSnippetForPort', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    function activeGrant() {
+      return { revokedAt: null, expiresAt: null, grantedAt: new Date() };
+    }
+
+    it('returns null when product is not found', async () => {
+      productRepo.findOne.mockResolvedValue(null);
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when port is not found', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(null);
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns { available: false, reason: request_access_required } when caller has no grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(null);
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('request_access_required');
+      expect(result?.code).toBeNull();
+    });
+
+    it('returns the python snippet when caller has an active grant on a sql_jdbc port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('python');
+      expect(result?.code).toContain('psycopg2');
+      expect(result?.code).toContain('db.example.com');
+    });
+
+    it('returns a dbt profiles.yml fragment for sql_jdbc when grant is active', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('yaml');
+      expect(result?.code).toContain('provenance_revenue_daily:');
+      expect(result?.code).toContain('host: db.example.com');
+      expect(result?.code).toContain("user: \"{{ env_var('DBT_USER') }}\"");
+    });
+
+    it('returns a bare JDBC URL for the sql_client destination', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'sql_client', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toBe('jdbc:postgresql://db.example.com:5432/orders?sslmode=require');
+    });
+
+    it('returns destination_not_yet_supported for power_bi (deferred destination)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('destination_not_yet_supported');
+    });
+
+    it('returns destination_not_yet_supported when dbt is requested for a rest_api port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        interfaceType: 'rest_api',
+        connectionDetails: encryptedEnvelope({
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com',
+          authMethod: 'bearer_token',
+          bearerToken: 'tok',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('destination_not_yet_supported');
+    });
+
+    it('treats the product owner as if they have a grant (no grant lookup required)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      // No grant in repo; owner ID matches requester.
+      grantRepo.findOne.mockResolvedValue(null);
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('psycopg2');
+    });
+
+    it('treats a revoked grant as no grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue({ ...activeGrant(), revokedAt: new Date() });
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('request_access_required');
+    });
+
+    it('treats an expired grant as no grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      const expired = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      grantRepo.findOne.mockResolvedValue({ ...activeGrant(), expiresAt: expired });
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('request_access_required');
+    });
   });
 });
