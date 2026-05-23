@@ -45,6 +45,8 @@ The platform embodies the data mesh principles articulated by Zhamak Dehghani wh
 
 Provenance is a coordination and contract platform. It does not store data, execute pipelines, or provide a centralized query engine for human consumers. It owns the contracts between domains, the lineage graph that connects them, and the governance engine that makes the mesh trustworthy.
 
+> **OSR commitment (2026-05-23).** The Open Source Readiness bar for the consumer surface is consumer-grade click-through, not engineer-grade fallback. The platform commits to **configuration brokerage** — brokering host, catalog name, and tool-specific snippets while the consumer supplies their own source-system identity. Credential brokerage is explicitly out of scope. See [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) for the architectural decision and the [PRD overhaul anchor decisions (2026-05-23)](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) for the full decision tree (1-6).
+
 ### Five Foundational Design Principles
 
 1. **Domain sovereignty with interoperability contracts** - domains own their data and pipelines; the platform owns the contracts between them and the lineage graph that connects them
@@ -177,6 +179,17 @@ The platform shall support five port types: Input Ports, Output Ports, Discovery
 
 **F2.8 - Output Port Interface Types**
 Six output port types shall be supported: SQL/JDBC endpoint, REST API endpoint, GraphQL endpoint, Streaming topic, File/object export, and Semantic query endpoint (for agent consumption). Every output port declaration shall include complete connection details as a required field. Connection details are port-type-specific and defined in Domain 10.
+
+**F2.8a - Output Port Source Object Binding** *(new 2026-05-23 — closes [B-070](../bugs/open.md#B-070))*
+Each output port may declare a binding to a registered source object (Domain 3) via a foreign key to the source registration plus the in-source object path (e.g., `prod.customer.events`, `topic.user_signups`, `s3://bucket/prefix/`). When bound:
+
+- The port's connection details default from the source registration's metadata; producer edits override per-field.
+- The port's schema initializes from the latest `schema_snapshot` for the bound object at port create / edit time.
+- The port's freshness signal (Domain 5) consults the bound source's lineage as the data source.
+
+Re-crawl of the bound source surfaces a diff to the producer (never silent overwrite, never silent staleness). Per the domain-declared-takes-precedence rule (Appendix C), producer edits stay sticky unless governance has explicitly configured auto-override.
+
+The producer publishing UX shall support a "Pick from discovered objects" action on port create / edit that lists registered connectors and their crawled objects per the producer's org; selecting an object auto-populates the binding and the initial schema. Source binding is optional — ports for sources not behind a discovery-capable connector remain hand-authored (the FK is NULLABLE). The single-FK shape (one port → one source) is the OSR commitment; a per-port join table for multi-source ports is deferred (see [anchor-decisions doc](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) decision 4).
 
 **F2.9 - Port Contract Enforcement**
 Each declared port shall have an associated machine-readable contract monitored by the platform. Violations shall be surfaced to all authorized consumers.
@@ -1529,6 +1542,8 @@ When the platform sustains more than 50 concurrent MCP sessions over a 24-hour p
 | Additional frozen state triggers | 8 | Domain suspension, policy change mid-workflow |
 | Audit log pattern analysis and anomaly detection | 8 | Phase 5, requires behavioral baseline |
 | SSO for connection packages | 10 | Enterprise identity management |
+| Source-system credential federation | 10 | Per OS10.5 — automates the Situation B manual GRANT step from F10.15. [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) names this as the long-term path beyond OSR; would require a future ADR (likely "Source-system service-account integration for delegated GRANT-on-behalf-of-owner"). Credential-broker-adjacent infrastructure |
+| Source-system directory integration for situation detection | 10 | Per OS10.4 — F10.15 layer 3. Querying source identity primitives (Snowflake account list, AWS IAM lookup) requires platform-side credentials to the source identity API. Credential-broker-adjacent; deferred indefinitely under the configuration-brokerage commitment |
 | Interactive query sandbox | 10 | High-value developer experience |
 | Native Slack / Teams integration | 11 | Post-webhook convenience |
 | Notification analytics and delivery reporting | 11 | Operational visibility |
@@ -1579,7 +1594,8 @@ Phase 6 is triggered by enterprise customer requirements, investor funding, or t
 | Autonomous Classification Requires Explicit Human Action | Autonomous tier can never be assigned by automated process | The trust level with the least friction must never be granted without deliberate human intent |
 | Anomaly Detection Deferred to Phase 5 | Anomaly detection requires production behavioral baseline | Building detection before real data exists produces arbitrary thresholds and false positives |
 | Frozen State as Platform-Level Construct | Frozen is a Temporal workflow state, not an agent-specific concept | The pattern will be needed beyond agent classification downgrade in future phases |
-| Lean Phase 5 - Open Source Ready | Phase 5 focuses on reliability, security, and developer experience on existing infrastructure | Provenance is an open source platform pre-revenue and pre-investment. Phase 6 is triggered by customers or funding, not a calendar date. |
+| Lean Phase 5 - Open Source Ready | Phase 5 focuses on reliability, security, developer experience, and consumer-grade outbound ([ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md)) on existing infrastructure | Provenance is an open source platform pre-revenue and pre-investment. Phase 6 is triggered by customers or funding, not a calendar date. The 2026-05-23 PRD v1.6 reshape added the consumer-grade outbound workstreams (5.8-5.14) and deferred anomaly detection (5.5) and SOC 2 foundations (5.7) to Phase 6 candidates. |
+| Consumer-Grade Click-Through as the OSR Bar | A non-engineer lands on a data product, picks a tool, and connects — without writing JSON, parsing a JDBC URL, or asking a data engineer. Configuration brokerage (not credential brokerage) is the model | The platform's four-persona claim (AI Agent, Domain Team, Data Consumer, Governance Member) requires consumer-grade as architecturally load-bearing, not aspirational. Engineer-grade fallback would fail the data mesh framing's own self-serve principle. See [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md). |
 | React Flow with Dagre for Lineage Visualization | React Flow replaces D3 force-directed graph | Left-to-right directed layout communicates data flow direction intuitively. React Flow's Dagre integration provides deterministic, readable layout for directed acyclic graphs. D3 force-directed layout is appropriate for exploratory network graphs but not for communicating structured lineage. See ADR-002. |
 | Port Connection Details as Platform-Enforced Publication Requirement | Connection details completeness cannot be waived by domain policy or governance override | A data product without usable connection details is not self-serve. Domains have maximum autonomy in all other dimensions; this is the non-negotiable floor for the self-serve infrastructure principle. |
 | Notifications as a First-Class Domain | Notifications defined as a complete domain with all triggers, recipients, and channels specified | Notifications are not a UI feature; they are the connective tissue between platform events and human action. An untriggered event that required human response is a platform failure. |
@@ -1590,7 +1606,9 @@ Phase 6 is triggered by enterprise customer requirements, investor funding, or t
 
 ## Appendix D: Phase 5 Scope - Open Source Ready
 
-Phase 5 is "Open Source Ready." The goal is to make the platform reliable, secure, and contributor-friendly on existing infrastructure. No significant new cloud spend. Estimated additional monthly infrastructure cost: $10-30.
+Phase 5 is "Open Source Ready." Per the 2026-05-23 PRD v1.6 reshape ([ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md)), the OSR bar is **consumer-grade click-through** — a non-engineer lands on a data product, picks a tool, and connects. The Phase 5 scope reflects that bar: foundational stability and security (5.1-5.3) are complete; data product completeness and developer experience (5.4, 5.6) are substantially shipped; **consumer-grade outbound (5.8-5.13) plus the first new-bar connector tranche (5.14)** is the substantial remaining work. Anomaly detection (5.5) and SOC 2 foundations (5.7) re-evaluated to Phase 6 candidates per ADR-011's "what survives, what defers, what merges" framing.
+
+Estimated additional monthly infrastructure cost remains $10-30 — the consumer-grade workstreams are engineering effort, not new infrastructure.
 
 ### 5.1 - Stability and Reliability (Complete - April 17, 2026)
 
@@ -1608,18 +1626,46 @@ X-Agent-Id header replaced with cryptographically verified JWT tokens. Agent reg
 
 Column-level schema, ownership/stewardship, freshness signals, and access status for requesting principal in get_product response. Data exists in platform today.
 
-### 5.5 - Agent Anomaly Detection
+### 5.5 - Agent Anomaly Detection *(Deferred to Phase 6 per 2026-05-23 reshape)*
 
-Behavioral pattern analysis against audit log. Configurable thresholds per trust classification. Temporal escalation workflows.
+Per ADR-011's "what survives, what defers" framing, anomaly detection is independent of the consumer-grade outbound work and lower-priority for OSR. The work remains scoped as originally described — behavioral pattern analysis against audit log, configurable thresholds per trust classification, Temporal escalation workflows — and moves to Phase 6 candidates pending production behavioral baseline.
 
 ### 5.6 - Developer Experience
 
 Local setup under 30 minutes. CONTRIBUTING.md. Comprehensive seed data. OpenAPI documentation. README update (handled by Claude Code from this PRD).
 
-### 5.7 - SOC 2 Foundations
+### 5.7 - SOC 2 Foundations *(Deferred to Phase 6 per 2026-05-23 reshape)*
 
-Data flow documentation, access control documentation, incident response runbook, audit log export, change management documentation.
+Per ADR-011's "what survives, what defers" framing, SOC 2 documentation work does not interact with the consumer-grade outbound work and is lower-priority for OSR shipping. Data flow / access control / incident response / audit log export / change management documentation remains scoped as originally described and moves to Phase 6 candidates ahead of the formal SOC 2 Type II audit.
+
+### 5.8 - Inbound-Outbound Bridge — closes B-070, ratifies F2.8a *(new 2026-05-23)*
+
+The single FK from `port_declarations` to `source_registrations` plus the `source_object_path` column; service-layer wiring (`ProductEnrichmentService.resolveColumnSchema` and `freshness.lastRefreshedAt` — currently null-returning stubs); producer "Pick from discovered objects" UX on port create / edit. **Foundational — every consumer-grade outbound piece below depends on this.** Sized at ~3-4 weeks per the reframe doc.
+
+### 5.9 - Situation Detection — F10.15 *(new 2026-05-23)*
+
+Per-port `situation_a_eligibility` declaration field; probe-based verification at the connect-flow entry point with per-source-type implementations for PostgreSQL / Snowflake / Databricks / S3. Returns a confidence signal; not a hard gate. Directory integration deferred per OS10.4. Sized at ~3-4 weeks per the reframe doc.
+
+### 5.10 - Destination Snippet Generation — F10.17 *(partially shipped via #166)*
+
+Six destinations at OSR: Python, SQL client, Power BI, Tableau, JDBC, dbt. **Shipped:** Python for all six interface types; dbt + SQL client + JDBC for sql_jdbc. **Remaining:** Power BI (custom connector, M language + gateway support, ~1-2 weeks) and Tableau (TDC or Web Data Connector, ~1-2 weeks). ~3-4 weeks remaining of the original ~6-8 estimate.
+
+### 5.11 - Catalog Name Abstraction — F10.14 *(new 2026-05-23)*
+
+Source-side view mechanism for PostgreSQL / Snowflake / Databricks; UI-only fallback for S3 with the abstraction leak acknowledged in-product. Producer DDL-generator UX at port create / edit (platform offers; never auto-executes against the source per Constraint 3). Sized at ~2-4 weeks per the reframe doc.
+
+### 5.12 - Connection Test Layer — F10.18 *(new 2026-05-23)*
+
+Per-source-type consumer-identity probe paths. Transient credential handling (consumer pastes or auths once in-flow; platform forwards once and discards; never persists per ADR-011). Returns four outcomes (success / permission-denied / not-found / unreachable). Sized at ~3 weeks per the reframe doc.
+
+### 5.13 - Credential Lifespan UX — F10.19 *(new 2026-05-23)*
+
+14-day and 7-day expiry warning notifications via Domain 11; one-click renewal UI; Situation B renewal re-triggers the approval workflow per F10.15 routing. Grant TTL infrastructure already exists; the new work is notification wiring + renewal UX. Sized at ~1-2 weeks per the reframe doc.
+
+### 5.14 - Snowflake as First New-Bar Source — B-063 next tranche, ratifies F3.2a *(new 2026-05-23)*
+
+The first connector type added under F3.2a's tranche cadence after the OSR-set close. Scope is end-to-end at the consumer-grade bar: **inbound** (real probe, schema inference, discovery crawl against Information Schema + Access History, capability manifest) + **outbound** (situation detection per F10.15, snippets for the six destinations per F10.17, source-side view DDL per F10.14, connection test per F10.18, cross-org via native data shares per F10.16). Sized at ~6-8 weeks at the consumer-grade bar per anchor-decisions doc decision 5.
 
 ### Out of Scope for Phase 5 - Deferred to Phase 6
 
-Kubernetes / EKS, Aurora, Neptune, MSK, Amazon OpenSearch Service, Temporal Cloud, mTLS, WAF, multi-AZ, Datadog, CloudFront, formal SOC 2 Type II audit.
+Kubernetes / EKS, Aurora, Neptune, MSK, Amazon OpenSearch Service, Temporal Cloud, mTLS, WAF, multi-AZ, Datadog, CloudFront, formal SOC 2 Type II audit, **agent anomaly detection (was 5.5, deferred 2026-05-23), SOC 2 foundations documentation (was 5.7, deferred 2026-05-23)**, source-system credential federation (the long-term Situation B GRANT automation per OS10.5 / ADR-011 — would require a future ADR).

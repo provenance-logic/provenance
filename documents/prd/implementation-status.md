@@ -52,6 +52,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F2.6 | Ports as Definitional | Implemented | Publication blocked without ports |
 | F2.7 | Port Types | Implemented | Five port types supported |
 | F2.8 | Output Port Interface Types | Partially implemented | Port types defined; connection details field not enforced |
+| F2.8a | Output Port Source Object Binding | Not implemented | New requirement landed with the 2026-05-23 PRD v1.6 work — closes B-070. Schema: V32+ migration to add `source_registration_id UUID NULL REFERENCES connectors.source_registrations(id)` and `source_object_path TEXT NULL` to `port_declarations`. Service: extend `ProductEnrichmentService.resolveColumnSchema` and `freshness.lastRefreshedAt` (currently null-returning stubs) to consult the FK. UI: producer "Pick from discovered objects" action on port create/edit. Foundational — every downstream consumer-grade outbound piece (F10.14, F10.17, F10.18) depends on this. Sized at ~3-4 weeks per the reframe doc. |
 | F2.9 | Port Contract Enforcement | Partially implemented | Contract model exists; enforcement not fully verified |
 | F2.10 | Input Port Dependency Declaration | Implemented | Lineage registered on input port declaration |
 | F2.11 | Lifecycle States | Implemented | Draft/Published/Deprecated/Decommissioned |
