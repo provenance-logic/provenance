@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { AllowCrossOrgRead } from '../auth/allow-cross-org-read.decorator.js';
 import { LineageService } from './lineage.service.js';
 import type { EmitLineageEventRequest, LineageGraphDto } from '@provenance/types';
 
@@ -47,6 +48,7 @@ export class LineageController {
   }
 
   @Get('products/:productNodeId/upstream')
+  @AllowCrossOrgRead()
   async getUpstream(
     @Param('orgId') orgId: string,
     @Param('productNodeId') productNodeId: string,
@@ -57,6 +59,7 @@ export class LineageController {
   }
 
   @Get('products/:productNodeId/downstream')
+  @AllowCrossOrgRead()
   async getDownstream(
     @Param('orgId') orgId: string,
     @Param('productNodeId') productNodeId: string,
@@ -67,6 +70,7 @@ export class LineageController {
   }
 
   @Get('products/:productNodeId/impact')
+  @AllowCrossOrgRead()
   async getImpact(
     @Param('orgId') orgId: string,
     @Param('productNodeId') productNodeId: string,
