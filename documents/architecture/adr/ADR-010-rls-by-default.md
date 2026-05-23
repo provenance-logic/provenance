@@ -1,7 +1,7 @@
 # ADR-010: Row-Level Security as Backstop; Explicit-OrgId-Filter as Load-Bearing Tenant Isolation
 
 **Date:** May 22, 2026
-**Status:** Proposed — design pass only. Implementation is a follow-up session per [B-062](../../bugs/open.md#B-062).
+**Status:** Accepted (2026-05-23) — design adopted; implementation step 2 (`agents.service.ts` load-bearing fix) landed via the B-062 first-implementation PR. Steps 1 (ESLint rule), 3 (URL-param convention check), and 5 (smoke-test cross-tenant layer) still TBD; see [B-062](../../bugs/open.md#B-062) for the remaining-work checklist.
 **Author:** Provenance Platform Team
 
 ---

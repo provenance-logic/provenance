@@ -36,16 +36,22 @@ export class AgentsController {
   }
 
   @Get(':agentId')
-  async getAgent(@Param('agentId') agentId: string) {
-    return this.agentsService.getAgent(agentId);
+  async getAgent(
+    @Param('agentId') agentId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.agentsService.getAgent(agentId, ctx);
   }
 
   @Get()
-  async listAgents(@Query('orgId') orgId: string) {
+  async listAgents(
+    @Query('orgId') orgId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
     if (!orgId) {
       throw new BadRequestException('orgId query parameter is required');
     }
-    return this.agentsService.listAgents(orgId);
+    return this.agentsService.listAgents(orgId, ctx);
   }
 
   @Patch(':agentId/classification')
@@ -80,12 +86,18 @@ export class AgentsController {
   }
 
   @Get(':agentId/classification/history')
-  async getClassificationHistory(@Param('agentId') agentId: string) {
-    return this.agentsService.getClassificationHistory(agentId);
+  async getClassificationHistory(
+    @Param('agentId') agentId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.agentsService.getClassificationHistory(agentId, ctx);
   }
 
   @Get(':agentId/oversight')
-  async getOversight(@Param('agentId') agentId: string) {
-    return this.agentsService.getOversight(agentId);
+  async getOversight(
+    @Param('agentId') agentId: string,
+    @ReqContext() ctx: RequestContext,
+  ) {
+    return this.agentsService.getOversight(agentId, ctx);
   }
 }

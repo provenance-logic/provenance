@@ -273,7 +273,7 @@ describe('AgentsService — registerAgent (Phase 5a-3)', () => {
     agentRepo.findOne.mockResolvedValue(agent);
     classificationRepo.findOne.mockResolvedValue(makeSavedClassification());
 
-    const result = await service.getAgent(AGENT_ID);
+    const result = await service.getAgent(AGENT_ID, ctx);
 
     expect(result.keycloak_client_id).toBe(AGENT_ID);
     expect(result.keycloak_client_secret).toBeNull();
