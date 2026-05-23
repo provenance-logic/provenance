@@ -69,6 +69,67 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 
 ---
 
+## B-068 — Marketplace cross-org URL break: B-061's `JwtAuthGuard` rejects legitimate cross-tenant marketplace reads
+
+- **Severity:** High (pre-PRD-reshape; pending the 2026-05-23/24 weekend overhaul, likely upgrades to Blocker because every consumer-flow path begins with marketplace discovery and the data-mesh marketplace is cross-tenant by design)
+- **Status:** Open
+- **Area:** `apps/api/src/auth/jwt-auth.guard.ts`, marketplace controllers (`apps/api/src/products/`), frontend product detail routing
+- **Discovered:** 2026-05-22 evening consumer-persona walkthrough on dev (analyst@acme.example.com clicking into a beta-industries-owned product from the marketplace).
+
+**Symptom.** Logged in as `analyst@acme.example.com` (org: acme-corp), the marketplace correctly shows products from BOTH acme-corp AND beta-industries (cross-tenant by design — that's the whole point of a data mesh marketplace). Clicking into any beta-industries product (KYC Profiles, Credit Risk Decisions, Account Lifecycle Events, Transaction Risk Signals — 4 of 16 published products in the seed) returns **"Org scope mismatch: token is scoped to a different organization than the URL targets."** Same-org products work; the marketplace's primary use case (discover other-org products) is broken.
+
+**Root cause.** PR #140 (B-061 fix) extended `JwtAuthGuard.canActivate` with `if (request.params.orgId && request.params.orgId !== request.user.orgId) throw 403`. The check is correct for tenant-scoped resource paths (e.g., editing your own product). But the marketplace's product detail route is `/organizations/<owner-org-id>/products/<product-id>` — and that's structurally cross-tenant. The B-061 guard does not distinguish "tenant-scoped write to my org's resource" from "marketplace cross-tenant read." Both go through the same canActivate check.
+
+**Why this matters for the consumer story.** Every situation in [Matt's user story](../architecture/consumer-grade-outbound-reframe-2026-05-22.md#the-user-story-matt-mcgarvey-2026-05-22) starts with "I found a data product I want to use." For a federated data mesh, that product is OFTEN from another org — that's the positioning. Today the very first step of the consumer journey 403s. Pre-reframe, this looked like "marketplace UX bug"; post-reframe (configuration brokerage), this is a load-bearing functional break of the platform's central promise.
+
+**Fix path (lighter to heavier).**
+
+1. **`@AllowCrossOrgRead` decorator** on marketplace read endpoints, analogous to the existing `@AllowNoOrg` (which is reserved for bootstrap-path waivers per CLAUDE.md). The guard skips its `:orgId === JWT orgId` check when the decorator is present. Controllers still require a valid JWT, marketplace-side cross-tenant filtering stays in force. Smallest blast radius; ~1-2 hours of work.
+2. **Restructure marketplace routes off `/organizations/:orgId/products/:id` onto `/marketplace/products/:id`.** By construction cross-tenant — no `:orgId` in the path, so the B-061 guard's lookup returns undefined and the check is moot. More honest about the route's purpose. Requires frontend route changes too. ~half-day to one day.
+3. **Generalize the guard to inspect every `:*Id` UUID param against the JWT, with a per-param allowlist for known cross-org cases.** Pairs with ADR-010 item 3 (URL-param convention check). More permissive over time but most complex.
+
+**Recommend (1) as the immediate fix** — small, scoped, restores marketplace function. (2) is a structural follow-up if the marketplace surface is rebuilt as part of the consumer-grade outbound work post-PRD-reshape.
+
+**Pattern.** B-061 was a security fix that traded a narrow real leak for a broader functional break that wasn't caught at merge time. The guard's logic is correct for what it was guarding against; it just didn't have the marketplace's intentional cross-tenant semantics in scope. The adversarial-review-at-merge rule added to CLAUDE.md by PR #134 was designed to catch this class of issue — "what's the worst caller scenario?" should have also asked "what's the legitimate caller scenario this might break?" The persona walkthrough caught it instead.
+
+---
+
+## B-070 — Inbound-outbound bridge missing: `port_declarations` has no FK to `source_registrations` or `schema_snapshots`; connector discovery does not feed any user-facing product surface
+
+- **Severity:** Pending PRD reshape; likely **Blocker** post-Sunday. Today's classification as "non-blocking stub" (per `ProductEnrichmentService` comments and the status board) was correct on the engineering-grade definition of OSR — the UI falls back to hand-authored values, and the platform "works." The [consumer-grade outbound reframe](../architecture/consumer-grade-outbound-reframe-2026-05-22.md) promotes this to load-bearing because consumer-grade publishing depends on "select discovered table → port auto-populated," which this bridge enables.
+- **Status:** Open — surfaced as a category, not a fix-this-PR
+- **Area:** `apps/api/src/products/product-enrichment.service.ts` (the two `null`-returning stubs), `apps/api/migrations/V3__create_products_schema.sql` (the missing FK), the conceptual bridge between the `connectors.*` and `products.*` schemas
+- **Discovered:** 2026-05-22 evening consumer-persona walkthrough; the architectural gap had been documented in passing as "non-blocking stubs" but the implication wasn't named until the reframe.
+
+**Symptom (architectural, not user-facing yet).**
+
+1. **`port_declarations` has no foreign key to `source_registrations`, `schema_snapshots`, or `connectors`.** Inspect V3's schema — the closest thing to a source reference is `connection_details` JSONB, which is hand-authored.
+2. **`ProductEnrichmentService.resolveColumnSchema(productId)` returns `null` for every product** with a comment like *"pending product-to-source-registration FK."* The frontend's `ProductDetailPage` falls back to rendering the hand-authored `contract_schema` (JSON Schema). So the Databricks Unity Catalog crawl filling `schema_snapshots` produces metadata that no user-facing surface reads.
+3. **`freshness.lastRefreshedAt` returns `null`** for the same reason — no link from a port to the lineage source it depends on.
+4. **No domain-team UI exists for "create a port from a discovered table."** The discovery-aware publishing flow that would make discovery valuable on the producer side does not exist.
+
+**What this means in practice — the deepest finding from the 2026-05-22 walkthrough.** The platform's inbound and outbound halves are **architecturally independent.** Inbound writes to `connectors.schema_snapshots`, `connectors.discovery_crawl_events`, `lineage.emission_log`, and Neo4j. Outbound reads from `products.port_declarations.contract_schema` (hand-authored JSONB). The two halves do not compose. The Databricks connector framework (B-063 Layers 1-4) could crawl 10,000 Unity Catalog tables and not a single data product would automatically light up. Discovery is metadata theater on the outbound side until this bridge exists.
+
+**Root cause — three plausible reads, probably all true.**
+
+1. **Phasing artifact.** The product/port model (Phase 1-2) was built before the connector discovery framework (Phase 3). Each half evolved to be complete in isolation. The bridge was never added because no Phase owned the cross-cut.
+2. **Implicit "domain teams hand-author" assumption.** The publishing flow today is: create a product, declare ports, hand-write contract schema, hand-write connection_details. Discovery is treated as augmentation, not as authoritative source.
+3. **"Non-blocking stub" framing.** Both `resolveColumnSchema` and `freshness.lastRefreshedAt` were marked non-blocking in F5.15 / 5.4 work because UI fallback "works." The framing assumed the bar for "works" was engineering-grade. The consumer-grade reframe sets a higher bar.
+
+**Fix path (post-PRD-reshape; this is design work for the weekend, not engineering for tonight).**
+
+1. **Add a foreign key from `port_declarations` to `source_registrations`** (or a new join table if one port can be backed by multiple sources). Migration V32+.
+2. **Extend `ProductEnrichmentService.resolveColumnSchema` to consult `schema_snapshots`** via the FK; reconcile with hand-authored `contract_schema` per CLAUDE.md's conflict-resolution rule ("domain-declared takes precedence unless governance configures auto-override").
+3. **Extend `ProductEnrichmentService.freshness` to consult lineage source data** for `lastRefreshedAt`.
+4. **Build a "publish from discovered table" UI on the producer side.** When a domain team creates or edits a port, they can pick from a list of discovered tables for their org's registered connectors; the port's `contract_schema` and `connection_details` auto-populate from the snapshot.
+5. **Decide on the catalog-name translation mechanism** (source-side view vs UI-only abstraction; per [reframe doc](../architecture/consumer-grade-outbound-reframe-2026-05-22.md) open question 2).
+
+**Estimated lift.** ~3-4 weeks for the bridge itself (FK migration, service-layer wiring, basic UI for "select discovered table" on the port-editing surface). The full publishing-UX flip and the catalog-name abstraction layer are separate scoped work — see the reframe doc's sizing table.
+
+**Pattern — a category beyond B-060 / B-061 / B-063.** Those three were all "the platform claims X but doesn't do X." B-070 is **"the platform has X and Y as independent pieces that look complete in isolation but don't compose."** The B-070 pattern is harder to catch with a claim-vs-code audit because both halves ARE in code; what's missing is the binding. Persona walkthroughs catch this class of bug; static audits do not. Worth adding as a discipline: every cross-domain claim ("discovery informs the catalog") needs a verified end-to-end test, not just unit tests on each half.
+
+---
+
 ## B-062 — RLS-by-default: the `provenance.current_org_id` session variable doesn't persist across the connections a request actually uses
 
 - **Severity:** Medium (defense-in-depth gap; the immediate cross-org leak is closed at the controller boundary by [B-061](resolved.md#B-061-cross-org-information-leak-the-jwt-auth-guard-did-not-check-the-url-orgid-against-the-tokens-claim)'s fix, but the database-layer guarantee the platform's RLS policies were designed to provide is not actually in force on most service-layer queries today)
@@ -144,6 +205,33 @@ Neither was ever end-to-end run after the underlying surfaces moved. This is the
 - The smoke test can verify layers 1–2 (infrastructure, auth — with B-050's fix). Layers 3–6 fail with 404s on phantom endpoints. The pre-demo green-light gate is still effectively broken at the layer that matters most.
 
 **Pattern.** Operator tooling is part of the surface a phase ships. Scripts that *exist* without being *run* are scripts that don't work. Both `softReset` and `demo-smoke-test.sh` were written, committed, and forgotten — neither ever exercised end-to-end after the underlying API/schema evolved. Add a recurring run of every operator script (smoke test, reset, sync) to catch drift the next time the API or schema moves.
+
+---
+
+## B-069 — Static `CONSUMPTION_GUIDANCE` placeholder template inverts the connection-details UX on every product detail page's Ports tab
+
+- **Severity:** Low-Medium (UX confusion; the data is correct downstream — the dynamic `ConnectionDetailsPanel` reads real values — but the surface the user reads first is misleading)
+- **Status:** Open — **likely subsumed by the consumer-grade outbound reshape** ([reframe doc](../architecture/consumer-grade-outbound-reframe-2026-05-22.md)); the entire `CONSUMPTION_GUIDANCE` concept is replaced by per-destination snippet generation (Python / SQL client / Power BI / Tableau / JDBC / dbt). Defer fixing in isolation.
+- **Area:** `apps/web/src/features/discovery/ProductDetailPage.tsx:29-39` (the static map) and `PortsTab` (which renders the static guidance above the dynamic panel)
+- **Discovered:** 2026-05-22 evening consumer-persona walkthrough on dev (walked KYC Profiles' rest_api port and daily-revenue-report's sql_jdbc port; both showed literal `<host>` / `<base-url>` placeholders even though the seed had real `connection_details` for kyc-rest and revenue-sql).
+
+**Symptom.** The "How to consume" snippet on a port detail rendering shows a hardcoded placeholder template per `interface_type`:
+
+- `sql_jdbc`: `jdbc:<driver>://<host>:<port>/<database>?user=<principal>&sslmode=require`
+- `rest_api`: `curl -H "Authorization: Bearer $TOKEN" https://<base-url>/<resource>`
+- `graphql`: `POST https://<base-url>/graphql with { query } — send an access token in Authorization`
+
+These literal placeholders render even when the port has fully populated `connection_details` in the database. E.g., `revenue-sql` (Daily Revenue Recognition's output port) has `endpoint: jdbc:postgresql://warehouse.acme.example.com:5432/finance` and a working `psql` example in the seed, but the UI shows the placeholder template instead.
+
+Below the placeholder, the `ConnectionDetailsPanel` (`ProductDetailPage.tsx:440+`) DOES read the actual `connection_details` and renders them properly (either a preview if no access grant, or full details with credentials if granted). But because the placeholder template appears above it in DOM order, a top-to-bottom reader hits the placeholder first and may conclude the platform doesn't have real connection details.
+
+**Root cause.** `CONSUMPTION_GUIDANCE` is a static frontend constant — a per-interface-type map of generic guidance strings. It was designed as a first-time-here affordance ("this is what consuming a REST API generally looks like"). It coexists with the per-port `ConnectionDetailsPanel`, which has the port-specific real values. Two different components with two different intents, rendered top-to-bottom in a way that doesn't tell the user which one is authoritative for this specific port.
+
+**Fix path.** Defer fixing in isolation. The [consumer-grade outbound reframe](../architecture/consumer-grade-outbound-reframe-2026-05-22.md) commits to per-destination snippet generation: when a user opens a product detail page, they pick their destination tool (Python / SQL client / Power BI / Tableau / JDBC / dbt) and the platform generates a ready-to-use configuration snippet from the port's real `connection_details` and the source-registration metadata. This replaces both `CONSUMPTION_GUIDANCE` (generic per-type templates) and the static template-above-dynamic-panel UX. Patching the current placeholder map is wasted work; the whole component is going away.
+
+**Short-term mitigation** (if anyone trips on this before the reshape lands): remove the `CONSUMPTION_GUIDANCE` block entirely, leaving only the `ConnectionDetailsPanel` per port. The placeholder template provides no real value when the dynamic panel exists. ~30-minute change.
+
+**Pattern.** UX inversion is the kind of bug that surfaces only via persona walkthrough, not via demo script. The static template is fine in isolation; the dynamic panel is fine in isolation; the issue is that they coexist without visual hierarchy. Demo paths almost never show the same port twice (with and without access) so the user-grade confusion doesn't fire on a scripted demo. Persona walkthroughs catch this; demos don't. Filed alongside B-070 as the pair of "things the 2026-05-22 walkthrough caught that all prior demos and dry-runs had missed."
 
 ---
 
