@@ -180,6 +180,17 @@ The platform shall support five port types: Input Ports, Output Ports, Discovery
 **F2.8 - Output Port Interface Types**
 Six output port types shall be supported: SQL/JDBC endpoint, REST API endpoint, GraphQL endpoint, Streaming topic, File/object export, and Semantic query endpoint (for agent consumption). Every output port declaration shall include complete connection details as a required field. Connection details are port-type-specific and defined in Domain 10.
 
+**F2.8a - Output Port Source Object Binding** *(new 2026-05-23 — closes [B-070](../bugs/open.md#B-070))*
+Each output port may declare a binding to a registered source object (Domain 3) via a foreign key to the source registration plus the in-source object path (e.g., `prod.customer.events`, `topic.user_signups`, `s3://bucket/prefix/`). When bound:
+
+- The port's connection details default from the source registration's metadata; producer edits override per-field.
+- The port's schema initializes from the latest `schema_snapshot` for the bound object at port create / edit time.
+- The port's freshness signal (Domain 5) consults the bound source's lineage as the data source.
+
+Re-crawl of the bound source surfaces a diff to the producer (never silent overwrite, never silent staleness). Per the domain-declared-takes-precedence rule (Appendix C), producer edits stay sticky unless governance has explicitly configured auto-override.
+
+The producer publishing UX shall support a "Pick from discovered objects" action on port create / edit that lists registered connectors and their crawled objects per the producer's org; selecting an object auto-populates the binding and the initial schema. Source binding is optional — ports for sources not behind a discovery-capable connector remain hand-authored (the FK is NULLABLE). The single-FK shape (one port → one source) is the OSR commitment; a per-port join table for multi-source ports is deferred (see [anchor-decisions doc](../architecture/prd-overhaul-anchor-decisions-2026-05-23.md) decision 4).
+
 **F2.9 - Port Contract Enforcement**
 Each declared port shall have an associated machine-readable contract monitored by the platform. Violations shall be surfaced to all authorized consumers.
 
