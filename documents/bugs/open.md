@@ -130,6 +130,85 @@ B-060 was operator tooling that existed without ever being run. B-061 was a secu
 
 ---
 
+## B-071 — Cross-org access requests are structurally broken: `submitRequest` rejects them, and `approveRequest` can't find them even if accepted
+
+- **Severity:** High pre-PRD-reshape; **likely Blocker post-Sunday** because the cross-org access-request flow is the operational spine of the data-mesh marketplace, and tonight's #164 closed the upstream half (cross-org reads) without addressing this downstream half.
+- **Status:** Open — architectural, not a quick-fix. The right resolution path is a PRD-level decision on which org owns access-request and access-grant rows in a federated marketplace.
+- **Area:** `apps/api/src/access/access.service.ts` (submitRequest line 412, approveRequest line 515 — and the `orgId` model for `access.access_requests` / `access.access_grants` writ large).
+- **Discovered:** 2026-05-22 (late session). Surfaced by the [service-org-filter audit](../architecture/../audits/service-org-filter-audit-2026-05-22.md) (#165) as an "out-of-scope finding," then promoted to a proper bug entry once the implications were named. The symptom-half (line 412) had been flagged in the audit; the deeper architectural-half (line 515 lookup) is documented here for the first time.
+
+### Symptom — two halves
+
+**(a) `submitRequest` actively rejects cross-org access requests.** At `access.service.ts:412`:
+
+```ts
+if (product.orgId !== orgId) {
+  throw new ForbiddenException(
+    'Cannot request access to a product that belongs to a different organisation',
+  );
+}
+```
+
+`orgId` here is the caller's (requester's) JWT-resolved org. `product.orgId` is the product owner's org. The check fires for every legitimate marketplace cross-org request — i.e., the central use case of the data-mesh marketplace. A consumer in `acme-corp` clicking "Request Access" on `kyc-profiles` (owned by `beta-industries`) hits a 403.
+
+**(b) Even if (a) is removed, `approveRequest` cannot find the request.** At `access.service.ts:515`:
+
+```ts
+const request = await this.requestRepo.findOne({ where: { id: requestId, orgId } });
+```
+
+`orgId` here is the approver's JWT-resolved org (the product owner's org). But `submitRequest` saves the request row with `orgId = caller's org` (the requester's org — see line 438-447). So the request lives in Org A's namespace; the approver in Org B queries their own namespace and finds nothing. Net: the approver can only approve requests that came from a requester in their own org. The cross-org flow is structurally broken even with the line-412 reject removed.
+
+### Root cause — which org owns the rows?
+
+The `access.access_requests` and `access.access_grants` tables have an `org_id` column. What that column means is ambiguous for cross-org flows. Three plausible models, none of which the codebase fully commits to today:
+
+**Model A — Requester's org owns the request and the grant.** What submitRequest currently does. A consumer in Org A requests access; the row lives in Org A's namespace. The grant, if approved, also lives in Org A's namespace. Org A's tenant sees "my outgoing requests / my grants." Org B's owner needs to see "requests against my products" via a cross-org query — they query the marketplace-wide access_requests table by `productId` regardless of `org_id`.
+
+- *Works for:* the consumer's UX (their org owns their data).
+- *Breaks at:* approval. Org B's approver needs cross-org READ access to Org A's `access_requests` row, plus cross-org WRITE to flip its status. The B-061 controller guard would 403 the approver's URL pointing at Org A's `:orgId`. Needs a marketplace-cross-org carve-out analogous to the one #164 added for reads.
+
+**Model B — Request lives in the owner's org; Grant lives in the requester's org.** Split lifecycle. The request is "an approval task for the product owner" so it logically lives where the approver works. The grant is "the consumer's record of their consumption rights" so it logically lives where the consumer works. On approval, the system writes to both: update Org B's request to `status='approved'`; insert into Org A's `access_grants`.
+
+- *Works for:* both the approver's UX ("requests against my products") and the consumer's UX ("my grants") via same-org queries. Each side queries its own namespace.
+- *Breaks at:* atomicity. The "update Org B's request + insert Org A's grant" pair needs to be transactional (or use the outbox pattern). Cross-database / cross-tenant transactions are awkward in TypeORM as currently configured. Also: the consumer needs to see "request pending" before the grant exists, which means cross-org READ from Org A to Org B's request row.
+
+**Model C — Request and Grant in a shared "marketplace" namespace.** A platform-level scope where access_requests and access_grants live outside any single org's RLS. Org A and Org B both query the marketplace namespace via marketplace-aware controllers (cf. `MarketplaceGlobalController`).
+
+- *Works for:* atomicity (single-namespace writes). Symmetry (both sides query the same place).
+- *Breaks at:* tenant-isolation semantics. The marketplace namespace is by definition cross-org, so RLS doesn't apply. Access controls have to be application-layer: who can see which row? Per-row ACLs derived from `requesterOrgId` and `productOwnerOrgId` columns. Not a clean shape under the platform's current tenant-isolation primitives.
+
+### Why not just remove the line 412 check?
+
+Half-fix. Without the architectural decision, removing line 412 leaves the request in a state that the approver can't reach. The consumer sees a "pending" request that will never resolve because the approver can't find it. Worse UX than the 403.
+
+### What the consumer flow looks like today
+
+1. Consumer in Org A clicks a cross-org product in the marketplace → ✅ works (since #164's `@AllowCrossOrgRead`).
+2. Consumer requests access → ❌ 403 at line 412 (this bug).
+3. (Hypothetical) Owner in Org B approves → ❌ can't even find the request to approve (this bug, deeper half).
+
+For same-org flows (acme consumer on acme product), all three steps work. The data-mesh-marketplace cross-org promise is the broken case.
+
+### Adjacent finding — the request-vs-grant org-ownership question affects other surfaces
+
+- **Notification routing.** When a request is submitted, `F11.6` fires a notification to the product owner (line 480-497). That notification's `orgId` is the requester's org (line 483). The owner is in a different org. Whether owner notifications can carry a cross-org `orgId` — and what RLS / multi-tenant routing does with that — needs to be settled by the same architectural decision.
+- **`product-enrichment.service.ts:155-172` `hasActiveGrant`.** Looks up a grant by `(productOrgId, productId, principalId)`. Today this works for same-org flows but doesn't find cross-org grants if Model B or C is adopted (the grant lives somewhere other than `product.orgId`'s namespace).
+
+### What's deferred
+
+The right resolution path is a PRD-session decision on Model A/B/C. **Don't act on B-071 in code before that conversation lands.** The reframe doc ([#162](../architecture/consumer-grade-outbound-reframe-2026-05-22.md)) sized the consumer-grade outbound work assuming this question is answered; the answer feeds the connection-broker design.
+
+A reasonable Sunday-conversation order: settle Model A/B/C, then settle the [B-070](#B-070) inbound-outbound bridge (which has its own ownership question for `port_declarations` ↔ `source_registrations`), then re-thread the connection-package and snippet-generator flows under the chosen model.
+
+### Pattern
+
+B-068 (which #164 closed) and B-071 are sibling bugs from the same root cause: **the platform's architecture didn't have a coherent cross-org primitive at the time the marketplace was built.** B-061's controller guard was correct for tenant-scoped writes but blocked the marketplace's cross-tenant reads (B-068). Today's same-org access-request flow is correct, but it has no cross-org counterpart (B-071). Both are symptoms of "marketplace cross-tenant semantics are an afterthought" — the kind of finding that only surfaces under a real persona walkthrough, which #162 was the first to do.
+
+The fix scope, post-PRD-decision, is comparable to #164's blast radius for Model A (decorator + service-layer carve-out for the approval endpoints); larger for Models B and C (schema or migration work).
+
+---
+
 ## B-062 — RLS-by-default: the `provenance.current_org_id` session variable doesn't persist across the connections a request actually uses
 
 - **Severity:** Medium (defense-in-depth gap; the immediate cross-org leak is closed at the controller boundary by [B-061](resolved.md#B-061-cross-org-information-leak-the-jwt-auth-guard-did-not-check-the-url-orgid-against-the-tokens-claim)'s fix, but the database-layer guarantee the platform's RLS policies were designed to provide is not actually in force on most service-layer queries today)
