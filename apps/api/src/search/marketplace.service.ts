@@ -133,6 +133,23 @@ export class MarketplaceService {
     limit = Math.min(100, Math.max(1, limit));
     const offset = (page - 1) * limit;
 
+    // B-072 — when q is set, resolve matching product IDs from OpenSearch first
+    // and constrain the PG query to that ID set. OpenSearch handles fuzzy
+    // text matching; PG handles every other filter + enrichment. If OpenSearch
+    // returns zero hits for the query, short-circuit with an empty result —
+    // there's no point asking PG for products we already know don't match.
+    // If OpenSearch is unreachable, fall back to filter-only (best-effort).
+    let searchIds: string[] | undefined;
+    let searchScoreById: Map<string, number> | undefined;
+    if (filters.q) {
+      const searchResult = await this.searchProductIds(orgId, filters.q, filters.includeDeprecated ?? false);
+      if (searchResult.ids.length === 0) {
+        return { items: [], meta: { total: 0, limit, offset } };
+      }
+      searchIds = searchResult.ids;
+      searchScoreById = searchResult.scoreById;
+    }
+
     // Build base query — only published (+ optionally deprecated) products.
     const qb = this.productRepo
       .createQueryBuilder('p')
@@ -145,6 +162,10 @@ export class MarketplaceService {
 
     if (orgId) {
       qb.andWhere('p.orgId = :orgId', { orgId });
+    }
+
+    if (searchIds && searchIds.length > 0) {
+      qb.andWhere('p.id IN (:...searchIds)', { searchIds });
     }
 
     // Domain filter
@@ -239,6 +260,15 @@ export class MarketplaceService {
     // Apply trust_score_desc sort after enrichment.
     if (sort === 'trust_score_desc') {
       items.sort((a, b) => b.trustScore - a.trustScore);
+    }
+
+    // B-072 — when q is set and the user didn't explicitly pick a sort, prefer
+    // BM25 relevance order (most-relevant first). If the user did pick a sort
+    // (e.g. name_asc), honor it — they overrode the default.
+    if (searchScoreById && !filters.sort) {
+      items.sort(
+        (a, b) => (searchScoreById!.get(b.id) ?? 0) - (searchScoreById!.get(a.id) ?? 0),
+      );
     }
 
     // Paginate the in-memory result set (necessary because compliance / trust
@@ -493,6 +523,78 @@ export class MarketplaceService {
     } catch (err) {
       this.logger.warn('OpenSearch unavailable — returning empty search results', (err as Error).message);
       return { total: 0, page, limit, results: [] };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // B-072 — OpenSearch ID resolver for the marketplace LIST endpoint's q param.
+  //
+  // Returns IDs only — the caller (queryProducts) re-fetches the full rows
+  // from PG and applies every other filter + enrichment. This keeps the
+  // OpenSearch responsibility narrow (text matching) and reuses the
+  // existing PG-side filter pipeline.
+  //
+  // Sizing: capped at 200 hits per query — more than enough to populate a
+  // page of 20 results with filter slack, while keeping the OS round-trip
+  // small. If a user ever needs deeper pagination through search results,
+  // we'd need cursor-based pagination on the OS side (out of scope here).
+  //
+  // Failure mode: on OpenSearch error, returns { ids: [] } with the side
+  // effect of an empty result. This is preferred over leaking-all-products
+  // when search is meant to constrain the result set.
+  // ---------------------------------------------------------------------------
+
+  private async searchProductIds(
+    orgId: string | undefined,
+    q: string,
+    includeDeprecated: boolean,
+  ): Promise<{ ids: string[]; scoreById: Map<string, number> }> {
+    try {
+      const statusFilter = includeDeprecated
+        ? [{ terms: { status: ['published', 'deprecated'] } }]
+        : [{ term: { status: 'published' } }];
+      const orgFilter = orgId ? [{ term: { orgId } }] : [];
+
+      const response = await this.opensearchClient.search({
+        index: PRODUCT_INDEX,
+        body: {
+          from: 0,
+          size: 200,
+          _source: ['id'],
+          query: {
+            bool: {
+              must: [
+                {
+                  multi_match: {
+                    query: q,
+                    fields: ['name^3', 'description', 'tags^2'],
+                    type: 'best_fields',
+                    fuzziness: 'AUTO',
+                  },
+                },
+              ],
+              filter: [...orgFilter, ...statusFilter],
+            },
+          },
+          sort: [{ _score: 'desc' }],
+        },
+      });
+
+      interface OsHit { _id: string; _score: number; _source: { id: string } }
+      interface OsBody { hits: { hits: OsHit[] } }
+      const body = response.body as OsBody;
+      const hits = body.hits.hits;
+      const ids: string[] = [];
+      const scoreById = new Map<string, number>();
+      for (const hit of hits) {
+        const id = hit._source.id;
+        ids.push(id);
+        scoreById.set(id, hit._score);
+      }
+      return { ids, scoreById };
+    } catch (err) {
+      this.logger.warn('OpenSearch unavailable for marketplace q — returning empty match set', (err as Error).message);
+      return { ids: [], scoreById: new Map() };
     }
   }
 

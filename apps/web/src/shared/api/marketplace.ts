@@ -21,6 +21,7 @@ function buildFilterParams(
     page: String(page),
     limit: String(limit),
   });
+  if (filters.q)                       params.set('q',                filters.q);
   if (filters.domain?.length)          params.set('domain',           filters.domain.join(','));
   if (filters.outputPortType?.length)  params.set('outputPortType',   filters.outputPortType.join(','));
   if (filters.compliance?.length)      params.set('compliance',       filters.compliance.join(','));

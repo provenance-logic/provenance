@@ -209,6 +209,106 @@ describe('MarketplaceService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // B-072 — q parameter on the marketplace listing path
+  // ---------------------------------------------------------------------------
+
+  describe('listAllProducts / listProducts — q parameter (B-072)', () => {
+    it('does NOT call OpenSearch when q is unset (filter-only path)', async () => {
+      await service.listAllProducts({});
+
+      expect(osClient.search).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits to empty results when q is set and OpenSearch returns no hits', async () => {
+      // mockOsClient default returns an empty hit array.
+      const result = await service.listAllProducts({ q: 'nomatch' });
+
+      expect(osClient.search).toHaveBeenCalledTimes(1);
+      expect(result.items).toEqual([]);
+      expect(result.meta.total).toBe(0);
+
+      // PG query builder should NOT be invoked when OS short-circuits with zero hits.
+      const dpRepo = (service as unknown as { productRepo: { createQueryBuilder: jest.Mock } }).productRepo;
+      expect(dpRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('passes q as multi_match with the same field boosts as the legacy search', async () => {
+      await service.listAllProducts({ q: 'campaign' });
+
+      const call = osClient.search.mock.calls[0][0] as {
+        body: { query: { bool: { must: Array<{ multi_match: { query: string; fields: string[]; fuzziness: string } }> } } };
+      };
+      const must = call.body.query.bool.must;
+      expect(must[0]).toMatchObject({
+        multi_match: expect.objectContaining({
+          query:     'campaign',
+          fields:    expect.arrayContaining(['name^3', 'description', 'tags^2']),
+          fuzziness: 'AUTO',
+        }),
+      });
+    });
+
+    it('scopes the OpenSearch query to status=published when includeDeprecated is unset', async () => {
+      await service.listAllProducts({ q: 'campaign' });
+
+      const call = osClient.search.mock.calls[0][0] as {
+        body: { query: { bool: { filter: Array<unknown> } } };
+      };
+      expect(call.body.query.bool.filter).toEqual(
+        expect.arrayContaining([{ term: { status: 'published' } }]),
+      );
+    });
+
+    it('scopes the OpenSearch query to status IN (published, deprecated) when includeDeprecated is true', async () => {
+      await service.listAllProducts({ q: 'campaign', includeDeprecated: true });
+
+      const call = osClient.search.mock.calls[0][0] as {
+        body: { query: { bool: { filter: Array<unknown> } } };
+      };
+      expect(call.body.query.bool.filter).toEqual(
+        expect.arrayContaining([{ terms: { status: ['published', 'deprecated'] } }]),
+      );
+    });
+
+    it('scopes the OpenSearch query to orgId when listProducts (org-scoped) is called', async () => {
+      await service.listProducts('org-42', { q: 'campaign' });
+
+      const call = osClient.search.mock.calls[0][0] as {
+        body: { query: { bool: { filter: Array<unknown> } } };
+      };
+      expect(call.body.query.bool.filter).toEqual(
+        expect.arrayContaining([{ term: { orgId: 'org-42' } }]),
+      );
+    });
+
+    it('does NOT add an orgId filter when listAllProducts (cross-org) is called', async () => {
+      await service.listAllProducts({ q: 'campaign' });
+
+      const call = osClient.search.mock.calls[0][0] as {
+        body: { query: { bool: { filter: Array<unknown> } } };
+      };
+      // No filter element should have an `orgId` term key
+      const hasOrgFilter = call.body.query.bool.filter.some(
+        (f) => typeof f === 'object' && f !== null && 'term' in f &&
+               (f as { term: Record<string, unknown> }).term.orgId !== undefined,
+      );
+      expect(hasOrgFilter).toBe(false);
+    });
+
+    it('falls back to an empty match set if OpenSearch is unavailable when q is set', async () => {
+      osClient.search.mockRejectedValueOnce(new Error('Connection refused'));
+
+      const result = await service.listAllProducts({ q: 'campaign' });
+
+      // Short-circuit path: empty IDs → empty results; PG not queried.
+      expect(result.items).toEqual([]);
+      expect(result.meta.total).toBe(0);
+      const dpRepo = (service as unknown as { productRepo: { createQueryBuilder: jest.Mock } }).productRepo;
+      expect(dpRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Product detail — 5.4 P1 enrichment wiring
   // ---------------------------------------------------------------------------
 

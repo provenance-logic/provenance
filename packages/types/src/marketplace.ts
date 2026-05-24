@@ -166,6 +166,8 @@ export type MarketplaceSortOption =
   | 'recently_updated';
 
 export interface MarketplaceFilters {
+  /** Free-text search across product name, description, and tags (BM25, fuzzy). Composes with all other filters. */
+  q?: string;
   domain?: string[];
   outputPortType?: OutputPortInterfaceType[];
   compliance?: ComplianceStateValue[];

@@ -28,6 +28,7 @@ export class MarketplaceController {
   @Get('products')
   listProducts(
     @ReqContext() ctx: RequestContext,
+    @Query('q') q?: string,
     @Query('domain') domain?: string,
     @Query('outputPortType') outputPortType?: string,
     @Query('compliance') compliance?: string,
@@ -40,6 +41,7 @@ export class MarketplaceController {
     @Query('limit') limit?: string,
   ): Promise<MarketplaceProductList> {
     const filters: MarketplaceFilters = {};
+    if (q && q.trim()) filters.q              = q.trim();
     if (domain)       filters.domain           = domain.split(',').filter(Boolean);
     if (outputPortType) filters.outputPortType = outputPortType.split(',').filter(Boolean) as OutputPortInterfaceType[];
     if (compliance)   filters.compliance       = compliance.split(',').filter(Boolean) as ComplianceStateValue[];
