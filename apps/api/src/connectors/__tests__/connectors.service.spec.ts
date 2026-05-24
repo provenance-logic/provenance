@@ -59,6 +59,10 @@ const mockProbeService = () => ({
     edges: [],
     tablesWithErrors: [],
   }),
+  walkSnowflakeLineage: jest.fn().mockResolvedValue({
+    edges: [],
+    tablesWithErrors: [],
+  }),
 });
 
 const mockKafkaProducer = () => ({
@@ -754,14 +758,6 @@ describe('ConnectorsService', () => {
       );
     });
 
-    it('does NOT call lineageService.emitEvent for a snowflake crawl (lineage is deferred to Layer 4)', async () => {
-      setupCrawlMocks([discoveredTable]);
-
-      await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
-
-      expect(lineageService.emitEvent).not.toHaveBeenCalled();
-    });
-
     it('does NOT call walkDatabricksWorkspace or walkDatabricksLineage for a snowflake crawl', async () => {
       setupCrawlMocks([discoveredTable]);
 
@@ -771,8 +767,8 @@ describe('ConnectorsService', () => {
       expect(probeService.walkDatabricksLineage).not.toHaveBeenCalled();
     });
 
-    it('returns lineage counts of 0 on a snowflake crawl', async () => {
-      setupCrawlMocks([discoveredTable]);
+    it('returns lineage counts of 0 on a snowflake crawl when there are no tables', async () => {
+      setupCrawlMocks([]);
 
       const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
 
@@ -781,6 +777,156 @@ describe('ConnectorsService', () => {
         lineageEdgesSkipped: 0,
         lineageEdgesFailed: 0,
         tablesWithLineageErrors: [],
+      });
+    });
+
+    // ---- Layer 4 lineage projection tests ----
+
+    it('calls walkSnowflakeLineage with the discovered fullNames and emits each edge via lineageService.emitEvent', async () => {
+      setupCrawlMocks([
+        discoveredTable,
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'ORDERS', fullName: 'PROVENANCE_DEMO.SALES.ORDERS' },
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'CUSTOMER_ORDER_SUMMARY', fullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+      ]);
+
+      const edge1 = {
+        sourceFullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+        targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+      };
+      const edge2 = {
+        sourceFullName: 'PROVENANCE_DEMO.SALES.ORDERS',
+        targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+      };
+      probeService.walkSnowflakeLineage.mockResolvedValue({
+        edges: [edge1, edge2],
+        tablesWithErrors: [],
+      });
+      // Two new lineage rows (createdAt AFTER the crawl start).
+      lineageService.emitEvent
+        .mockResolvedValueOnce({ id: 'l1', createdAt: new Date('2025-01-01T01:00:00Z') })
+        .mockResolvedValueOnce({ id: 'l2', createdAt: new Date('2025-01-01T01:00:00Z') });
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(probeService.walkSnowflakeLineage).toHaveBeenCalledWith(
+        snowflakeConnector,
+        expect.arrayContaining([
+          'PROVENANCE_DEMO.SALES.CUSTOMERS',
+          'PROVENANCE_DEMO.SALES.ORDERS',
+          'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+        ]),
+      );
+      expect(lineageService.emitEvent).toHaveBeenCalledTimes(2);
+      expect(result.metadata).toMatchObject({
+        lineageEdgesEmitted: 2,
+        lineageEdgesSkipped: 0,
+        lineageEdgesFailed: 0,
+        tablesWithLineageErrors: [],
+      });
+    });
+
+    it('emitEvent is called with the correct node_ids, connectorType=snowflake metadata, and deterministic idempotency key', async () => {
+      setupCrawlMocks([
+        discoveredTable,
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'CUSTOMER_ORDER_SUMMARY', fullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+      ]);
+
+      const edge = {
+        sourceFullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+        targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+      };
+      probeService.walkSnowflakeLineage.mockResolvedValue({ edges: [edge], tablesWithErrors: [] });
+      lineageService.emitEvent.mockResolvedValue({ id: 'l1', createdAt: new Date('2025-01-01T01:00:00Z') });
+
+      await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(lineageService.emitEvent).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({
+          source_node: expect.objectContaining({
+            node_type: 'Source',
+            node_id: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+            org_id: 'org-1',
+            display_name: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+            metadata: { connectorType: 'snowflake' },
+          }),
+          target_node: expect.objectContaining({
+            node_type: 'Source',
+            node_id: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+            org_id: 'org-1',
+            display_name: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+            metadata: { connectorType: 'snowflake' },
+          }),
+          edge_type: 'DERIVES_FROM',
+          emitted_by: 'snowflake-discovery-crawl',
+          confidence: 1.0,
+          idempotency_key: 'snowflake-lineage:sf-connector-1:PROVENANCE_DEMO.SALES.CUSTOMERS->PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+        }),
+      );
+    });
+
+    it('counts idempotency hits (pre-crawl createdAt) as skipped, not emitted', async () => {
+      setupCrawlMocks([
+        discoveredTable,
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'CUSTOMER_ORDER_SUMMARY', fullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+      ]);
+
+      probeService.walkSnowflakeLineage.mockResolvedValue({
+        edges: [{ sourceFullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS', targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' }],
+        tablesWithErrors: [],
+      });
+      // Return a createdAt that is BEFORE the crawl event's startedAt (2024-01-01T00:00:00Z)
+      // → idempotency hit = skipped.
+      lineageService.emitEvent.mockResolvedValue({ id: 'l1', createdAt: new Date('2023-12-31T00:00:00Z') });
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(result.metadata).toMatchObject({
+        lineageEdgesEmitted: 0,
+        lineageEdgesSkipped: 1,
+        lineageEdgesFailed: 0,
+      });
+    });
+
+    it('records lineageEdgesFailed when emitEvent throws and continues processing remaining edges', async () => {
+      setupCrawlMocks([
+        discoveredTable,
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'ORDERS', fullName: 'PROVENANCE_DEMO.SALES.ORDERS' },
+        { catalog: 'PROVENANCE_DEMO', schema: 'SALES', name: 'CUSTOMER_ORDER_SUMMARY', fullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+      ]);
+
+      probeService.walkSnowflakeLineage.mockResolvedValue({
+        edges: [
+          { sourceFullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS', targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+          { sourceFullName: 'PROVENANCE_DEMO.SALES.ORDERS', targetFullName: 'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY' },
+        ],
+        tablesWithErrors: [],
+      });
+      lineageService.emitEvent
+        .mockRejectedValueOnce(new Error('Neo4j timeout'))
+        .mockResolvedValueOnce({ id: 'l2', createdAt: new Date('2025-01-01T01:00:00Z') });
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      // One failed, one emitted.
+      expect(result.metadata).toMatchObject({
+        lineageEdgesEmitted: 1,
+        lineageEdgesFailed: 1,
+      });
+    });
+
+    it('gracefully handles walkSnowflakeLineage throwing (degraded crawl, not failed)', async () => {
+      setupCrawlMocks([discoveredTable]);
+      probeService.walkSnowflakeLineage.mockRejectedValue(new Error('ACCOUNT_USAGE locked'));
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      // Crawl completes (succeeded or partial), lineage counts are all 0.
+      expect(['succeeded', 'partial']).toContain(result.status);
+      expect(lineageService.emitEvent).not.toHaveBeenCalled();
+      expect(result.metadata).toMatchObject({
+        lineageEdgesEmitted: 0,
+        lineageEdgesFailed: 0,
       });
     });
 

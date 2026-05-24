@@ -563,23 +563,53 @@ export class ConnectorsService {
         }
       }
 
-      // Lineage projection (B-063 Layer 4). Databricks only — Snowflake
-      // lineage (ACCOUNT_USAGE.OBJECT_DEPENDENCIES + ACCESS_HISTORY) is
-      // deferred to a later PR once the Layer 3 walk is live-verified.
-      // A separate manifest version (snowflake 1.1.0) will flip
-      // supports_lineage_discovery to true when that ships.
+      // ── Lineage projection (B-063 Layer 4) ────────────────────────────────
+      // Dispatches to the connector-type-specific lineage walker, then emits
+      // each edge via the lineage service.
+      //
+      // Supported now:
+      //   - databricks  : Unity Catalog Lineage Tracking API (per-table REST)
+      //   - snowflake   : ACCOUNT_USAGE.OBJECT_DEPENDENCIES (single SELECT)
+      //
+      // Both walkers implement graceful degradation — they catch their own
+      // internal errors and return { edges: [], tablesWithErrors: [...] }
+      // rather than throwing. The outer try/catch here handles the case where
+      // the walker itself throws unexpectedly (misconfiguration, missing host,
+      // etc.); in that case we log and continue with zero lineage.
       let lineageEdgesEmitted = 0;
       let lineageEdgesSkipped = 0;
       let lineageEdgesFailed = 0;
       let tablesWithLineageErrors: string[] = [];
-      if (connector.connectorType === 'databricks' && walk.tables.length > 0) {
+
+      const supportsLineage =
+        connector.connectorType === 'databricks' ||
+        connector.connectorType === 'snowflake';
+
+      if (supportsLineage && walk.tables.length > 0) {
         try {
           const fullNames = walk.tables.map((t) => t.fullName);
-          const lineageResult = await this.probeService.walkDatabricksLineage(
-            connector,
-            fullNames,
-          );
+
+          let lineageResult: { edges: import('./probe/connector-probe.service.js').DiscoveredLineageEdge[]; tablesWithErrors: string[] };
+          let emittedBy: string;
+          let idempotencyPrefix: string;
+          let connectorTypeMeta: string;
+
+          if (connector.connectorType === 'databricks') {
+            lineageResult = await this.probeService.walkDatabricksLineage(connector, fullNames);
+            emittedBy = 'databricks-discovery-crawl';
+            idempotencyPrefix = 'databricks-lineage';
+            connectorTypeMeta = 'databricks';
+          } else {
+            // snowflake: ACCOUNT_USAGE.OBJECT_DEPENDENCIES (Layer 4a).
+            // ACCESS_HISTORY (Layer 4b) is deferred — Enterprise-gated + ~3h lag.
+            lineageResult = await this.probeService.walkSnowflakeLineage(connector, fullNames);
+            emittedBy = 'snowflake-discovery-crawl';
+            idempotencyPrefix = 'snowflake-lineage';
+            connectorTypeMeta = 'snowflake';
+          }
+
           tablesWithLineageErrors = lineageResult.tablesWithErrors;
+
           for (const edge of lineageResult.edges) {
             try {
               const before = await this.lineageService.emitEvent(orgId, {
@@ -588,21 +618,21 @@ export class ConnectorsService {
                   node_id: edge.sourceFullName,
                   org_id: orgId,
                   display_name: edge.sourceFullName,
-                  metadata: { connectorType: 'databricks' },
+                  metadata: { connectorType: connectorTypeMeta },
                 },
                 target_node: {
                   node_type: 'Source',
                   node_id: edge.targetFullName,
                   org_id: orgId,
                   display_name: edge.targetFullName,
-                  metadata: { connectorType: 'databricks' },
+                  metadata: { connectorType: connectorTypeMeta },
                 },
                 edge_type: 'DERIVES_FROM',
-                emitted_by: 'databricks-discovery-crawl',
+                emitted_by: emittedBy,
                 confidence: 1.0,
-                idempotency_key: `databricks-lineage:${connectorId}:${edge.sourceFullName}->${edge.targetFullName}`,
+                idempotency_key: `${idempotencyPrefix}:${connectorId}:${edge.sourceFullName}->${edge.targetFullName}`,
               });
-              // The emission service returns the existing entry on
+              // The emission service returns the existing entry on an
               // idempotency hit (re-crawl). Distinguish "new" vs "skipped"
               // by checking whether the row pre-dates this crawl event.
               if (before.createdAt < event.startedAt) {

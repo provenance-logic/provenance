@@ -888,6 +888,174 @@ export class ConnectorProbeService {
   }
 
   /**
+   * Walks Snowflake's ACCOUNT_USAGE.OBJECT_DEPENDENCIES view and returns
+   * system-discovered static lineage edges for the supplied set of table
+   * full names.
+   *
+   * **OBJECT_DEPENDENCIES only (Layer 4a).** ACCESS_HISTORY query-derived
+   * lineage is deliberately deferred to a later "Layer 4b" PR because:
+   *   1. It requires Snowflake Enterprise tier — not available on trial/standard.
+   *   2. Query history has an inherent ~3h processing lag before rows appear.
+   *   3. Writing a reliable test needs live read→write test data against an
+   *      Enterprise account.
+   * TODO(layer4b): implement ACCESS_HISTORY-based lineage in a follow-up PR
+   * (snowflake capability manifest 1.2.0) once an Enterprise account is available
+   * for live verification.
+   *
+   * Design decisions:
+   * - **One SELECT, not N.** Derives the database set from `tableFullNames` and
+   *   issues a single `WHERE REFERENCING_DATABASE IN (...) OR
+   *   REFERENCED_DATABASE IN (...)` query — deterministic, cheap.
+   * - **Edge direction.** REFERENCED_* is the upstream/source; REFERENCING_* is
+   *   the downstream/target. Edge = `sourceFullName=REFERENCED_*` →
+   *   `targetFullName=REFERENCING_*` (same DERIVES_FROM direction as Databricks).
+   * - **Cross-db edges are kept.** If the REFERENCING (target) object is within
+   *   the discovered scope and the REFERENCED (source) is from another non-system
+   *   database, the edge is still emitted — cross-db lineage is real and useful.
+   * - **System filtering.** Edges involving INFORMATION_SCHEMA schema or a system
+   *   database (SNOWFLAKE, SNOWFLAKE_SAMPLE_DATA, USER$*) on either endpoint are
+   *   silently dropped.
+   * - **Graceful degradation.** If ACCOUNT_USAGE access is denied (needs
+   *   ACCOUNTADMIN or IMPORTED PRIVILEGES), the query will throw; we catch that,
+   *   return `{ edges: [], tablesWithErrors: ['<OBJECT_DEPENDENCIES_QUERY_FAILED>'] }`,
+   *   and do NOT re-throw — the crawl completes with zero lineage rather than
+   *   failing entirely. "No lineage available" is a normal operating condition.
+   * - **Requires ACCOUNTADMIN.** Confirmed working against a real trial account.
+   *   SNOWFLAKE.ACCOUNT_USAGE requires ACCOUNTADMIN or IMPORTED PRIVILEGES on the
+   *   SNOWFLAKE database.
+   */
+  async walkSnowflakeLineage(
+    connector: ConnectorEntity,
+    tableFullNames: string[],
+  ): Promise<{ edges: DiscoveredLineageEdge[]; tablesWithErrors: string[] }> {
+    // Short-circuit: no tables → no databases → skip the query.
+    if (tableFullNames.length === 0) {
+      return { edges: [], tablesWithErrors: [] };
+    }
+
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error(
+        'Snowflake connector requires connection_config.host (the full account hostname)',
+      );
+    }
+
+    const creds = await this.resolveSnowflakeCreds(connector);
+    if (!creds) {
+      throw new Error(
+        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
+      );
+    }
+
+    const jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+    const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
+    const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
+    const opts = { warehouse, role };
+
+    // ── System-database / system-schema predicates ──────────────────────────
+    // Reuse the same skip logic as walkSnowflakeAccount: SNOWFLAKE,
+    // SNOWFLAKE_SAMPLE_DATA, and USER$<login> on the database side; always
+    // skip INFORMATION_SCHEMA on the schema side.
+    const SYSTEM_DATABASES = new Set(['SNOWFLAKE', 'SNOWFLAKE_SAMPLE_DATA']);
+    const isSystemDatabase = (name: string): boolean => {
+      const upper = name.toUpperCase();
+      return SYSTEM_DATABASES.has(upper) || upper.startsWith('USER$');
+    };
+    const isSystemSchema = (schema: string): boolean =>
+      schema.toUpperCase() === 'INFORMATION_SCHEMA';
+
+    const shouldSkipEndpoint = (db: string, schema: string): boolean =>
+      isSystemDatabase(db) || isSystemSchema(schema);
+
+    // ── Derive unique database set from tableFullNames ───────────────────────
+    // Format: "DATABASE.SCHEMA.NAME" — extract first segment.
+    const databaseSet = new Set<string>();
+    for (const fullName of tableFullNames) {
+      const db = fullName.split('.')[0];
+      if (db && !isSystemDatabase(db)) {
+        databaseSet.add(db.toUpperCase());
+      }
+    }
+
+    if (databaseSet.size === 0) {
+      // All provided names were from system databases — nothing to query.
+      return { edges: [], tablesWithErrors: [] };
+    }
+
+    // ── Build the IN-list SQL safely using string literals ───────────────────
+    // Snowflake SQL REST API uses string substitution in the statement body,
+    // not parameterized queries in the JDBC sense. Database names from our
+    // own walkSnowflakeAccount output are already uppercase Snowflake identifiers
+    // — safe to embed as quoted literals. We still escape single quotes
+    // defensively (should never be present in a valid Snowflake db name).
+    const dbInList = Array.from(databaseSet)
+      .map((db) => `'${db.replace(/'/g, "''")}'`)
+      .join(', ');
+
+    const sql = [
+      'SELECT',
+      '  REFERENCED_DATABASE, REFERENCED_SCHEMA, REFERENCED_OBJECT_NAME, REFERENCED_OBJECT_DOMAIN,',
+      '  REFERENCING_DATABASE, REFERENCING_SCHEMA, REFERENCING_OBJECT_NAME, REFERENCING_OBJECT_DOMAIN,',
+      '  DEPENDENCY_TYPE',
+      'FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES',
+      `WHERE REFERENCING_DATABASE IN (${dbInList})`,
+      `   OR REFERENCED_DATABASE IN (${dbInList})`,
+    ].join(' ');
+
+    try {
+      const result = await submitSnowflakeStatement(host, jwt, sql, opts);
+
+      // Use sfShowRowsToObjects to resolve columns by name — robust against
+      // Snowflake adding columns or changing column order in future.
+      const rows = sfShowRowsToObjects(result);
+
+      const seen = new Set<string>();
+      const edges: DiscoveredLineageEdge[] = [];
+
+      for (const row of rows) {
+        const refDb = String(row['REFERENCED_DATABASE'] ?? '');
+        const refSchema = String(row['REFERENCED_SCHEMA'] ?? '');
+        const refName = String(row['REFERENCED_OBJECT_NAME'] ?? '');
+        const ingDb = String(row['REFERENCING_DATABASE'] ?? '');
+        const ingSchema = String(row['REFERENCING_SCHEMA'] ?? '');
+        const ingName = String(row['REFERENCING_OBJECT_NAME'] ?? '');
+
+        // Skip any endpoint touching a system schema or system database.
+        if (shouldSkipEndpoint(refDb, refSchema) || shouldSkipEndpoint(ingDb, ingSchema)) {
+          continue;
+        }
+
+        // Skip rows with empty identifiers (defensive; should not occur).
+        if (!refDb || !refSchema || !refName || !ingDb || !ingSchema || !ingName) {
+          continue;
+        }
+
+        const sourceFullName = `${refDb}.${refSchema}.${refName}`;
+        const targetFullName = `${ingDb}.${ingSchema}.${ingName}`;
+
+        // Deduplicate: OBJECT_DEPENDENCIES can theoretically return the same
+        // dependency row from multiple angles.
+        const key = `${sourceFullName}\x1f${targetFullName}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({ sourceFullName, targetFullName });
+        }
+      }
+
+      return { edges, tablesWithErrors: [] };
+    } catch {
+      // Graceful degradation: ACCOUNT_USAGE access denied, network error,
+      // SQL error — any throw means we return empty lineage rather than
+      // failing the entire crawl. The orchestration layer records the marker
+      // in tablesWithErrors and sets status=partial on the crawl event.
+      return {
+        edges: [],
+        tablesWithErrors: ['OBJECT_DEPENDENCIES_QUERY_FAILED'],
+      };
+    }
+  }
+
+  /**
    * Walks a Snowflake account via the SQL REST API (SHOW DATABASES / SHOW TABLES
    * / SHOW VIEWS) and returns every table + view the connector's principal can see.
    * Used by ConnectorsService's discovery crawl to pre-populate source registrations.
