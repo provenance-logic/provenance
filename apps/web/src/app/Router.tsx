@@ -21,6 +21,7 @@ import { NotificationPreferencesPage } from '../features/notifications/Notificat
 import { AgentsPage } from '../features/agents/AgentsPage.js';
 import { AgentDetailPage } from '../features/agents/AgentDetailPage.js';
 import { ConnectorsPage } from '../features/connectors/ConnectorsPage.js';
+import { ConnectorDetailPage } from '../features/connectors/ConnectorDetailPage.js';
 import { PendingAccessRequestsPage } from '../features/access-requests/PendingAccessRequestsPage.js';
 import { AccountPage } from '../features/account/AccountPage.js';
 
@@ -100,6 +101,7 @@ export function AppRouter() {
           <Route path="agents" element={<AgentsPage />} />
           <Route path="agents/:agentId" element={<AgentDetailPage />} />
           <Route path="connectors" element={<ConnectorsPage />} />
+          <Route path="connectors/:connectorId" element={<ConnectorDetailPage />} />
 
           {/* Notifications (Domain 11 — F11.4) */}
           <Route path="notifications" element={<NotificationsPage />} />

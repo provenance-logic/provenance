@@ -160,7 +160,12 @@ function ConnectorTable({
           {connectors.map((c) => (
             <tr key={c.id}>
               <Td>
-                <div className="font-medium text-slate-900">{c.name}</div>
+                <Link
+                  to={`/connectors/${c.id}`}
+                  className="font-medium text-slate-900 hover:text-brand-700"
+                >
+                  {c.name}
+                </Link>
                 {c.description && (
                   <div className="text-xs text-slate-500 line-clamp-1">{c.description}</div>
                 )}
