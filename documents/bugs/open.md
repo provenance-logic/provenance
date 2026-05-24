@@ -9,18 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-072 — Marketplace product search returns 0 hits for partial-name queries that should match existing products
-
-- **Severity:** High (P0 consumer flow — discovery is the front door to the platform; if search misses, the marketplace might as well not exist).
-- **Status:** Open — surfaced 2026-05-24 during a persona walkthrough on dev. Searching the marketplace for "campaign" returned "No products found" even though `campaign-attribution` (Campaign Attribution) exists and is `published` in the `acme-corp` org per a direct query of `products.data_products`.
-- **Area:** OpenSearch reindex pipeline (`apps/api/src/products/` publication path → `data_products` kNN + `provenance-products` BM25 indices). B-009 fixed BM25 reliability on the *publish* path with a synchronous double-write (#52); this looks like the same class of bug but on a different surface — possibly the marketplace search hitting the wrong index, or the index missing rows that were created before the double-write landed, or a filter (org_id, lifecycle_state) excluding the row.
-- **Discovered:** 2026-05-24 persona walkthrough, by Matt, while trying to find Campaign Attribution as Maya for the F10.14 catalog-name validation flow.
-- **Repro:** dev only — fresh-clone reproducibility unverified. Log in to dev as `marketing-lead@acme.example.com`. Marketplace → search "campaign". Expected: Campaign Attribution in results. Actual: "No products found."
-- **Likely root cause (unconfirmed):** dev's OpenSearch index was last reindexed before the seed package was authoritative; rows created since (or before the BM25 double-write shipped in #52) never made it in. `pnpm reindex:search` against dev would resolve if so. But if `pnpm reindex:search` doesn't recover the result, the bug is real (search filter logic or scoring bug) rather than data staleness.
-- **First diagnostic step:** run `pnpm reindex:search` against dev, re-search "campaign". If found → close as dev-data staleness, file a separate note that "dev needs periodic reindex." If still missing → it's a real bug in the search path.
-
----
-
 ## B-063 — Connector framework is "register-only" for every connector type except PostgreSQL, S3, and (now) Databricks; Phase 3 PRD claim of "✅ Complete" does not match the codebase
 
 - **Severity:** **Blocker** (elevated from High at end of 2026-05-21 session). The platform's whole differentiation is multi-tenant federated mesh of real connectors. Originally 3 of 12 advertised types did something meaningful; the other 9 silently faked their probe results. By Matt's stated OSR bar — "every single one of those connectors needs to actually work, EVERY ONE" — this was the gating issue, not a category of partial-shipment.

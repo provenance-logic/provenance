@@ -43,7 +43,7 @@ Recreated Keycloak on dev, restarted Caddy (per [[reference-dev-caddy-restart]])
 
 ## B-072 — Marketplace product search returns 0 hits for partial-name queries that should match existing products
 
-- **Resolved:** 2026-05-24 in a single PR
+- **Resolved:** 2026-05-24 across two PRs — initial wiring fix in #191, type-as-you-search UX iteration in #193
 - **Severity:** High (P0 consumer flow — discovery is the front door to the platform)
 - **Area:** `apps/web/src/features/discovery/MarketplacePage.tsx`, `apps/api/src/search/marketplace.{controller,service}.ts`, `apps/api/src/search/marketplace-global.controller.ts`, `packages/types/src/marketplace.ts`, `packages/openapi/marketplace.yaml`
 
@@ -65,6 +65,8 @@ Frontend: `MarketplacePage.tsx` `handleSearchChange` now sets `filters.q` instea
 **Test coverage.** Added 8 tests to `apps/api/src/search/__tests__/marketplace.service.spec.ts` covering: no-q skips OpenSearch entirely; q-with-zero-hits short-circuits without hitting PG; multi_match shape with correct boosts; status filter scopes to published vs. published+deprecated; orgId filter scopes for org vs. cross-org calls; graceful OpenSearch-unavailable fallback. All 19 marketplace tests pass; web vitest suite (15 tests) passes.
 
 **Why this was a B-072 / a real fix and not a workaround.** The bug ledger entry pre-fix hypothesized index staleness (B-009-shaped). The diagnostic step (`pnpm reindex:search`) discovered staleness existed, but the post-reindex search still returned zero — because the search box wasn't wired to text search at all. The real bug was the design-level wiring; the staleness was a coincidental dev-environment data artefact. Both are addressed in the fix PR.
+
+**Type-as-you-search follow-up (#193, same session).** After #191 merged and the page started receiving real `q=` requests, Matt noted the search only resolved on the full word — typing "c", "ca", "cam", "camp" returned zero results until "campaign" was typed. Cause: `multi_match` with `type: 'best_fields'` + `fuzziness: 'AUTO'` matches whole tokens (with edit-distance tolerance) but NOT prefixes. Switched the `searchProductIds` helper to `type: 'bool_prefix'` (the documented OpenSearch query type for type-as-you-search) — last term is treated as a prefix; earlier terms are required full matches. Fuzziness dropped (doesn't combine meaningfully with prefix). Test assertion updated from `best_fields` to `bool_prefix`. Direct OpenSearch verification on dev: `q="ca"` → 4 hits incl. Campaign Attribution at top score 3.0. Lesson: `best_fields` is for "give me documents broadly matching this whole query"; `bool_prefix` is for "what every modern search-as-you-type box expects."
 
 ---
 
