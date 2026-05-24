@@ -1377,6 +1377,8 @@ const CONNECTION_FIELD_SPECS: Record<
       required: true,
       options: ['disable', 'require', 'verify-ca', 'verify-full'],
     },
+    { key: 'warehouse', label: 'Warehouse', placeholder: 'Snowflake only (e.g. COMPUTE_WH)' },
+    { key: 'role', label: 'Role', placeholder: 'Snowflake only (e.g. ANALYST)' },
     { key: 'username', label: 'Username', credential: true },
     { key: 'password', label: 'Password', type: 'password', credential: true },
   ],
@@ -1541,6 +1543,10 @@ function buildConnectionDetails(
         authMethod: required('authMethod', 'Auth method') as SqlJdbcConnectionDetails['authMethod'],
         sslMode: required('sslMode', 'SSL mode') as SqlJdbcConnectionDetails['sslMode'],
       };
+      const warehouse = optional('warehouse');
+      if (warehouse !== undefined) out.warehouse = warehouse;
+      const role = optional('role');
+      if (role !== undefined) out.role = role;
       const username = optional('username');
       if (username !== undefined) out.username = username;
       const password = optional('password');

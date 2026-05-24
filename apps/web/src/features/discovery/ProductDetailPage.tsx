@@ -473,6 +473,14 @@ function ConnectionDetailsPanel({ port }: { port: Port }) {
   return null;
 }
 
+/** Returns true when the port's connection details (full or preview) indicate a Snowflake host. */
+function portIsSnowflakeBacked(port: Port): boolean {
+  const host =
+    (port.connectionDetails as { host?: string } | null)?.host ??
+    port.connectionDetailsPreview?.host;
+  return Boolean(host?.includes('snowflakecomputing.com'));
+}
+
 /**
  * Consumer-grade snippet picker (closes B-069 partial — replaces the static
  * CONSUMPTION_GUIDANCE placeholder template). Lets the user choose a tool
@@ -488,16 +496,19 @@ function ConnectionDetailsPanel({ port }: { port: Port }) {
  *   - python: real generators for all 6 interface types (preexisting)
  *   - dbt: profiles.yml fragment for sql_jdbc (this PR)
  *   - sql_client / jdbc: bare JDBC URL for sql_jdbc (this PR)
- *   - power_bi / tableau: deferred — returns "not yet supported"
+ *   - power_bi / tableau: Phase 5.10 .pbids / .tds files for sql_jdbc
+ *   - snowflake_share: B5 / F10.16 cross-org Secure Data Sharing DDL (Snowflake ports only)
  */
 function SnippetPicker({
   productOrgId,
   productId,
   portId,
+  port,
 }: {
   productOrgId: string;
   productId: string;
   portId: string;
+  port: Port;
 }) {
   const [destination, setDestination] = useState<SnippetDestination>('python');
   const [snippet, setSnippet]         = useState<PortSnippetResponse | null>(null);
@@ -505,6 +516,12 @@ function SnippetPicker({
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
   const [copied, setCopied]           = useState(false);
+  // B5 / F10.16 — consumer account locator for snowflake_share destination.
+  // Only shown when the port is Snowflake-backed.
+  const [consumerLocator, setConsumerLocator] = useState('');
+
+  const isSnowflake = portIsSnowflakeBacked(port);
+  const showLocatorInput = destination === 'snowflake_share' && isSnowflake;
 
   // F10.15 — call the per-port situation endpoint once per port. The result
   // drives the access banner (A vs B + grant/no-grant) and is independent
@@ -524,6 +541,29 @@ function SnippetPicker({
       });
     return () => { cancelled = true; };
   }, [productOrgId, productId, portId]);
+
+  // Re-fetch snippet when destination changes (full effect with cancellation token).
+  // For the snowflake_share locator, `onBlur` on the input calls fetchSnippetNow()
+  // directly so we don't re-fetch on every keystroke.
+  const fetchSnippetNow = useCallback(
+    (locatorOverride?: string) => {
+      setLoading(true);
+      setError(null);
+      setCopied(false);
+      const locator = locatorOverride !== undefined ? locatorOverride : undefined;
+      marketplaceApi.products
+        .snippet(productOrgId, productId, portId, destination, locator || undefined)
+        .then((s) => {
+          setSnippet(s);
+          setLoading(false);
+        })
+        .catch((err) => {
+          setError(err instanceof ApiError ? err.message : 'Failed to load snippet');
+          setLoading(false);
+        });
+    },
+    [productOrgId, productId, portId, destination],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -577,6 +617,22 @@ function SnippetPicker({
           </button>
         )}
       </div>
+
+      {showLocatorInput && (
+        <div className="flex items-center gap-2 mb-2">
+          <label className="text-xs text-slate-600 shrink-0">
+            Consumer account locator:
+          </label>
+          <input
+            type="text"
+            value={consumerLocator}
+            onChange={(e) => setConsumerLocator(e.target.value)}
+            onBlur={(e) => fetchSnippetNow(e.target.value || undefined)}
+            placeholder="e.g. EO76245.US-EAST-2.AWS"
+            className="flex-1 text-xs border border-slate-300 rounded px-2 py-1 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+      )}
 
       {loading && (
         <div className="text-xs text-slate-400 italic px-2 py-3">Loading snippet…</div>
@@ -661,6 +717,13 @@ function SnippetUnavailable({ reason }: { reason: PortSnippetResponse['reason'] 
           before a snippet can be generated.
         </div>
       );
+    case 'snowflake_port_required':
+      return (
+        <div className="text-xs text-amber-700 px-2 py-3 bg-amber-50 rounded">
+          Snowflake Secure Data Sharing is only available for Snowflake-backed SQL/JDBC ports. This port uses a
+          different interface type. Pick another destination from the dropdown.
+        </div>
+      );
     default:
       return (
         <div className="text-xs text-slate-600 px-2 py-3 bg-slate-50 rounded">
@@ -731,7 +794,7 @@ function PortsTab({
 
             <ConnectionDetailsPanel port={port} />
 
-            <SnippetPicker productOrgId={productOrgId} productId={productId} portId={port.id} />
+            <SnippetPicker productOrgId={productOrgId} productId={productId} portId={port.id} port={port} />
 
             {fields.length > 0 ? (
               <div className="border border-slate-200 rounded-lg overflow-hidden">

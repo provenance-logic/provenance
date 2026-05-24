@@ -87,16 +87,24 @@ export const marketplaceApi = {
      * Per-port snippet generation for the consumer-grade outbound flow.
      * Returns `{ available: false, reason: 'request_access_required' }` when
      * the caller has neither product ownership nor an active access grant.
+     *
+     * For the `snowflake_share` destination, supply `consumerAccountLocator`
+     * (the consumer's Snowflake account locator, e.g. `EO76245.US-EAST-2.AWS`).
+     * If omitted, a placeholder is emitted in the snippet.
      */
     snippet: (
       productOrgId: string,
       productId: string,
       portId: string,
       destination: SnippetDestination,
-    ): Promise<PortSnippetResponse> =>
-      api.get<PortSnippetResponse>(
-        `/organizations/${productOrgId}/products/${productId}/ports/${portId}/snippet?destination=${destination}`,
-      ),
+      consumerAccountLocator?: string,
+    ): Promise<PortSnippetResponse> => {
+      const params = new URLSearchParams({ destination });
+      if (consumerAccountLocator) params.set('consumerAccountLocator', consumerAccountLocator);
+      return api.get<PortSnippetResponse>(
+        `/organizations/${productOrgId}/products/${productId}/ports/${portId}/snippet?${params.toString()}`,
+      );
+    },
 
     /**
      * F10.15 (Phase 5.9) — consumer-flow situation detection per port.
@@ -155,15 +163,17 @@ export type SnippetDestination =
   | 'sql_client'
   | 'jdbc'
   | 'power_bi'
-  | 'tableau';
+  | 'tableau'
+  | 'snowflake_share';
 
 export const SNIPPET_DESTINATIONS: { value: SnippetDestination; label: string }[] = [
-  { value: 'python',     label: 'Python' },
-  { value: 'sql_client', label: 'SQL client' },
-  { value: 'jdbc',       label: 'JDBC URL' },
-  { value: 'dbt',        label: 'dbt' },
-  { value: 'power_bi',   label: 'Power BI' },
-  { value: 'tableau',    label: 'Tableau' },
+  { value: 'python',          label: 'Python' },
+  { value: 'sql_client',      label: 'SQL client' },
+  { value: 'jdbc',            label: 'JDBC URL' },
+  { value: 'dbt',             label: 'dbt' },
+  { value: 'power_bi',        label: 'Power BI' },
+  { value: 'tableau',         label: 'Tableau' },
+  { value: 'snowflake_share', label: 'Snowflake share (cross-org)' },
 ];
 
 export interface PortSnippetResponse {
@@ -175,5 +185,6 @@ export interface PortSnippetResponse {
     | 'request_access_required'
     | 'destination_not_yet_supported'
     | 'port_has_no_connection_details'
-    | 'unsupported_interface_type';
+    | 'unsupported_interface_type'
+    | 'snowflake_port_required';
 }
