@@ -274,6 +274,7 @@ This document tracks the implementation status of every requirement in the PRD. 
 | F7.45 | Organization Administration | Partially implemented | Basic admin exists; role assignment requires Keycloak |
 | F7.46 | Onboarding Experience | Implemented | Inline first-run wizard at the top of `/dashboard` with five steps (confirm org, invite team, register connector, publish product, invite agent) backed by a new `identity.principal_preferences` table + `GET/PATCH /me/preferences`. Steps are skippable individually; the wizard as a whole is dismissible and resumable. All five steps wire to live destinations as of 2026-05-15: org summary, OrgRolesPage (F7.7), ConnectorsPage (B-025 closed in #98), NewProductForm via the first available domain, and AgentsPage (B-026 closed in #97). The "Sample data" affordance attached to the confirm-org step (B-027 closed in #100) seeds one domain + two products + ports + an SLO + notifications via a role-and-env-flag-gated `POST /organizations/:orgId/sample-data`. Once the user marks all five steps done/skipped the wizard never auto-opens again. |
 | F7.47 | Usage and Health Monitoring | Not implemented | |
+| F7.48 | Provenance Account Surface | **Not implemented — OSR blocker** | New requirement landed 2026-05-24 (PRD v1.6). Industry-standard self-service account page reachable from a top-right avatar dropdown. Read-only profile (display name, email, org, roles, principal_id), "Change password" deep-link to Keycloak via `kc_action=UPDATE_PASSWORD`, and "Sign out". Editing display name/email, profile photo, notification prefs, multi-org switcher, and per-user aggregates (products owned, grants held, agents registered, audit history) all deferred to post-OSR. Backend already has `identity.principals` + `identity.principal_preferences` + `identity.principal_settings`; this is web-only work. |
 
 ---
 
@@ -445,6 +446,7 @@ New in PRD v1.5. Introduces universal per-use-case consent and runtime scope enf
 **Active OSR blockers (as of 2026-05-21):**
 
 - **[B-063](../bugs/open.md#B-063) — Connector framework completeness.** 3 of 12 advertised connector types do something meaningful (PG + S3 + Databricks); the other 9 register with synthetic-healthy fakery. The weekend conversation needs to decide whether OSR ships with all 12 implemented (~8–16 weeks of work per the Databricks lift), with a narrowed PRD scope, or with the unimplemented types hidden until they're real.
+- **F7.48 — Provenance Account Surface.** New OSR blocker filed 2026-05-24. No self-service account page exists today. A user cannot see who they're signed in as, what roles they hold, or change their password from inside the app. Persona walkthrough surfaced this as a "this product isn't finished" gap on first login; the principal-id surface alone removes a class of debugging friction (ownership mismatches, "why does X think I'm not the owner"). Web-only work; backend already has the data.
 
 **Recently-resolved OSR-track work (preserved from the prior summary — accurate against the codebase, NOT a defense of the "OSR-ready" framing):**
 
