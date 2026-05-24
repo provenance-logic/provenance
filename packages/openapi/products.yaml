@@ -392,6 +392,8 @@ components:
         jdbcUrlTemplate: { type: string }
         username:   { type: string }
         password:   { type: string, description: "Write-only credential. Never returned on read." }
+        warehouse:  { type: string, description: "Snowflake virtual warehouse. Ignored by non-Snowflake drivers." }
+        role:       { type: string, description: "Snowflake role override. Ignored by non-Snowflake drivers." }
 
     RestApiConnectionDetails:
       type: object

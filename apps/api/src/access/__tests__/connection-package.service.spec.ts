@@ -727,6 +727,207 @@ describe('ConnectionPackageService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Phase 5.14 Part B / F10.17 — Snowflake-specific snippet shapes
+  // ---------------------------------------------------------------------------
+
+  describe('generateSnippetForPort — Snowflake destination shapes', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    function activeGrant() {
+      return { revokedAt: null, expiresAt: null, grantedAt: new Date() };
+    }
+
+    function snowflakePort(extras: Record<string, unknown> = {}) {
+      return makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'xy12345.us-east-1.aws.snowflakecomputing.com',
+          port: 443,
+          database: 'ANALYTICS',
+          schema: 'PUBLIC',
+          authMethod: 'username_password',
+          sslMode: 'require',
+          warehouse: 'COMPUTE_WH',
+          role: 'ANALYST',
+          ...extras,
+        }) as unknown as Record<string, unknown>,
+      });
+    }
+
+    // --- snowflakeAccount() helper ---
+
+    it('strips .snowflakecomputing.com to derive the account identifier', async () => {
+      // Verified indirectly by asserting the python snippet contains the stripped value.
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      // quote() uses JSON.stringify — double-quotes, not single.
+      expect(result?.code).toContain(`account="xy12345.us-east-1.aws"`);
+      expect(result?.code).not.toContain('snowflakecomputing.com');
+    });
+
+    // --- python ---
+
+    it('uses snowflake.connector (not psycopg2) for Snowflake hosts', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('import snowflake.connector');
+      expect(result?.code).not.toContain('psycopg2');
+      // quote() uses JSON.stringify — double-quotes, not single.
+      expect(result?.code).toContain(`warehouse="COMPUTE_WH"`);
+      expect(result?.code).toContain(`role="ANALYST"`);
+      expect(result?.code).toContain(`database="ANALYTICS"`);
+      expect(result?.code).toContain(`schema="PUBLIC"`);
+    });
+
+    it('uses placeholder warehouse/role when fields are absent', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort({ warehouse: undefined, role: undefined }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      // quote() uses JSON.stringify — double-quotes, not single.
+      expect(result?.code).toContain(`warehouse="<your_warehouse>"`);
+      expect(result?.code).toContain(`role="<your_role>"`);
+    });
+
+    it('non-Snowflake host still produces psycopg2 snippet (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort()); // default postgres host
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.code).toContain('psycopg2');
+      expect(result?.code).not.toContain('snowflake.connector');
+    });
+
+    // --- dbt ---
+
+    it('emits type: snowflake with account/warehouse/role (no host/port/sslmode) for Snowflake dbt', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('type: snowflake');
+      expect(result?.code).toContain('account: xy12345.us-east-1.aws');
+      expect(result?.code).toContain('warehouse: COMPUTE_WH');
+      expect(result?.code).toContain('role: ANALYST');
+      expect(result?.code).not.toContain('host:');
+      expect(result?.code).not.toContain('port:');
+      expect(result?.code).not.toContain('sslmode:');
+    });
+
+    it('non-Snowflake host still produces host/port/sslmode in dbt snippet (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'owner-1');
+      expect(result?.code).toContain('host: db.example.com');
+      expect(result?.code).toContain('port: 5432');
+      expect(result?.code).toContain('sslmode: require');
+      expect(result?.code).not.toContain('account:');
+    });
+
+    // --- JDBC URL ---
+
+    it('emits jdbc:snowflake:// with query-string params (no port) for Snowflake JDBC URL', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'sql_client', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('jdbc:snowflake://xy12345.us-east-1.aws.snowflakecomputing.com/');
+      expect(result?.code).toContain('warehouse=COMPUTE_WH');
+      expect(result?.code).toContain('db=ANALYTICS');
+      expect(result?.code).toContain('schema=PUBLIC');
+      expect(result?.code).toContain('role=ANALYST');
+      // Must NOT look like a regular JDBC URL (no port segment)
+      expect(result?.code).not.toContain(':443/');
+    });
+
+    it('non-Snowflake host JDBC URL is unchanged (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'sql_client', 'owner-1');
+      expect(result?.code).toBe('jdbc:postgresql://db.example.com:5432/orders?sslmode=require');
+    });
+
+    // --- Power BI .pbids ---
+
+    it('includes warehouse in the .pbids address for Snowflake', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'owner-1');
+      expect(result?.available).toBe(true);
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.connections[0].details.protocol).toBe('snowflake');
+      expect(pbids.connections[0].details.address.warehouse).toBe('COMPUTE_WH');
+      expect(pbids.connections[0].details.address.database).toBe('ANALYTICS');
+    });
+
+    it('uses placeholder warehouse in .pbids when field is absent', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort({ warehouse: undefined }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'owner-1');
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.connections[0].details.address.warehouse).toBe('<your_warehouse>');
+    });
+
+    it('non-Snowflake .pbids address has no warehouse (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'power_bi', 'owner-1');
+      const pbids = JSON.parse(result!.code as string);
+      expect(pbids.connections[0].details.address.warehouse).toBeUndefined();
+    });
+
+    // --- Tableau .tds ---
+
+    it('includes warehouse and schema in .tds for Snowflake (class=snowflake)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'owner-1');
+      expect(result?.available).toBe(true);
+      const tds = result!.code as string;
+      expect(tds).toContain(`class='snowflake'`);
+      expect(tds).toContain(`warehouse='COMPUTE_WH'`);
+      expect(tds).toContain(`dbname='ANALYTICS'`);
+      expect(tds).toContain(`schema='PUBLIC'`);
+      // Snowflake Tableau connector uses implicit port — must not emit port attr.
+      expect(tds).not.toContain(`port='`);
+    });
+
+    it('uses placeholder warehouse in .tds when field is absent', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort({ warehouse: undefined }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'owner-1');
+      const tds = result!.code as string;
+      // xmlEscape converts < and > — the placeholder appears XML-escaped in the .tds attribute.
+      expect(tds).toContain(`warehouse='&lt;your_warehouse&gt;'`);
+    });
+
+    it('non-Snowflake .tds is unchanged — no warehouse attr (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'tableau', 'owner-1');
+      const tds = result!.code as string;
+      expect(tds).toContain(`class='postgres'`);
+      expect(tds).not.toContain(`warehouse=`);
+      expect(tds).toContain(`port='5432'`);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // F10.14 / Phase 5.11 — source-side view DDL
   // ---------------------------------------------------------------------------
 

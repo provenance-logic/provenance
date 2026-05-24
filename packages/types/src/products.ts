@@ -38,6 +38,10 @@ export interface SqlJdbcConnectionDetails {
   jdbcUrlTemplate?: string;
   username?: string;
   password?: string;
+  /** Snowflake virtual warehouse. Ignored by non-Snowflake drivers. */
+  warehouse?: string;
+  /** Snowflake role override. Ignored by non-Snowflake drivers. */
+  role?: string;
 }
 
 export type RestApiAuthMethod = 'api_key' | 'oauth2' | 'bearer_token' | 'none';
