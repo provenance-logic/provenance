@@ -26,6 +26,8 @@ export type NotificationCategory =
   | 'access_request_sla_warning'
   | 'access_request_sla_breach'
   | 'access_grant_expiring'
+  | 'access_grant_expiring_7d'
+  | 'access_grant_renewed'
   // Product lifecycle (F11.12 – F11.15)
   | 'product_deprecated'
   | 'product_decommissioned'
@@ -176,6 +178,14 @@ export const CATEGORY_DEFAULT_CHANNELS: Readonly<
   access_request_sla_warning: ['in_platform', 'email'],
   access_request_sla_breach: ['in_platform', 'email'],
   access_grant_expiring: ['in_platform', 'email'],
+  // 7-day tier — same urgency posture as the 14-day, deliberately
+  // identical channel set so the consumer sees a consistent reminder
+  // shape.
+  access_grant_expiring_7d: ['in_platform', 'email'],
+  // Auto-renew confirmation — informational; in-platform is enough.
+  // The consumer can opt-in to email via per-(principal, category)
+  // preferences (F11.3) if they want it out-of-band too.
+  access_grant_renewed: ['in_platform'],
   // Product lifecycle — high-impact for downstream consumers
   product_deprecated: ['in_platform', 'email'],
   product_decommissioned: ['in_platform', 'email'],

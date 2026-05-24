@@ -222,6 +222,57 @@ describe('AccessNotificationsTriggerWorker', () => {
     });
   });
 
+  describe('runGrantExpiry7d (F10.19 / Phase 5.13)', () => {
+    it('enqueues access_grant_expiring_7d to grantee and stamps the 7d marker', async () => {
+      const grant = {
+        id: 'grant-7d',
+        orgId: ORG,
+        productId: PRODUCT,
+        granteePrincipalId: 'consumer-1',
+        expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days out
+      };
+      grantRepo.createQueryBuilder.mockReturnValue(makeQb([grant]));
+      productRepo.findOne.mockResolvedValue({
+        id: PRODUCT,
+        ownerPrincipalId: OWNER,
+        name: 'Customer Events',
+      });
+
+      const count = await worker.runGrantExpiry7d();
+
+      expect(count).toBe(1);
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: ORG,
+          category: 'access_grant_expiring_7d',
+          recipients: ['consumer-1'],
+          dedupKey: 'access_grant_expiring_7d:grant-7d',
+        }),
+      );
+      expect(grantRepo.update).toHaveBeenCalledWith(
+        { id: 'grant-7d', orgId: ORG },
+        expect.objectContaining({ expiryWarning7dSentAt: expect.any(Date) }),
+      );
+    });
+
+    it('does not stamp the 7d marker when enqueue throws', async () => {
+      const grant = {
+        id: 'grant-7d',
+        orgId: ORG,
+        productId: PRODUCT,
+        granteePrincipalId: 'consumer-1',
+        expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      };
+      grantRepo.createQueryBuilder.mockReturnValue(makeQb([grant]));
+      productRepo.findOne.mockResolvedValue({ id: PRODUCT, name: 'X' });
+      notificationsService.enqueue.mockRejectedValueOnce(new Error('boom'));
+
+      const count = await worker.runGrantExpiry7d();
+      expect(count).toBe(0);
+      expect(grantRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('runAll', () => {
     it('runs all three branches without throwing on individual failure', async () => {
       // Make grant-expiry blow up; the SLA branches should still complete.
