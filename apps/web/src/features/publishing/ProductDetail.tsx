@@ -4,6 +4,7 @@ import { productsApi } from '../../shared/api/products.js';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { accessApi } from '../../shared/api/access.js';
 import { connectorsApi } from '../../shared/api/connectors.js';
+import { marketplaceApi } from '../../shared/api/marketplace.js';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import type {
@@ -730,6 +731,11 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  // F10.14 / Phase 5.11 — Copy source view DDL flow. We render the button
+  // only when the port carries both catalogName and sourceObjectPath; the
+  // backend endpoint enforces ownership + same-org separately.
+  const [ddlCopying, setDdlCopying] = useState(false);
+  const [ddlStatus, setDdlStatus] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete port "${port.name}"?`)) return;
@@ -739,6 +745,24 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
       onDeleted();
     } catch {
       setDeleting(false);
+    }
+  };
+
+  const handleCopyDdl = async () => {
+    setDdlCopying(true);
+    setDdlStatus(null);
+    try {
+      const res = await marketplaceApi.products.sourceViewDdl(orgId, productId, port.id);
+      if (!res.available || !res.ddl) {
+        setDdlStatus(`DDL unavailable${res.reason ? ` (${res.reason})` : ''}`);
+        return;
+      }
+      await navigator.clipboard.writeText(res.ddl);
+      setDdlStatus('DDL copied to clipboard');
+    } catch (err) {
+      setDdlStatus(`Copy failed: ${(err as Error).message}`);
+    } finally {
+      setDdlCopying(false);
     }
   };
 
@@ -770,6 +794,14 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
             <span className="text-xs text-slate-400">
               {INTERFACE_TYPE_OPTIONS.find((o) => o.value === port.interfaceType)?.label ??
                 port.interfaceType}
+            </span>
+          )}
+          {port.catalogName && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-slate-100 text-slate-700 border border-slate-200"
+              title="Catalog name consumers see (F10.14)"
+            >
+              {port.catalogName}
             </span>
           )}
         </div>
@@ -811,6 +843,25 @@ function PortCard({ port, orgId, domainId, productId, isOwner, onDeleted }: Port
             {testError && (
               <span className="text-xs text-red-600">{testError}</span>
             )}
+            {/* F10.14 / Phase 5.11 — DDL button only renders when the port
+                already carries both a catalog name and a source object path.
+                Without both, the backend has nothing to template a view from. */}
+            {port.catalogName && port.sourceObjectPath && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyDdl()}
+                  disabled={ddlCopying}
+                  className="text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50 font-medium"
+                  title="Copy CREATE VIEW DDL to run at the source"
+                >
+                  {ddlCopying ? 'Copying…' : 'Copy source view DDL'}
+                </button>
+                {ddlStatus && (
+                  <span className="text-xs text-slate-600">{ddlStatus}</span>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -849,6 +900,11 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   const [slaDescription, setSlaDescription] = useState('');
   const [connectionFields, setConnectionFields] = useState<Record<string, string>>({});
   const [situationAEligibility, setSituationAEligibility] = useState(false);
+  // F10.14 / Phase 5.11 — optional catalog name. When set, consumers see
+  // this name (e.g. `customer_360`) and sql_jdbc snippets address by it.
+  // Producer is expected to back it with a CREATE VIEW at the source —
+  // the "Copy source view DDL" button below assists.
+  const [catalogName, setCatalogName] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -922,6 +978,9 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
       // also false, so omitting the field is functionally identical and
       // keeps the wire payload smaller for the common case.
       ...(situationAEligibility ? { situationAEligibility: true } : {}),
+      // F10.14 — only ship when non-empty; backend default is null
+      // (no catalog-name abstraction).
+      ...(catalogName.trim() !== '' ? { catalogName: catalogName.trim() } : {}),
     };
 
     setSaving(true);
@@ -1030,6 +1089,25 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
                   </span>
                 </span>
               </label>
+            </Field>
+
+            <Field label="Catalog name (optional)">
+              <input
+                type="text"
+                value={catalogName}
+                onChange={(e) => setCatalogName(e.target.value)}
+                className="input font-mono text-xs"
+                placeholder="e.g. customer_360"
+                pattern="[A-Za-z][A-Za-z0-9_]*"
+                title="Letters, digits, underscores; must start with a letter"
+              />
+              <p className="text-[11px] text-slate-500 mt-1">
+                User-facing name consumers see (e.g. <code>customer_360</code>)
+                instead of the underlying physical path. For SQL ports,
+                back this with a <code>CREATE VIEW</code> at the source — the
+                button below generates the DDL when the port already exists
+                and is bound to a source object. (F10.14 / Phase 5.11.)
+              </p>
             </Field>
 
             <Field label="Contract Schema (JSON)" required>

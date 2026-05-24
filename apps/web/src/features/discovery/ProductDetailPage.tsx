@@ -699,8 +699,20 @@ function PortsTab({
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">{port.name}</h3>
+                {/* F10.14 / Phase 5.11 — surface the catalog name when set. This
+                    is the identifier the consumer will paste into their tools,
+                    so we lift it above the description and render it
+                    monospace + slightly emphasised. */}
+                {port.catalogName && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-slate-400">Catalog name</span>
+                    <code className="text-xs font-mono text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                      {port.catalogName}
+                    </code>
+                  </div>
+                )}
                 {port.description && (
-                  <p className="text-xs text-slate-500 mt-0.5">{port.description}</p>
+                  <p className="text-xs text-slate-500 mt-1">{port.description}</p>
                 )}
               </div>
               {port.interfaceType && (
