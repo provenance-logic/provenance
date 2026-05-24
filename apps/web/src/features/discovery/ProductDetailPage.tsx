@@ -6,6 +6,7 @@ import {
   type SnippetDestination,
   type PortSnippetResponse,
 } from '../../shared/api/marketplace.js';
+import type { PortSituationResponse } from '@provenance/types';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
 import { AccessRequestSlideOver } from './AccessRequestSlideOver.js';
@@ -499,9 +500,29 @@ function SnippetPicker({
 }) {
   const [destination, setDestination] = useState<SnippetDestination>('python');
   const [snippet, setSnippet]         = useState<PortSnippetResponse | null>(null);
+  const [situation, setSituation]     = useState<PortSituationResponse | null>(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
   const [copied, setCopied]           = useState(false);
+
+  // F10.15 — call the per-port situation endpoint once per port. The result
+  // drives the access banner (A vs B + grant/no-grant) and is independent
+  // of which destination the user picks; we cache it for the lifetime of
+  // the component. A fetch failure leaves the banner hidden and falls back
+  // to the snippet's own access reason — no UX regression.
+  useEffect(() => {
+    let cancelled = false;
+    marketplaceApi.products
+      .situation(productOrgId, productId, portId)
+      .then((s) => {
+        if (!cancelled) setSituation(s);
+      })
+      .catch(() => {
+        // Silent fallback — the snippet endpoint still gates correctly on
+        // its own; the situation banner is an additive UX hint.
+      });
+    return () => { cancelled = true; };
+  }, [productOrgId, productId, portId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -533,6 +554,7 @@ function SnippetPicker({
 
   return (
     <div className="border border-slate-200 rounded-lg p-3 mb-3">
+      {situation && <SituationBanner situation={situation} />}
       <div className="flex items-center gap-2 mb-2">
         <label className="text-xs font-semibold text-slate-700">How to consume:</label>
         <select
@@ -572,6 +594,45 @@ function SnippetPicker({
           {snippet.code}
         </pre>
       )}
+    </div>
+  );
+}
+
+/**
+ * SituationBanner — F10.15 (Phase 5.9) consumer-flow signal. Renders an
+ * accessibility hint per port:
+ *   - Situation A: producer-declared open to all source-system users; no
+ *     per-product grant needed.
+ *   - Situation B + grant: you have access; just pick a tool.
+ *   - Situation B + no grant: you'll need to request access; the snippet
+ *     stays empty until approval. (The full Request Access action lives
+ *     in the Access tab — this banner just sets expectations.)
+ *
+ * Exported for test isolation.
+ */
+export function SituationBanner({ situation }: { situation: PortSituationResponse }) {
+  if (situation.situation === 'A') {
+    return (
+      <div className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5 mb-2">
+        <strong className="font-semibold">Open access.</strong>{' '}
+        No per-product access request needed — connect with your existing
+        source-system credentials.
+      </div>
+    );
+  }
+  if (situation.callerHasActiveGrant) {
+    return (
+      <div className="text-[11px] text-blue-800 bg-blue-50 border border-blue-200 rounded px-2 py-1.5 mb-2">
+        <strong className="font-semibold">Access granted.</strong>{' '}
+        Pick a tool to generate a ready-to-use snippet.
+      </div>
+    );
+  }
+  return (
+    <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-2">
+      <strong className="font-semibold">Access required.</strong>{' '}
+      Use the Access tab to request access; the snippet renders with real
+      connection details once approved.
     </div>
   );
 }

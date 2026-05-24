@@ -7,6 +7,7 @@ import type {
   LineageGraph,
   SloSummary,
   AccessRequestList,
+  PortSituationResponse,
 } from '@provenance/types';
 
 const base = (orgId: string) => `/organizations/${orgId}/marketplace`;
@@ -94,6 +95,22 @@ export const marketplaceApi = {
     ): Promise<PortSnippetResponse> =>
       api.get<PortSnippetResponse>(
         `/organizations/${productOrgId}/products/${productId}/ports/${portId}/snippet?destination=${destination}`,
+      ),
+
+    /**
+     * F10.15 (Phase 5.9) — consumer-flow situation detection per port.
+     * Returns Situation A (producer-declared open access) or B (per-product
+     * grant required) plus a recommendedNext UX hint. Used by the
+     * SnippetPicker to decide whether to render an "Open access" banner
+     * vs gate the snippet behind the request-access flow.
+     */
+    situation: (
+      productOrgId: string,
+      productId: string,
+      portId: string,
+    ): Promise<PortSituationResponse> =>
+      api.get<PortSituationResponse>(
+        `/organizations/${productOrgId}/products/${productId}/ports/${portId}/situation`,
       ),
   },
 };

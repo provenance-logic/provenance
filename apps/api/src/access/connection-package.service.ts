@@ -126,8 +126,15 @@ export class ConnectionPackageService {
 
     const isOwner = product.ownerPrincipalId === requesterPrincipalId;
     const hasGrant = isOwner || (await this.hasActiveGrant(productOrgId, productId, requesterPrincipalId));
+    // F10.15 layer 1 (Phase 5.9): a Situation-A-eligible port is producer-
+    // declared open to all source-system principals. In that case the
+    // connection details aren't sensitive in the F10.6 sense — the
+    // consumer connects with their own existing source-system credentials
+    // — so the snippet renders without a grant. The grant-or-owner check
+    // still applies for default Situation-B ports.
+    const isOpenAccess = port.situationAEligibility === true;
 
-    if (!hasGrant) {
+    if (!hasGrant && !isOpenAccess) {
       return {
         destination,
         language: snippetLanguageFor(destination),

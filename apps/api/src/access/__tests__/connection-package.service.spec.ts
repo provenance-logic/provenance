@@ -612,4 +612,36 @@ describe('ConnectionPackageService', () => {
       expect(result?.callerHasActiveGrant).toBe(false);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // F10.15 → F10.6 interaction: a Situation-A-eligible port bypasses the
+  // grant requirement for snippet generation (the producer has declared
+  // it open to all source-system principals, so the connection details
+  // aren't sensitive in the F10.6 sense — consumer connects with their
+  // own credentials anyway).
+  // ---------------------------------------------------------------------------
+
+  describe('generateSnippetForPort — Situation A bypasses grant requirement', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    it('renders the snippet for a Situation-A port even when the caller has no grant', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: true }));
+      grantRepo.findOne.mockResolvedValue(null); // no grant
+
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('psycopg2');
+    });
+
+    it('still gates a Situation-B port behind a grant (regression check)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ situationAEligibility: false }));
+      grantRepo.findOne.mockResolvedValue(null);
+
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('request_access_required');
+    });
+  });
 });
