@@ -38,6 +38,7 @@ import { NotificationEntity } from '../notifications/entities/notification.entit
 import { NotificationDeliveryOutboxEntity } from '../notifications/entities/notification-delivery-outbox.entity.js';
 import { NotificationPreferenceEntity } from '../notifications/entities/notification-preference.entity.js';
 import { PrincipalNotificationSettingsEntity } from '../notifications/entities/principal-notification-settings.entity.js';
+import { PrincipalPreferencesEntity } from '../organizations/entities/principal-preferences.entity.js';
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { PrincipalNotificationSettingsEntity } from '../notifications/entities/p
             NotificationDeliveryOutboxEntity,
             NotificationPreferenceEntity,
             PrincipalNotificationSettingsEntity,
+            PrincipalPreferencesEntity,
           ],
           // Migrations are managed by Flyway — TypeORM never runs them.
           synchronize: false,

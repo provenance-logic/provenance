@@ -232,18 +232,18 @@ describe('MarketplaceService', () => {
       expect(dpRepo.createQueryBuilder).not.toHaveBeenCalled();
     });
 
-    it('passes q as multi_match with the same field boosts as the legacy search', async () => {
-      await service.listAllProducts({ q: 'campaign' });
+    it('passes q as multi_match bool_prefix so type-as-you-search matches partial typing', async () => {
+      await service.listAllProducts({ q: 'cam' });
 
       const call = osClient.search.mock.calls[0][0] as {
-        body: { query: { bool: { must: Array<{ multi_match: { query: string; fields: string[]; fuzziness: string } }> } } };
+        body: { query: { bool: { must: Array<{ multi_match: { query: string; fields: string[]; type: string } }> } } };
       };
       const must = call.body.query.bool.must;
       expect(must[0]).toMatchObject({
         multi_match: expect.objectContaining({
-          query:     'campaign',
-          fields:    expect.arrayContaining(['name^3', 'description', 'tags^2']),
-          fuzziness: 'AUTO',
+          query:  'cam',
+          fields: expect.arrayContaining(['name^3', 'description', 'tags^2']),
+          type:   'bool_prefix',
         }),
       });
     });
