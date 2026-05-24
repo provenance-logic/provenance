@@ -112,6 +112,35 @@ export const marketplaceApi = {
       api.get<PortSituationResponse>(
         `/organizations/${productOrgId}/products/${productId}/ports/${portId}/situation`,
       ),
+
+    /**
+     * F10.14 / Phase 5.11 — source-side view DDL for a port.
+     *
+     * Producer-facing: the endpoint is owner-only (NOT marked
+     * @AllowCrossOrgRead at the controller; the JwtAuthGuard same-org
+     * check fires and the controller adds an additional ownership
+     * check). Lives on the marketplace-style port path because the URL
+     * shape `/organizations/:orgId/products/:productId/ports/:portId/...`
+     * is the established sibling shape for snippet + situation, even
+     * though this is a producer surface.
+     *
+     * Returns `{available, ddl, reason?}` — `ddl` is null when the
+     * port doesn't qualify (non-sql_jdbc, missing catalog_name, or
+     * missing source_object_path); `reason` is the typed enum
+     * `unsupported_interface_type | missing_catalog_name | missing_source_object_path`.
+     */
+    sourceViewDdl: (
+      productOrgId: string,
+      productId: string,
+      portId: string,
+    ): Promise<{
+      available: boolean;
+      ddl: string | null;
+      reason?: string;
+    }> =>
+      api.get<{ available: boolean; ddl: string | null; reason?: string }>(
+        `/organizations/${productOrgId}/products/${productId}/ports/${portId}/source-view-ddl`,
+      ),
   },
 };
 
