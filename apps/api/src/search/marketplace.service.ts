@@ -566,11 +566,19 @@ export class MarketplaceService {
             bool: {
               must: [
                 {
+                  // B-072 — `bool_prefix` is the right query type for a
+                  // type-as-you-search box. The LAST term in the query is
+                  // treated as a prefix; earlier terms are required full
+                  // matches. So "c" matches "Campaign…", "ca" matches "Ca…",
+                  // and "camp att" matches "Campaign Attribution" (full match
+                  // on "camp" + prefix match on "att"). `best_fields` was
+                  // wrong for this UX — it requires a whole-token fuzzy
+                  // match, so partial typing returned no results until the
+                  // entire word was typed.
                   multi_match: {
                     query: q,
                     fields: ['name^3', 'description', 'tags^2'],
-                    type: 'best_fields',
-                    fuzziness: 'AUTO',
+                    type: 'bool_prefix',
                   },
                 },
               ],
