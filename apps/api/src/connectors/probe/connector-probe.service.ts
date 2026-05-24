@@ -887,6 +887,140 @@ export class ConnectorProbeService {
     return { edges, tablesWithErrors };
   }
 
+  /**
+   * Walks a Snowflake account via the SQL REST API (SHOW DATABASES / SHOW TABLES
+   * / SHOW VIEWS) and returns every table + view the connector's principal can see.
+   * Used by ConnectorsService's discovery crawl to pre-populate source registrations.
+   *
+   * - `databaseScope` (optional) limits the walk to a named subset of databases.
+   *   When absent or empty, walks every database the principal can list.
+   * - System / sample databases SNOWFLAKE and SNOWFLAKE_SAMPLE_DATA are always
+   *   skipped (case-insensitive) — they are Snowflake-managed and not user data.
+   * - INFORMATION_SCHEMA is skipped per-database — metadata-about-metadata, not
+   *   user-facing tables.
+   * - Column names are resolved from `resultSetMetaData.rowType` by name (NOT by
+   *   fixed index) because SHOW TABLES and SHOW VIEWS have different column orders
+   *   and Snowflake adds columns over time. Use `sfShowRowsToObjects` helper.
+   * - Pagination: SHOW commands return up to ~10k rows by default. For the first
+   *   cut, no cursor pagination is implemented — a TODO is noted.
+   *   TODO: implement `LIMIT ... FROM '<last>'` cursor pagination for accounts
+   *   with >10k tables or views in a single database.
+   * - Network errors and HTTP / SQL failures bubble; the orchestration layer in
+   *   ConnectorsService records them on the discovery_crawl_events row.
+   */
+  async walkSnowflakeAccount(
+    connector: ConnectorEntity,
+    databaseScope?: string[],
+  ): Promise<WorkspaceWalkResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error(
+        'Snowflake connector requires connection_config.host (the full account hostname)',
+      );
+    }
+
+    const creds = await this.resolveSnowflakeCreds(connector);
+    if (!creds) {
+      throw new Error(
+        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
+      );
+    }
+
+    // Generate JWT once and reuse for all SHOW calls in this walk.
+    const jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+
+    const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
+    const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
+    const opts = { warehouse, role };
+
+    // ── 1. Resolve the list of databases to walk ────────────────────────────
+    // System / sample databases carry no user-owned data products. SNOWFLAKE
+    // (ACCOUNT_USAGE / system) and SNOWFLAKE_SAMPLE_DATA (shared sample) are
+    // named; USER$<login> are per-user scratch databases Snowflake surfaces in
+    // SHOW DATABASES on some account types (seen live on the trial account) —
+    // skip them by prefix.
+    const SYSTEM_DATABASES = new Set(['SNOWFLAKE', 'SNOWFLAKE_SAMPLE_DATA']);
+    const isSystemDatabase = (name: string): boolean => {
+      const upper = name.toUpperCase();
+      return SYSTEM_DATABASES.has(upper) || upper.startsWith('USER$');
+    };
+
+    let databases: string[];
+    if (databaseScope && databaseScope.length > 0) {
+      // Scope provided — use it directly, but still skip system databases.
+      databases = databaseScope.filter((db) => !isSystemDatabase(db));
+    } else {
+      // No scope — list all databases the principal can see.
+      const showDbResult = await submitSnowflakeStatement(
+        host, jwt, 'SHOW DATABASES', opts,
+      );
+      const dbRows = sfShowRowsToObjects(showDbResult);
+      databases = dbRows
+        .map((row) => String(row['name'] ?? ''))
+        .filter((name) => name.length > 0 && !isSystemDatabase(name));
+    }
+
+    // ── 2. Walk each database ───────────────────────────────────────────────
+    const tables: DiscoveredTable[] = [];
+    const seenSchemas = new Set<string>();
+
+    for (const db of databases) {
+      // SHOW TABLES IN DATABASE returns a flat list across all schemas.
+      // Each row has name, database_name, schema_name, kind.
+      const tableResult = await submitSnowflakeStatement(
+        host, jwt, `SHOW TABLES IN DATABASE "${db}"`, opts,
+      );
+      const tableRows = sfShowRowsToObjects(tableResult);
+
+      for (const row of tableRows) {
+        const schemaName = String(row['schema_name'] ?? '');
+        if (schemaName.toUpperCase() === 'INFORMATION_SCHEMA') continue;
+
+        const name = String(row['name'] ?? '');
+        const databaseName = String(row['database_name'] ?? db);
+        if (!name) continue;
+
+        seenSchemas.add(`${databaseName}.${schemaName}`);
+        tables.push({
+          catalog: databaseName,
+          schema: schemaName,
+          name,
+          fullName: `${databaseName}.${schemaName}.${name}`,
+        });
+      }
+
+      // SHOW VIEWS IN DATABASE — NOTE: different column ORDER than SHOW TABLES;
+      // that's exactly why we resolve indices by column name, not hardcoded index.
+      const viewResult = await submitSnowflakeStatement(
+        host, jwt, `SHOW VIEWS IN DATABASE "${db}"`, opts,
+      );
+      const viewRows = sfShowRowsToObjects(viewResult);
+
+      for (const row of viewRows) {
+        const schemaName = String(row['schema_name'] ?? '');
+        if (schemaName.toUpperCase() === 'INFORMATION_SCHEMA') continue;
+
+        const name = String(row['name'] ?? '');
+        const databaseName = String(row['database_name'] ?? db);
+        if (!name) continue;
+
+        seenSchemas.add(`${databaseName}.${schemaName}`);
+        tables.push({
+          catalog: databaseName,
+          schema: schemaName,
+          name,
+          fullName: `${databaseName}.${schemaName}.${name}`,
+        });
+      }
+    }
+
+    return {
+      catalogs: databases,
+      schemasWalked: seenSchemas.size,
+      tables,
+    };
+  }
+
   private async uc_paged<T>(
     host: string,
     auth: Record<string, string>,
@@ -1082,6 +1216,36 @@ export async function submitSnowflakeStatement(
  */
 export function parseSnowflakeRows(result: SnowflakeStatementResult): Array<Array<string | null>> {
   return Array.isArray(result?.data) ? result.data : [];
+}
+
+/**
+ * Converts a Snowflake SHOW command result into an array of plain objects
+ * keyed by column name.
+ *
+ * SHOW commands (DATABASES, TABLES, VIEWS, …) return rows whose column order
+ * is not guaranteed to be stable across Snowflake versions — and SHOW TABLES
+ * and SHOW VIEWS actually have different column orders today. Using fixed
+ * numeric indices would produce silently wrong data when Snowflake adds a
+ * column or reorders them. This helper resolves each value by looking up the
+ * column name in `resultSetMetaData.rowType`, making the caller
+ * order-independent.
+ *
+ * @param result  Parsed Snowflake SQL REST API response.
+ * @returns       Array of `{ columnName: value }` objects — one per row.
+ */
+export function sfShowRowsToObjects(
+  result: SnowflakeStatementResult,
+): Array<Record<string, string | null>> {
+  const rowType = result?.resultSetMetaData?.rowType ?? [];
+  const columnNames = rowType.map((col) => col.name);
+  const rows = parseSnowflakeRows(result);
+  return rows.map((row) => {
+    const obj: Record<string, string | null> = {};
+    for (let i = 0; i < columnNames.length; i++) {
+      obj[columnNames[i]] = row[i] ?? null;
+    }
+    return obj;
+  });
 }
 
 function toBase64Url(buf: Buffer): string {
