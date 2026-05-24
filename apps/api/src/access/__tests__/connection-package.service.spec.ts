@@ -928,6 +928,169 @@ describe('ConnectionPackageService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // B5 / F10.16 — Snowflake Secure Data Sharing (snowflake_share destination)
+  // ---------------------------------------------------------------------------
+
+  describe('generateSnippetForPort — snowflake_share destination', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    function activeGrant() {
+      return { revokedAt: null, expiresAt: null, grantedAt: new Date() };
+    }
+
+    function snowflakePort(extras: Partial<Record<string, unknown>> = {}) {
+      return makePort({
+        connectionDetails: encryptedEnvelope({
+          kind: 'sql_jdbc',
+          host: 'uj37996.us-east-2.aws.snowflakecomputing.com',
+          port: 443,
+          database: 'PROD',
+          schema: 'SALES',
+          authMethod: 'username_password',
+          sslMode: 'require',
+          warehouse: 'COMPUTE_WH',
+          role: 'ANALYST',
+          ...extras,
+        }) as unknown as Record<string, unknown>,
+      });
+    }
+
+    it('returns a text snippet with CREATE SHARE and ALTER SHARE for a Snowflake port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('text');
+      expect(result?.code).toContain('CREATE SHARE IF NOT EXISTS');
+      expect(result?.code).toContain('ALTER SHARE');
+      expect(result?.code).toContain('ADD ACCOUNTS');
+    });
+
+    it('uses the BARE account locator (not the region-qualified form) for SHARE commands', async () => {
+      // SHARE commands require the bare locator (UJ37996); the region-qualified
+      // form (uj37996.us-east-2.aws) is a SQL syntax error — verified live.
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.code).toContain('FROM SHARE UJ37996.');
+      expect(result?.code).not.toContain('UJ37996.US-EAST-2.AWS');
+      expect(result?.code).not.toContain('snowflakecomputing.com');
+    });
+
+    it('derives share name as PROVENANCE_<SLUG_UPPER>_SHARE', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      // slug is 'revenue-daily' → REVENUE_DAILY
+      expect(result?.code).toContain('PROVENANCE_REVENUE_DAILY_SHARE');
+    });
+
+    it('derives mount name as <SLUG_UPPER>_FROM_PROVENANCE', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.code).toContain('REVENUE_DAILY_FROM_PROVENANCE');
+      expect(result?.code).toContain('CREATE DATABASE REVENUE_DAILY_FROM_PROVENANCE FROM SHARE');
+    });
+
+    it('uses the consumer account locator in ALTER SHARE when provided', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1', 'eo76245',
+      );
+      // Consumer supplies their BARE account locator; it's uppercased.
+      expect(result?.code).toContain('ADD ACCOUNTS = EO76245;');
+    });
+
+    it('emits a placeholder when consumer account locator is absent', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.code).toContain('ADD ACCOUNTS = <YOUR_SNOWFLAKE_ACCOUNT_LOCATOR>');
+    });
+
+    it('includes the provider-locator.share-name in the consumer CREATE DATABASE statement', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.code).toContain('FROM SHARE UJ37996.PROVENANCE_REVENUE_DAILY_SHARE');
+    });
+
+    it('includes the same-region requirement note', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(snowflakePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.code).toContain('same Snowflake REGION');
+    });
+
+    it('returns snowflake_port_required for a non-Snowflake sql_jdbc port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort()); // postgres host
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('snowflake_port_required');
+      expect(result?.code).toBeNull();
+    });
+
+    it('returns snowflake_port_required for a REST API port', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        interfaceType: 'rest_api',
+        connectionDetails: encryptedEnvelope({
+          kind: 'rest_api',
+          baseUrl: 'https://api.example.com',
+          authMethod: 'bearer_token',
+          bearerToken: 'tok',
+        }) as unknown as Record<string, unknown>,
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'snowflake_share', 'owner-1',
+      );
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('snowflake_port_required');
+    });
+
+    it('existing destinations are unchanged (regression check: dbt still works)', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort());
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort(
+        'org-1', 'product-1', 'port-1', 'dbt', 'owner-1',
+      );
+      expect(result?.available).toBe(true);
+      expect(result?.language).toBe('yaml');
+      expect(result?.code).toContain('provenance_revenue_daily:');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // F10.14 / Phase 5.11 — source-side view DDL
   // ---------------------------------------------------------------------------
 

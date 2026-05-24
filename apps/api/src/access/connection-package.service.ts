@@ -39,7 +39,8 @@ export type SnippetDestination =
   | 'sql_client'
   | 'jdbc'
   | 'power_bi'
-  | 'tableau';
+  | 'tableau'
+  | 'snowflake_share';
 
 export const SUPPORTED_SNIPPET_DESTINATIONS: SnippetDestination[] = [
   'python',
@@ -48,6 +49,7 @@ export const SUPPORTED_SNIPPET_DESTINATIONS: SnippetDestination[] = [
   'jdbc',
   'power_bi',
   'tableau',
+  'snowflake_share',
 ];
 
 export type SnippetLanguage = 'python' | 'yaml' | 'text' | 'json' | 'xml';
@@ -62,7 +64,8 @@ export interface PortSnippetResponse {
     | 'request_access_required'
     | 'destination_not_yet_supported'
     | 'port_has_no_connection_details'
-    | 'unsupported_interface_type';
+    | 'unsupported_interface_type'
+    | 'snowflake_port_required';
 }
 
 interface PortArtifacts {
@@ -104,6 +107,8 @@ export class ConnectionPackageService {
     portId: string,
     destination: SnippetDestination,
     requesterPrincipalId: string,
+    /** Optional: consumer's Snowflake account locator for the `snowflake_share` destination. */
+    consumerAccountLocator?: string,
   ): Promise<PortSnippetResponse | null> {
     const product = await this.productRepo.findOne({
       where: { id: productId, orgId: productOrgId },
@@ -175,11 +180,26 @@ export class ConnectionPackageService {
       };
     }
 
+    // F5.14 / B5 — snowflake_share is Snowflake-only. Reject non-Snowflake
+    // ports before the generic null-check so the caller gets a precise reason.
+    if (
+      destination === 'snowflake_share' &&
+      (details.kind !== 'sql_jdbc' || !details.host.includes('snowflakecomputing.com'))
+    ) {
+      return {
+        destination,
+        language: 'text',
+        code: null,
+        available: false,
+        reason: 'snowflake_port_required',
+      };
+    }
+
     // F10.14 / Phase 5.11 — resolve the catalog reference per the
     // precedence rule: explicit catalogName > F2.8a source_object_path >
     // null (snippet builders fall back to a placeholder for sql_jdbc).
     const catalogRef = port.catalogName ?? port.sourceObjectPath ?? null;
-    const code = buildSnippet(details, destination, product.slug, catalogRef);
+    const code = buildSnippet(details, destination, product.slug, catalogRef, consumerAccountLocator);
     if (code === null) {
       return {
         destination,
@@ -783,11 +803,12 @@ function quote(s: string): string {
 
 function snippetLanguageFor(destination: SnippetDestination): SnippetLanguage {
   switch (destination) {
-    case 'python':   return 'python';
-    case 'dbt':      return 'yaml';
-    case 'power_bi': return 'json';
-    case 'tableau':  return 'xml';
-    default:         return 'text';
+    case 'python':           return 'python';
+    case 'dbt':              return 'yaml';
+    case 'power_bi':         return 'json';
+    case 'tableau':          return 'xml';
+    case 'snowflake_share':  return 'text';
+    default:                 return 'text';
   }
 }
 
@@ -796,6 +817,7 @@ function buildSnippet(
   destination: SnippetDestination,
   productSlug: string,
   catalogRef: string | null,
+  consumerAccountLocator?: string,
 ): string | null {
   if (destination === 'python') {
     switch (details.kind) {
@@ -821,6 +843,15 @@ function buildSnippet(
   }
   if (destination === 'tableau') {
     if (details.kind === 'sql_jdbc') return buildSqlJdbcTableauTds(details, productSlug);
+    return null;
+  }
+  if (destination === 'snowflake_share') {
+    // Non-Snowflake and non-sql_jdbc cases are pre-rejected by the service
+    // layer (snowflake_port_required reason). This path is only reached for
+    // Snowflake-backed sql_jdbc ports.
+    if (details.kind === 'sql_jdbc') {
+      return buildSnowflakeShareSnippet(details, productSlug, catalogRef, consumerAccountLocator);
+    }
     return null;
   }
   return null;
@@ -1055,6 +1086,135 @@ function xmlEscape(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/'/g, '&apos;')
     .replace(/"/g, '&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// B5 / F10.16 — Snowflake Secure Data Sharing snippet (cross-org)
+//
+// Configuration brokerage per ADR-011: the platform GENERATES instructions,
+// never executes the share. Neither account's credentials touch Provenance.
+//
+// Verified SQL sequences (producer UJ37996 → consumer EO76245):
+//   - Plain ADD ACCOUNTS works for same-region Enterprise; no SHARE_RESTRICTIONS needed.
+//   - Classic shares do NOT cross regions — both accounts must be in the same
+//     Snowflake region AND cloud. Cross-region needs listings or replication.
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates the two-block Snowflake Secure Data Sharing instruction set:
+ *   Block 1 — producer runs in their Snowflake to create and expose the share.
+ *   Block 2 — consumer runs in their Snowflake to mount the share as a database.
+ *
+ * @param d - SQL/JDBC connection details for the port (must be Snowflake-backed).
+ * @param productSlug - Used to derive the SHARE_NAME and MOUNT_NAME.
+ * @param catalogRef - Resolved catalog/object reference (catalogName > sourceObjectPath > null).
+ * @param consumerAccountLocator - Optional Snowflake account locator for the consumer.
+ *   If absent, a `<YOUR_SNOWFLAKE_ACCOUNT_LOCATOR>` placeholder is emitted.
+ */
+function buildSnowflakeShareSnippet(
+  d: SqlJdbcConnectionDetails,
+  productSlug: string,
+  catalogRef: string | null,
+  consumerAccountLocator?: string,
+): string {
+  // Snowflake SHARE commands (ALTER SHARE ... ADD ACCOUNTS, CREATE DATABASE
+  // ... FROM SHARE) require the BARE account locator (e.g. UJ37996) — NOT the
+  // region-qualified account identifier (uj37996.us-east-2.aws) that driver
+  // connections use. The hyphens in a region segment break SQL parsing
+  // (verified live: "FROM SHARE UJ37996.US-EAST-2.AWS.<share>" → syntax error).
+  // The locator is the first label of the account host.
+  const providerLocator = d.host.split('.')[0].toUpperCase();
+
+  // Derive share / mount names from the product slug.
+  const slugUpper = productSlug.replace(/-/g, '_').toUpperCase();
+  const shareName = `PROVENANCE_${slugUpper}_SHARE`;
+  const mountName = `${slugUpper}_FROM_PROVENANCE`;
+
+  // Object path: use catalogRef when available, otherwise fall back to the
+  // connection details' database + schema + a placeholder table name.
+  const rawObjectPath = catalogRef
+    ? catalogRef.toUpperCase()
+    : `${d.database.toUpperCase()}.${d.schema.toUpperCase()}.<OBJECT>`;
+
+  // Decompose the path into three parts: DB, SCHEMA, OBJECT_NAME.
+  // A fully-qualified three-part path is preferred (DB.SCHEMA.OBJECT).
+  // Shorter paths are padded with the connection details' database/schema.
+  const parts = rawObjectPath.split('.');
+  let grantDb: string;
+  let grantSchema: string;
+  let grantObjectName: string;
+  if (parts.length >= 3) {
+    grantDb = parts[0];
+    grantSchema = parts[1];
+    grantObjectName = parts.slice(2).join('.');
+  } else if (parts.length === 2) {
+    grantDb = d.database.toUpperCase();
+    grantSchema = parts[0];
+    grantObjectName = parts[1];
+  } else {
+    grantDb = d.database.toUpperCase();
+    grantSchema = d.schema.toUpperCase();
+    grantObjectName = parts[0];
+  }
+
+  // Fully-qualified object reference used in GRANT and SELECT statements.
+  const objectRef = `${grantDb}.${grantSchema}.${grantObjectName}`;
+
+  const consumerLocator = consumerAccountLocator
+    ? consumerAccountLocator.toUpperCase()
+    : '<YOUR_SNOWFLAKE_ACCOUNT_LOCATOR>';
+
+  return [
+    `-- ============================================================`,
+    `-- Provenance: Snowflake Secure Data Sharing (cross-org)`,
+    `-- F10.16 / B5 — generated ${new Date().toISOString().split('T')[0]}`,
+    `-- ============================================================`,
+    `--`,
+    `-- IMPORTANT: Both accounts must be in the same Snowflake REGION`,
+    `-- and CLOUD (e.g. both on AWS us-east-1). Classic shares do NOT`,
+    `-- cross regions. For cross-region access, use Snowflake Listings`,
+    `-- or account replication instead.`,
+    `--`,
+    `-- The platform never runs either block — configuration brokerage`,
+    `-- per ADR-011. You paste and run these in your own Snowflake.`,
+    `--`,
+    `-- Provider account locator (derived from port host): ${providerLocator}`,
+    `-- Share name:  ${shareName}`,
+    `-- Mount name:  ${mountName}`,
+    `-- ============================================================`,
+    ``,
+    `-- ============================================================`,
+    `-- BLOCK 1: Producer runs this in THEIR Snowflake`,
+    `-- (the account that owns the data: ${providerLocator})`,
+    `-- ============================================================`,
+    ``,
+    `CREATE SHARE IF NOT EXISTS ${shareName};`,
+    ``,
+    `GRANT USAGE ON DATABASE ${grantDb} TO SHARE ${shareName};`,
+    `GRANT USAGE ON SCHEMA ${grantDb}.${grantSchema} TO SHARE ${shareName};`,
+    ``,
+    `-- If the object is a VIEW it must be a SECURE VIEW.`,
+    `-- Use "ON VIEW" instead of "ON TABLE" for views:`,
+    `--   GRANT SELECT ON VIEW ${objectRef} TO SHARE ${shareName};`,
+    `GRANT SELECT ON TABLE ${objectRef} TO SHARE ${shareName};`,
+    ``,
+    `-- Add the consumer's Snowflake account to the share. Use their BARE`,
+    `-- account locator (what SELECT CURRENT_ACCOUNT() returns, e.g. AB12345),`,
+    `-- not the region-qualified form. Plain ADD ACCOUNTS works for same-region`,
+    `-- Enterprise (no SHARE_RESTRICTIONS needed).`,
+    `ALTER SHARE ${shareName} ADD ACCOUNTS = ${consumerLocator};`,
+    ``,
+    `-- ============================================================`,
+    `-- BLOCK 2: Consumer runs this in THEIR Snowflake`,
+    `-- (the account that will mount the share: ${consumerLocator})`,
+    `-- ============================================================`,
+    ``,
+    `-- Mount the share as a local database.`,
+    `CREATE DATABASE ${mountName} FROM SHARE ${providerLocator}.${shareName};`,
+    ``,
+    `-- Verify the mount and preview data.`,
+    `SELECT * FROM ${mountName}.${grantSchema}.${grantObjectName} LIMIT 10;`,
+  ].join('\n');
 }
 
 const SEMANTIC_PYTHON_SNIPPET = [

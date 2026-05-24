@@ -41,6 +41,7 @@ export class ConnectionPackageController {
     @Param('productId') productId: string,
     @Param('portId') portId: string,
     @Query('destination') destinationParam: string,
+    @Query('consumerAccountLocator') consumerAccountLocatorParam: string | undefined,
     @ReqContext() ctx: RequestContext,
   ): Promise<PortSnippetResponse> {
     if (!destinationParam) {
@@ -58,6 +59,7 @@ export class ConnectionPackageController {
       portId,
       destinationParam,
       ctx.principalId,
+      consumerAccountLocatorParam || undefined,
     );
     if (!result) {
       throw new NotFoundException('Product or port not found');
