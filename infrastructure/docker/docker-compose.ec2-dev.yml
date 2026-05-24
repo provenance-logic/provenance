@@ -176,6 +176,14 @@ services:
       KC_DB_USERNAME: provenance
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-provenance_dev_password}
       KC_HOSTNAME: ${KC_HOSTNAME:-auth.provenancelogic.com}
+      # Caddy terminates TLS at 443; with KC_PROXY=edge Keycloak derives the
+      # public port from X-Forwarded-Proto + standard scheme port. The base
+      # docker-compose.yml defaults this to 8080 (local-no-proxy dev), which
+      # makes Keycloak advertise `auth.provenancelogic.com:8080` in OIDC
+      # discovery — browsers then try port 8080 over HTTPS and fail with
+      # ERR_SSL_PROTOCOL_ERROR. `-1` is Keycloak 24's "no explicit port"
+      # sentinel — required whenever a proxy terminates TLS.
+      KC_HOSTNAME_PORT: "-1"
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
