@@ -922,6 +922,43 @@ Guided multi-step onboarding completable in a single session with progress saved
 **F7.47 - Usage and Health Monitoring**
 Control plane availability and latency, lineage emission throughput, federated query layer performance, connector health distribution, and usage metrics. Does not expose organization data.
 
+### Personal Account Surface (All Personas)
+
+> Industry-standard expectation: every authenticated user needs a self-service surface where they can see who they are signed in as and manage credentials. Its absence is a "this product isn't finished" signal on first login, and it removes a key debugging affordance — a user cannot self-verify which principal identity they hold without opening browser devtools.
+
+**F7.48 - Provenance Account Surface** *(new v1.6, OSR blocker)*
+
+The platform shall provide every authenticated user with a self-service account surface accessible from a top-right avatar dropdown in the global navigation shell.
+
+**Avatar surface (header):**
+- Top-right avatar element rendering the user's initials (derived from `firstName + lastName`, fallback to first two characters of email).
+- Click opens a dropdown containing two entries: "Account" (routes to `/account`) and "Sign out" (performs Keycloak logout and returns the user to the login screen).
+- Clicking outside the dropdown closes it. Keyboard escape closes it.
+
+**Account page (`/account`):**
+- Display name (Keycloak `firstName + lastName`; fallback to email if name fields empty).
+- Email.
+- Org name and slug for the current org.
+- Roles held by the principal in the current org (e.g. `domain_owner`, `consumer`, `governance_member`).
+- Principal ID, rendered small and grey, click-to-copy — for support escalation and self-debugging of ownership / access state.
+- A "Change password" action that deep-links to the Keycloak account console with `kc_action=UPDATE_PASSWORD` in the URL. The user is returned to Provenance on success.
+- A "Sign out" action (duplicated here for users who navigate directly to `/account` without using the avatar dropdown).
+- No edit affordances beyond the two actions named above in this requirement scope.
+
+**Explicitly out of scope for F7.48** (tracked separately for post-OSR increments):
+- Editing display name or email in-app (requires the Keycloak GET-merge-PUT pattern documented in CLAUDE.md plus email-as-username handling).
+- Profile photo / avatar image upload.
+- Notification preferences UI (separate F-req; `identity.principal_settings` already carries the data).
+- Multi-org membership switcher (deferred until multi-org becomes a real product capability — today every JWT carries exactly one `provenance_org_id` claim).
+- Per-user aggregates: data products owned, access grants held, agents registered, audit history. Those are richer dashboards, deliberately separate from a basic account page.
+
+**Acceptance:**
+1. A signed-in user can reach `/account` in two clicks from any page (avatar → Account).
+2. The Account page renders all six fields above and the two actions; no other edit controls appear.
+3. Clicking "Change password" round-trips through the Keycloak hosted form and returns the user signed-in to Provenance.
+4. A user can read and copy their principal ID without opening browser devtools.
+5. Sign-out from either surface ends the Keycloak session and returns the user to the unauthenticated state.
+
 ### Non-Functional Requirements
 
 | ID | Requirement |
