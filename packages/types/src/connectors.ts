@@ -155,3 +155,37 @@ export interface SchemaSnapshot {
 }
 
 export type SchemaSnapshotList = PaginatedList<SchemaSnapshot>;
+
+// ---------------------------------------------------------------------------
+// Discovery Crawl Events (append-only)
+// ---------------------------------------------------------------------------
+
+export type DiscoveryCrawlStatus = 'running' | 'succeeded' | 'partial' | 'failed';
+
+/**
+ * A single crawl invocation record returned by GET .../connectors/:id/crawl-events.
+ *
+ * Note: the endpoint returns DiscoveryCrawlEventRecord[] (an array, not a
+ * PaginatedList) because crawl history is short and always fully fetched.
+ * The `metadata` field carries connector-type-specific counters such as
+ * `lineageEdgesEmitted` for Databricks and Snowflake crawls.
+ */
+export interface DiscoveryCrawlEventRecord {
+  id: Uuid;
+  orgId: Uuid;
+  connectorId: Uuid;
+  triggeredBy: Uuid | null;
+  startedAt: IsoTimestamp;
+  completedAt: IsoTimestamp | null;
+  status: DiscoveryCrawlStatus;
+  catalogsWalked: number;
+  schemasWalked: number;
+  tablesFound: number;
+  sourcesCreated: number;
+  sourcesSkipped: number;
+  snapshotsCaptured: number;
+  snapshotsFailed: number;
+  errorMessage: string | null;
+  /** Connector-type-specific counters. Snowflake + Databricks set lineageEdgesEmitted. */
+  metadata: Record<string, unknown>;
+}

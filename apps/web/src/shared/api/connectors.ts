@@ -2,6 +2,7 @@ import { api } from './client.js';
 import type {
   Connector,
   ConnectorList,
+  DiscoveryCrawlEventRecord,
   RegisterConnectorRequest,
   SourceRegistrationList,
   UpdateConnectorRequest,
@@ -42,5 +43,25 @@ export const connectorsApi = {
   listSources: (orgId: string, connectorId: string, limit = 100, offset = 0) =>
     api.get<SourceRegistrationList>(
       `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/sources?limit=${limit}&offset=${offset}`,
+    ),
+
+  /**
+   * Triggers a discovery crawl for the given connector. Returns the newly
+   * created crawl-event record (the crawl runs synchronously in the API
+   * request — future Temporal integration will make this async).
+   */
+  crawl: (orgId: string, connectorId: string) =>
+    api.post<DiscoveryCrawlEventRecord>(
+      `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/crawl`,
+      {},
+    ),
+
+  /**
+   * Returns the crawl history for a connector, newest first.
+   * The endpoint returns DiscoveryCrawlEventRecord[] (not a PaginatedList).
+   */
+  listCrawlEvents: (orgId: string, connectorId: string, limit = 10) =>
+    api.get<DiscoveryCrawlEventRecord[]>(
+      `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/crawl-events?limit=${limit}`,
     ),
 };
