@@ -16,3 +16,4 @@ export * from './trust-score.js';
 export * from './slo.js';
 export * from './invitations.js';
 export * from './notifications.js';
+export * from './me.js';
