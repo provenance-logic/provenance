@@ -189,6 +189,38 @@ describe('SourceBindingPicker', () => {
     expect(await screen.findByText(/could not load connectors: boom/i)).toBeInTheDocument();
   });
 
+  it('is collapsed by default but expanded when defaultOpen is set (B-075 Tier A)', async () => {
+    (connectorsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [makeConnector()],
+      meta: { total: 1, limit: 100, offset: 0 },
+    });
+
+    const baseProps = {
+      orgId: ORG_ID,
+      selectedConnectorId: '',
+      sourceRegistrationId: '',
+      sourceObjectPath: '',
+      onConnectorChange: noop,
+      onSourceChange: noop,
+      onPathChange: noop,
+    };
+
+    const { rerender } = render(<SourceBindingPicker {...baseProps} />);
+    // jsdom keeps <details> children mounted regardless of open state, so the
+    // `open` attribute — not child visibility — is the signal under test.
+    const details = screen.getByText(/bind to a discovered source/i).closest('details');
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute('open');
+
+    rerender(<SourceBindingPicker {...baseProps} defaultOpen />);
+    expect(screen.getByText(/bind to a discovered source/i).closest('details')).toHaveAttribute('open');
+
+    // Let the mount fetch settle so its state update doesn't leak past the test.
+    await waitFor(() => {
+      expect(connectorsApi.list).toHaveBeenCalledWith(ORG_ID, 100, 0);
+    });
+  });
+
   it('shows the path field only once a source is selected, and forwards edits', async () => {
     (connectorsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [makeConnector()],

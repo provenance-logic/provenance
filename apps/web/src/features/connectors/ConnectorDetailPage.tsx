@@ -10,6 +10,7 @@ import type {
 import { useOrgId } from '../../shared/hooks/useOrgId.js';
 import { connectorsApi } from '../../shared/api/connectors.js';
 import { formatRelativeTime } from '../../shared/utils/format-time.js';
+import type { SourceBindingNavState } from '../../shared/navigation/source-binding-nav.js';
 
 // ---------------------------------------------------------------------------
 // Shared constants (mirrors ConnectorsPage — no cross-file import of impl)
@@ -147,6 +148,28 @@ export function ConnectorDetailPage() {
   const latestCrawl = crawlEvents && crawlEvents.length > 0 ? crawlEvents[0] : null;
   const priorCrawls = crawlEvents && crawlEvents.length > 1 ? crawlEvents.slice(1) : [];
 
+  // B-075 Tier A: deep-link into product authoring with this source carried
+  // through. The connector knows its own org + domain, so the product is
+  // created in the connector's domain; the source identity rides along in
+  // router state (see SourceBindingNavState) so the eventual port form can
+  // pre-bind to it. The path defaults to the source's sourceRef — the same
+  // default the SourceBindingPicker applies — and stays editable downstream.
+  function handleCreateProduct(source: SourceRegistration) {
+    // The render already early-returns on a null connector, but that narrowing
+    // doesn't flow into this closure — re-assert it here.
+    if (!connector) return;
+    const state: SourceBindingNavState = {
+      bindSource: {
+        connectorId: connector.id,
+        sourceRegistrationId: source.id,
+        sourceObjectPath: source.sourceRef,
+        sourceDisplayName: source.displayName,
+        connectorName: connector.name,
+      },
+    };
+    navigate(`/dashboard/${connector.orgId}/domains/${connector.domainId}/products/new`, { state });
+  }
+
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       {/* Back link */}
@@ -178,7 +201,7 @@ export function ConnectorDetailPage() {
       {/* Discovered sources table */}
       <DiscoveredSourcesTable
         sources={sources}
-        onCreateProduct={() => navigate('/dashboard')}
+        onCreateProduct={handleCreateProduct}
       />
     </div>
   );
@@ -463,7 +486,7 @@ export function DiscoveredSourcesTable({
   onCreateProduct,
 }: {
   sources: SourceRegistration[] | null;
-  onCreateProduct: (sourceId: string) => void;
+  onCreateProduct: (source: SourceRegistration) => void;
 }) {
   if (sources === null) {
     return (
@@ -523,17 +546,22 @@ export function DiscoveredSourcesTable({
                 </Td>
                 <Td>
                   {/*
-                   * TODO B-075 v2: deep-link into the port authoring form with
-                   * this source's binding pre-filled (sourceRegistrationId +
-                   * sourceObjectPath). For now we navigate to the publishing
-                   * entry point and let the user pick the domain/product
-                   * manually. The seam for v2 is here: pass sourceId through
-                   * router state or a search param that NewProductForm / the
-                   * port form can read.
+                   * B-075 Tier A: deep-links into product authoring carrying
+                   * this source's identity through router state (see
+                   * handleCreateProduct → SourceBindingNavState). NewProductForm
+                   * creates the product shell, then forwards the source into
+                   * ProductDetail where the port form opens with the binding
+                   * pre-selected.
+                   *
+                   * Surface 2 seam (still open): the producer must still pick a
+                   * port interface type and hand-author the Contract Schema JSON
+                   * even though the schema was already discovered. Auto-defaulting
+                   * the contract schema from the source snapshot is the publish-
+                   * gate work tracked under B-075 Surface 2, not this slice.
                    */}
                   <button
                     type="button"
-                    onClick={() => onCreateProduct(s.id)}
+                    onClick={() => onCreateProduct(s)}
                     className="text-xs text-brand-600 hover:text-brand-700 font-medium"
                   >
                     Create data product

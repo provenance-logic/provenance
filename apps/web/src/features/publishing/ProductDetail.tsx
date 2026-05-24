@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import { productsApi } from '../../shared/api/products.js';
 import { organizationsApi } from '../../shared/api/organizations.js';
 import { accessApi } from '../../shared/api/access.js';
@@ -29,6 +29,7 @@ import type {
   Connector,
   SourceRegistration,
 } from '@provenance/types';
+import type { SourceBindingNavState } from '../../shared/navigation/source-binding-nav.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -112,7 +113,14 @@ interface ChecklistItem {
 export function ProductDetail() {
   const { orgId, domainId, productId } =
     useParams<{ orgId: string; domainId: string; productId: string }>();
+  const location = useLocation();
   const { principalId } = useAuth();
+
+  // B-075 Tier A: when the producer arrived here straight from "Create data
+  // product" on a connector's discovered source, the source identity rides in
+  // router state. We hand it to PortSection so the Add-port form opens with the
+  // binding pre-selected.
+  const bindSource = (location.state as SourceBindingNavState | null)?.bindSource;
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [product, setProduct] = useState<DataProduct | null>(null);
@@ -295,6 +303,7 @@ export function ProductDetail() {
           orgId={orgId!}
           domainId={domainId!}
           isOwner={product.status === 'draft'}
+          initialBinding={bindSource}
           onPortAdded={() => void handlePortAdded()}
           onPortDeleted={() => void handlePortDeleted()}
         />
@@ -635,6 +644,8 @@ interface PortSectionProps {
   orgId: string;
   domainId: string;
   isOwner: boolean;
+  /** B-075 Tier A — when set, open the Add-port form pre-bound to this source. */
+  initialBinding?: SourceBindingNavState['bindSource'];
   onPortAdded: () => void;
   onPortDeleted: () => void;
 }
@@ -644,10 +655,14 @@ function PortSection({
   orgId,
   domainId,
   isOwner,
+  initialBinding,
   onPortAdded,
   onPortDeleted,
 }: PortSectionProps) {
-  const [showForm, setShowForm] = useState(false);
+  // B-075 Tier A: an incoming source binding auto-opens the form (owners only —
+  // a non-draft product can't add ports, and the binding journey only ever
+  // lands on a freshly-created draft).
+  const [showForm, setShowForm] = useState(Boolean(initialBinding) && isOwner);
   const ports = product.ports ?? [];
 
   return (
@@ -676,6 +691,7 @@ function PortSection({
             orgId={orgId}
             domainId={domainId}
             productId={product.id}
+            initialBinding={initialBinding}
             onAdded={() => { setShowForm(false); onPortAdded(); }}
             onCancel={() => setShowForm(false)}
           />
@@ -887,11 +903,13 @@ interface AddPortFormProps {
   orgId: string;
   domainId: string;
   productId: string;
+  /** B-075 Tier A — seed the source-binding fields from a carried-through source. */
+  initialBinding?: SourceBindingNavState['bindSource'];
   onAdded: () => void;
   onCancel: () => void;
 }
 
-function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortFormProps) {
+function AddPortForm({ orgId, domainId, productId, initialBinding, onAdded, onCancel }: AddPortFormProps) {
   const [portType, setPortType] = useState<PortType>('output');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -908,14 +926,17 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // F2.8a (B-070) producer UI — optional source binding state. Both fields
-  // start empty (the port stays hand-authored unless the producer picks
+  // F2.8a (B-070) producer UI — optional source binding state. Normally both
+  // fields start empty (the port stays hand-authored unless the producer picks
   // from the discovered list). selectedConnectorId is local UI state only
   // — it's not sent to the API; the source_registration row already
   // carries its connector_id reference.
-  const [selectedConnectorId, setSelectedConnectorId] = useState<string>('');
-  const [sourceRegistrationId, setSourceRegistrationId] = useState<string>('');
-  const [sourceObjectPath, setSourceObjectPath] = useState<string>('');
+  //
+  // B-075 Tier A: when the producer arrived via "Create data product from this
+  // source", initialBinding seeds all three so the binding is pre-selected.
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string>(initialBinding?.connectorId ?? '');
+  const [sourceRegistrationId, setSourceRegistrationId] = useState<string>(initialBinding?.sourceRegistrationId ?? '');
+  const [sourceObjectPath, setSourceObjectPath] = useState<string>(initialBinding?.sourceObjectPath ?? '');
 
   // Reset connection fields whenever interfaceType changes so stale
   // host/baseUrl values from a previous selection do not bleed across.
@@ -996,6 +1017,14 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
   return (
     <div className="rounded-lg border border-brand-100 bg-brand-50 p-4">
       <h3 className="text-sm font-medium text-slate-900 mb-3">Add port</h3>
+      {initialBinding && (
+        <div className="mb-3 rounded-md border border-brand-200 bg-white px-3 py-2 text-xs text-slate-600">
+          Pre-bound to <span className="font-medium text-slate-900">{initialBinding.sourceDisplayName}</span>{' '}
+          (from {initialBinding.connectorName}) — see “Bind to a discovered source” below.
+          Pick an interface type and provide a contract schema to finish. The schema isn't
+          auto-filled yet, even though discovery captured it.
+        </div>
+      )}
       <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Port type" required>
@@ -1051,6 +1080,7 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
 
             <SourceBindingPicker
               orgId={orgId}
+              defaultOpen={Boolean(initialBinding)}
               selectedConnectorId={selectedConnectorId}
               sourceRegistrationId={sourceRegistrationId}
               sourceObjectPath={sourceObjectPath}
@@ -1186,6 +1216,8 @@ function AddPortForm({ orgId, domainId, productId, onAdded, onCancel }: AddPortF
 
 interface SourceBindingPickerProps {
   orgId: string;
+  /** B-075 Tier A — expand the picker on mount when the port arrives pre-bound. */
+  defaultOpen?: boolean;
   selectedConnectorId: string;
   sourceRegistrationId: string;
   sourceObjectPath: string;
@@ -1196,6 +1228,7 @@ interface SourceBindingPickerProps {
 
 export function SourceBindingPicker({
   orgId,
+  defaultOpen = false,
   selectedConnectorId,
   sourceRegistrationId,
   sourceObjectPath,
@@ -1256,7 +1289,7 @@ export function SourceBindingPicker({
   }, [orgId, selectedConnectorId]);
 
   return (
-    <details className="rounded-md border border-slate-200 bg-white p-3">
+    <details open={defaultOpen} className="rounded-md border border-slate-200 bg-white p-3">
       <summary className="cursor-pointer text-sm font-medium text-slate-700">
         Bind to a discovered source <span className="text-slate-400 font-normal">(optional)</span>
       </summary>
