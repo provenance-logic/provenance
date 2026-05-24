@@ -30,6 +30,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'postgresql',  label: 'PostgreSQL' },
   { value: 'databricks',  label: 'Databricks' },
   { value: 's3',          label: 'S3' },
+  { value: 'snowflake',   label: 'Snowflake' },
 ];
 
 const VALIDATION_PILL: Record<ValidationStatus, string> = {
