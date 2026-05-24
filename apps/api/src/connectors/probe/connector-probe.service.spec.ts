@@ -1634,3 +1634,394 @@ describe('submitSnowflakeStatement', () => {
     expect(reqBody.database).toBe('PROD_DB');
   });
 });
+
+// ---------------------------------------------------------------------------
+// walkSnowflakeAccount (Layer 3)
+// ---------------------------------------------------------------------------
+
+// ── SHOW shape helpers ──────────────────────────────────────────────────────
+//
+// Real SHOW shapes captured from a live Snowflake trial account.
+// SHOW DATABASES rowType: created_on, name, is_default, is_current, origin,
+//   owner, comment, options, retention_time, kind, budget, owner_role_type
+// SHOW TABLES rowType: created_on, name, database_name, schema_name, kind,
+//   comment, cluster_by, rows, bytes, owner, ...
+// SHOW VIEWS rowType: created_on, name, reserved, database_name, schema_name,
+//   owner, comment, text, is_secure, is_materialized, owner_role_type, change_tracking
+//
+// NOTE: SHOW TABLES and SHOW VIEWS have different column orders — `schema_name`
+// is at a different index in each. This is exactly the scenario sfShowRowsToObjects
+// must handle correctly (column-name lookup, not fixed index).
+
+function showDatabasesEnvelope(databases: Array<{ name: string; kind: string }>): string {
+  // rowType only includes the columns relevant to our tests; the actual response
+  // has more, but sfShowRowsToObjects keys by name so extras are ignored.
+  const rowType = [
+    { name: 'created_on', type: 'timestamp_ltz' },
+    { name: 'name', type: 'text' },
+    { name: 'is_default', type: 'text' },
+    { name: 'is_current', type: 'text' },
+    { name: 'origin', type: 'text' },
+    { name: 'owner', type: 'text' },
+    { name: 'comment', type: 'text' },
+    { name: 'options', type: 'text' },
+    { name: 'retention_time', type: 'text' },
+    { name: 'kind', type: 'text' },
+  ];
+  const data = databases.map(({ name, kind }) => [
+    '2024-01-01 00:00:00.000 +0000', // created_on
+    name,                              // name
+    'N',                               // is_default
+    'N',                               // is_current
+    '',                                // origin
+    'ACCOUNTADMIN',                    // owner
+    '',                                // comment
+    '',                                // options
+    '1',                               // retention_time
+    kind,                              // kind
+  ]);
+  return JSON.stringify({
+    resultSetMetaData: { numRows: data.length, rowType },
+    data,
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+function showTablesEnvelope(
+  tables: Array<{ name: string; database_name: string; schema_name: string }>,
+): string {
+  // SHOW TABLES column order: created_on, name, database_name, schema_name, kind, ...
+  const rowType = [
+    { name: 'created_on', type: 'timestamp_ltz' },
+    { name: 'name', type: 'text' },
+    { name: 'database_name', type: 'text' },
+    { name: 'schema_name', type: 'text' },
+    { name: 'kind', type: 'text' },
+    { name: 'comment', type: 'text' },
+    { name: 'rows', type: 'fixed' },
+  ];
+  const data = tables.map(({ name, database_name, schema_name }) => [
+    '2024-01-01 00:00:00.000 +0000', // created_on
+    name,                              // name (index 1)
+    database_name,                     // database_name (index 2)
+    schema_name,                       // schema_name (index 3)
+    'TABLE',                           // kind
+    '',                                // comment
+    '0',                               // rows
+  ]);
+  return JSON.stringify({
+    resultSetMetaData: { numRows: data.length, rowType },
+    data,
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+function showViewsEnvelope(
+  views: Array<{ name: string; database_name: string; schema_name: string }>,
+): string {
+  // SHOW VIEWS column order: created_on, name, reserved, database_name, schema_name, ...
+  // NOTE: database_name is at index 3 and schema_name at index 4 — different from
+  // SHOW TABLES (database_name=2, schema_name=3). This tests the column-name lookup.
+  const rowType = [
+    { name: 'created_on', type: 'timestamp_ltz' },
+    { name: 'name', type: 'text' },
+    { name: 'reserved', type: 'text' },         // extra column not in SHOW TABLES
+    { name: 'database_name', type: 'text' },    // shifted right vs SHOW TABLES
+    { name: 'schema_name', type: 'text' },
+    { name: 'owner', type: 'text' },
+    { name: 'comment', type: 'text' },
+    { name: 'text', type: 'text' },
+    { name: 'is_secure', type: 'text' },
+  ];
+  const data = views.map(({ name, database_name, schema_name }) => [
+    '2024-01-01 00:00:00.000 +0000', // created_on
+    name,                              // name (index 1)
+    '',                                // reserved (index 2) — extra column
+    database_name,                     // database_name (index 3)
+    schema_name,                       // schema_name (index 4)
+    'ACCOUNTADMIN',                    // owner
+    '',                                // comment
+    'SELECT ...',                      // text
+    'N',                               // is_secure
+  ]);
+  return JSON.stringify({
+    resultSetMetaData: { numRows: data.length, rowType },
+    data,
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+function emptyShowEnvelope(): string {
+  return JSON.stringify({
+    resultSetMetaData: { numRows: 0, rowType: [] },
+    data: [],
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+describe('ConnectorProbeService.walkSnowflakeAccount (B-063 Layer 3)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = {
+      getSecretValue: jest.fn(),
+    } as unknown as jest.Mocked<SecretsManagerService>;
+    secretsManager.getSecretValue.mockResolvedValue(
+      SNOWFLAKE_SECRET as unknown as Record<string, string>,
+    );
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // Helper to queue fetch responses in order (SHOW calls are sequential).
+  function queueResponses(...bodies: string[]) {
+    for (const body of bodies) {
+      fetchSpy.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    }
+  }
+
+  // ---------- happy path — full walk with system DB + INFORMATION_SCHEMA skips ----------
+
+  it('discovers tables and views, skips SNOWFLAKE and SNOWFLAKE_SAMPLE_DATA databases', async () => {
+    // SHOW DATABASES returns three databases: the user db + two system ones.
+    queueResponses(
+      showDatabasesEnvelope([
+        { name: 'PROVENANCE_DEMO', kind: 'STANDARD' },
+        { name: 'SNOWFLAKE', kind: 'APPLICATION' },
+        { name: 'SNOWFLAKE_SAMPLE_DATA', kind: 'IMPORTED SHARE' },
+      ]),
+      // SHOW TABLES IN DATABASE "PROVENANCE_DEMO"
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+        { name: 'ORDERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+        // INFORMATION_SCHEMA row — must be skipped.
+        { name: 'TABLES', database_name: 'PROVENANCE_DEMO', schema_name: 'INFORMATION_SCHEMA' },
+      ]),
+      // SHOW VIEWS IN DATABASE "PROVENANCE_DEMO"
+      showViewsEnvelope([
+        { name: 'CUSTOMER_ORDER_SUMMARY', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+        // INFORMATION_SCHEMA view — must be skipped.
+        { name: 'COLUMNS', database_name: 'PROVENANCE_DEMO', schema_name: 'INFORMATION_SCHEMA' },
+      ]),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    // Only PROVENANCE_DEMO should be in catalogs (system DBs stripped).
+    expect(result.catalogs).toEqual(['PROVENANCE_DEMO']);
+    // One distinct schema: PROVENANCE_DEMO.SALES (INFORMATION_SCHEMA skipped).
+    expect(result.schemasWalked).toBe(1);
+    // 3 user objects: CUSTOMERS, ORDERS (tables) + CUSTOMER_ORDER_SUMMARY (view).
+    expect(result.tables).toHaveLength(3);
+    expect(result.tables.map((t) => t.fullName)).toEqual([
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.ORDERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+  });
+
+  it('skips USER$<login> per-user system databases (seen live on the trial account)', async () => {
+    // Snowflake surfaces a per-user scratch database USER$<login> in SHOW
+    // DATABASES on some account types. It carries no data products and must
+    // be skipped by prefix, like the named system databases.
+    queueResponses(
+      showDatabasesEnvelope([
+        { name: 'PROVENANCE_DEMO', kind: 'STANDARD' },
+        { name: 'USER$MCGARVEYMA', kind: 'STANDARD' },
+      ]),
+      // Only PROVENANCE_DEMO is walked — USER$ is filtered before the walk,
+      // so no SHOW TABLES/VIEWS calls are issued for it.
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+      ]),
+      showViewsEnvelope([]),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    expect(result.catalogs).toEqual(['PROVENANCE_DEMO']);
+    expect(result.tables.map((t) => t.fullName)).toEqual([
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    ]);
+    // 3 fetch calls: SHOW DATABASES + (TABLES + VIEWS for PROVENANCE_DEMO only).
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns correct fullName structure: catalog=database, schema, name all populated', async () => {
+    queueResponses(
+      showDatabasesEnvelope([{ name: 'PROVENANCE_DEMO', kind: 'STANDARD' }]),
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+      ]),
+      emptyShowEnvelope(), // no views
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    expect(result.tables[0]).toEqual({
+      catalog: 'PROVENANCE_DEMO',
+      schema: 'SALES',
+      name: 'CUSTOMERS',
+      fullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    });
+  });
+
+  // ---------- column-name-based parsing works for both TABLES and VIEWS ----------
+
+  it('resolves schema_name by column name for SHOW VIEWS (different column order than SHOW TABLES)', async () => {
+    // SHOW VIEWS has an extra "reserved" column at index 2, pushing database_name to index 3
+    // and schema_name to index 4 — versus SHOW TABLES where schema_name is at index 3.
+    // sfShowRowsToObjects must resolve by name, not by index.
+    queueResponses(
+      showDatabasesEnvelope([{ name: 'PROVENANCE_DEMO', kind: 'STANDARD' }]),
+      emptyShowEnvelope(), // no tables
+      showViewsEnvelope([
+        { name: 'CUSTOMER_ORDER_SUMMARY', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+      ]),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    // If column name resolution breaks and falls back to index 3, schema_name
+    // would wrongly be the "owner" column value (e.g. "ACCOUNTADMIN").
+    // The correct result is "SALES".
+    expect(result.tables[0].schema).toBe('SALES');
+    expect(result.tables[0].fullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY');
+  });
+
+  // ---------- databaseScope filtering ----------
+
+  it('respects databaseScope: skips databases not in the scope list', async () => {
+    // With databaseScope=['PROVENANCE_DEMO'], no SHOW DATABASES call is made —
+    // it goes directly to SHOW TABLES + SHOW VIEWS for the scoped db.
+    queueResponses(
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+      ]),
+      emptyShowEnvelope(), // no views
+    );
+
+    const result = await service.walkSnowflakeAccount(
+      makeSnowflakeConnector(),
+      ['PROVENANCE_DEMO'],
+    );
+
+    // Only one fetch call pair (TABLES + VIEWS), not SHOW DATABASES.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.catalogs).toEqual(['PROVENANCE_DEMO']);
+    expect(result.tables.map((t) => t.name)).toEqual(['CUSTOMERS']);
+  });
+
+  it('strips system databases from databaseScope if accidentally included', async () => {
+    // Even if the operator passes SNOWFLAKE in databaseScope, it must be filtered.
+    queueResponses(
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+      ]),
+      emptyShowEnvelope(),
+    );
+
+    const result = await service.walkSnowflakeAccount(
+      makeSnowflakeConnector(),
+      ['PROVENANCE_DEMO', 'SNOWFLAKE', 'SNOWFLAKE_SAMPLE_DATA'],
+    );
+
+    // Only PROVENANCE_DEMO walked (SNOWFLAKE + SNOWFLAKE_SAMPLE_DATA removed).
+    expect(result.catalogs).toEqual(['PROVENANCE_DEMO']);
+    // Only 2 fetch calls (SHOW TABLES + SHOW VIEWS for PROVENANCE_DEMO).
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  // ---------- INFORMATION_SCHEMA skip ----------
+
+  it('skips INFORMATION_SCHEMA schema rows (case-insensitive)', async () => {
+    queueResponses(
+      showDatabasesEnvelope([{ name: 'PROVENANCE_DEMO', kind: 'STANDARD' }]),
+      showTablesEnvelope([
+        // Only INFORMATION_SCHEMA tables — should yield zero user tables.
+        { name: 'COLUMNS', database_name: 'PROVENANCE_DEMO', schema_name: 'INFORMATION_SCHEMA' },
+        { name: 'TABLES', database_name: 'PROVENANCE_DEMO', schema_name: 'INFORMATION_SCHEMA' },
+      ]),
+      showViewsEnvelope([
+        { name: 'SCHEMATA', database_name: 'PROVENANCE_DEMO', schema_name: 'INFORMATION_SCHEMA' },
+      ]),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    expect(result.tables).toHaveLength(0);
+    expect(result.schemasWalked).toBe(0);
+  });
+
+  // ---------- multiple schemas ----------
+
+  it('counts distinct schemas correctly when tables span multiple schemas', async () => {
+    queueResponses(
+      showDatabasesEnvelope([{ name: 'PROVENANCE_DEMO', kind: 'STANDARD' }]),
+      showTablesEnvelope([
+        { name: 'CUSTOMERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' },
+        { name: 'PRODUCTS', database_name: 'PROVENANCE_DEMO', schema_name: 'INVENTORY' },
+        { name: 'ORDERS', database_name: 'PROVENANCE_DEMO', schema_name: 'SALES' }, // same schema as CUSTOMERS
+      ]),
+      emptyShowEnvelope(),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    expect(result.tables).toHaveLength(3);
+    // SALES + INVENTORY = 2 distinct schemas (SALES appears twice but counted once).
+    expect(result.schemasWalked).toBe(2);
+  });
+
+  // ---------- config / credential guard ----------
+
+  it('throws with a clear message when host is missing', async () => {
+    await expect(
+      service.walkSnowflakeAccount(makeSnowflakeConnector({ connectionConfig: {} })),
+    ).rejects.toThrow(/connection_config\.host/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws with a clear message when credentialArn is missing', async () => {
+    await expect(
+      service.walkSnowflakeAccount(makeSnowflakeConnector({ credentialArn: null })),
+    ).rejects.toThrow(/credentialArn/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // ---------- empty account ----------
+
+  it('returns an empty result when SHOW DATABASES returns no user databases', async () => {
+    queueResponses(
+      showDatabasesEnvelope([
+        // Only system databases — all filtered.
+        { name: 'SNOWFLAKE', kind: 'APPLICATION' },
+        { name: 'SNOWFLAKE_SAMPLE_DATA', kind: 'IMPORTED SHARE' },
+      ]),
+    );
+
+    const result = await service.walkSnowflakeAccount(makeSnowflakeConnector());
+
+    expect(result.catalogs).toEqual([]);
+    expect(result.tables).toEqual([]);
+    expect(result.schemasWalked).toBe(0);
+    // No SHOW TABLES / SHOW VIEWS calls made (no databases to walk).
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});

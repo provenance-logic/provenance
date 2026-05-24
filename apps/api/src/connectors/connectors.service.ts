@@ -18,7 +18,7 @@ import {
 } from './entities/discovery-crawl-event.entity.js';
 import { CapabilityManifestService } from './capability-manifest.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
-import { ConnectorProbeService } from './probe/connector-probe.service.js';
+import { ConnectorProbeService, type WorkspaceWalkResult } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -60,6 +60,8 @@ export interface DiscoveryCrawlEventRecord {
   snapshotsCaptured: number;
   snapshotsFailed: number;
   errorMessage: string | null;
+  /** Connector-type-specific counters (e.g. lineage edges) stored as free-form metadata. */
+  metadata: Record<string, unknown>;
 }
 
 @Injectable()
@@ -482,7 +484,10 @@ export class ConnectorsService {
       where: { id: connectorId, orgId },
     });
     if (!connector) throw new NotFoundException(`Connector ${connectorId} not found`);
-    if (connector.connectorType !== 'databricks') {
+    if (
+      connector.connectorType !== 'databricks' &&
+      connector.connectorType !== 'snowflake'
+    ) {
       throw new BadRequestException(
         `Discovery crawl is not yet implemented for connector type '${connector.connectorType}'. See B-063.`,
       );
@@ -498,10 +503,18 @@ export class ConnectorsService {
     );
 
     try {
-      const catalogScope = Array.isArray(connector.connectionConfig.catalogs)
-        ? (connector.connectionConfig.catalogs as string[])
-        : undefined;
-      const walk = await this.probeService.walkDatabricksWorkspace(connector, catalogScope);
+      let walk: WorkspaceWalkResult;
+      if (connector.connectorType === 'snowflake') {
+        const dbScope = Array.isArray(connector.connectionConfig.databases)
+          ? (connector.connectionConfig.databases as string[])
+          : undefined;
+        walk = await this.probeService.walkSnowflakeAccount(connector, dbScope);
+      } else {
+        const catalogScope = Array.isArray(connector.connectionConfig.catalogs)
+          ? (connector.connectionConfig.catalogs as string[])
+          : undefined;
+        walk = await this.probeService.walkDatabricksWorkspace(connector, catalogScope);
+      }
 
       let sourcesCreated = 0;
       let sourcesSkipped = 0;
@@ -550,18 +563,16 @@ export class ConnectorsService {
         }
       }
 
-      // Lineage projection (B-063 Layer 4). For each discovered table,
-      // pull its upstream + downstream lineage from Unity Catalog and
-      // emit the edges via LineageService — same path the SDK uses, so
-      // edges land in PostgreSQL (emission_log) and Neo4j (the graph)
-      // with the same idempotency + trust-score recompute semantics.
-      // Idempotency key is deterministic so re-crawls don't duplicate
-      // edges. emitted_by carries the system-discovered marker.
+      // Lineage projection (B-063 Layer 4). Databricks only — Snowflake
+      // lineage (ACCOUNT_USAGE.OBJECT_DEPENDENCIES + ACCESS_HISTORY) is
+      // deferred to a later PR once the Layer 3 walk is live-verified.
+      // A separate manifest version (snowflake 1.1.0) will flip
+      // supports_lineage_discovery to true when that ships.
       let lineageEdgesEmitted = 0;
       let lineageEdgesSkipped = 0;
       let lineageEdgesFailed = 0;
       let tablesWithLineageErrors: string[] = [];
-      if (walk.tables.length > 0) {
+      if (connector.connectorType === 'databricks' && walk.tables.length > 0) {
         try {
           const fullNames = walk.tables.map((t) => t.fullName);
           const lineageResult = await this.probeService.walkDatabricksLineage(
@@ -677,6 +688,7 @@ export class ConnectorsService {
       snapshotsCaptured: e.snapshotsCaptured,
       snapshotsFailed: e.snapshotsFailed,
       errorMessage: e.errorMessage,
+      metadata: e.metadata ?? {},
     };
   }
 

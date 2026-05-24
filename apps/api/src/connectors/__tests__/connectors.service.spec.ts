@@ -45,6 +45,20 @@ const mockProbeService = () => ({
     columnCount: 0,
     rowEstimate: null,
   }),
+  walkDatabricksWorkspace: jest.fn().mockResolvedValue({
+    catalogs: [],
+    schemasWalked: 0,
+    tables: [],
+  }),
+  walkSnowflakeAccount: jest.fn().mockResolvedValue({
+    catalogs: [],
+    schemasWalked: 0,
+    tables: [],
+  }),
+  walkDatabricksLineage: jest.fn().mockResolvedValue({
+    edges: [],
+    tablesWithErrors: [],
+  }),
 });
 
 const mockKafkaProducer = () => ({
@@ -114,9 +128,11 @@ describe('ConnectorsService', () => {
   let healthEventRepo: ReturnType<typeof mockRepo>;
   let sourceRepo: ReturnType<typeof mockRepo>;
   let snapshotRepo: ReturnType<typeof mockRepo>;
+  let crawlEventRepo: ReturnType<typeof mockRepo>;
   let probeService: ReturnType<typeof mockProbeService>;
   let kafkaProducer: ReturnType<typeof mockKafkaProducer>;
   let roleRepo: ReturnType<typeof mockRepo>;
+  let lineageService: { emitEvent: jest.Mock };
   let notificationsService: { enqueue: jest.Mock };
 
   beforeEach(async () => {
@@ -160,9 +176,11 @@ describe('ConnectorsService', () => {
     healthEventRepo = module.get(getRepositoryToken(ConnectorHealthEventEntity));
     sourceRepo = module.get(getRepositoryToken(SourceRegistrationEntity));
     snapshotRepo = module.get(getRepositoryToken(SchemaSnapshotEntity));
+    crawlEventRepo = module.get(getRepositoryToken(DiscoveryCrawlEventEntity));
     probeService = module.get(ConnectorProbeService);
     kafkaProducer = module.get(KafkaProducerService);
     roleRepo = module.get(getRepositoryToken(RoleAssignmentEntity));
+    lineageService = module.get(LineageService);
     notificationsService = module.get(NotificationsService);
   });
 
@@ -587,6 +605,213 @@ describe('ConnectorsService', () => {
       expect(snapshotRepo.save).toHaveBeenCalled();
       expect(result.columnCount).toBe(1);
       expect(result.rowEstimate).toBe(1000);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // crawlConnector() — Snowflake (B-063 Layer 3)
+  // -------------------------------------------------------------------------
+
+  describe('crawlConnector() — snowflake', () => {
+    const snowflakeConnector = makeConnectorEntity({
+      id: 'sf-connector-1',
+      connectorType: 'snowflake' as ConnectorType,
+      connectionConfig: {
+        host: 'xy12345.us-east-1.snowflakecomputing.com',
+        warehouse: 'COMPUTE_WH',
+        role: 'ACCOUNTADMIN',
+      },
+      credentialArn: VALID_ARN,
+    });
+
+    const discoveredTable = {
+      catalog: 'PROVENANCE_DEMO',
+      schema: 'SALES',
+      name: 'CUSTOMERS',
+      fullName: 'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    };
+
+    function setupCrawlMocks(tables: typeof discoveredTable[]) {
+      connectorRepo.findOne.mockResolvedValue(snowflakeConnector);
+
+      // crawlEventRepo: create returns an entity; save returns the same (running),
+      // then the final completed state.
+      const runningEvent = {
+        id: 'crawl-1',
+        orgId: 'org-1',
+        connectorId: 'sf-connector-1',
+        triggeredBy: 'principal-1',
+        status: 'running',
+        startedAt: new Date('2024-01-01T00:00:00Z'),
+        completedAt: null,
+        catalogsWalked: 0,
+        schemasWalked: 0,
+        tablesFound: 0,
+        sourcesCreated: 0,
+        sourcesSkipped: 0,
+        snapshotsCaptured: 0,
+        snapshotsFailed: 0,
+        lineageEdgesEmitted: 0,
+        lineageEdgesSkipped: 0,
+        lineageEdgesFailed: 0,
+        metadata: {},
+        errorMessage: null,
+      };
+      crawlEventRepo.create.mockReturnValue(runningEvent);
+      crawlEventRepo.save
+        .mockResolvedValueOnce(runningEvent) // initial save (running)
+        .mockImplementationOnce((e: any) => Promise.resolve(e)); // final save — returns the mutated entity as-is
+
+      probeService.walkSnowflakeAccount.mockResolvedValue({
+        catalogs: tables.length > 0 ? ['PROVENANCE_DEMO'] : [],
+        schemasWalked: tables.length > 0 ? 1 : 0,
+        tables,
+      });
+
+      // Each table: sourceRepo.findOne → null (new), save returns entity.
+      for (const table of tables) {
+        sourceRepo.findOne.mockResolvedValueOnce(null);
+        const sourceEntity = makeSourceEntity({
+          id: `source-${table.name}`,
+          sourceRef: table.fullName,
+          connectorId: 'sf-connector-1',
+        });
+        sourceRepo.create.mockReturnValueOnce(sourceEntity);
+        sourceRepo.save.mockResolvedValueOnce(sourceEntity);
+        snapshotRepo.create.mockReturnValueOnce({ id: `snap-${table.name}` });
+        snapshotRepo.save.mockResolvedValueOnce({ id: `snap-${table.name}` });
+      }
+    }
+
+    it('throws BadRequestException when connector is not found', async () => {
+      connectorRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.crawlConnector('org-1', 'missing-id', 'principal-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException for unsupported connector types', async () => {
+      // postgresql is not in the allowed set (only databricks and snowflake).
+      // The gate fires before the crawl event is created, so no repo setup needed.
+      connectorRepo.findOne.mockResolvedValue(makeConnectorEntity({ connectorType: 'postgresql' as ConnectorType }));
+
+      await expect(
+        service.crawlConnector('org-1', 'connector-1', 'principal-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('walks the Snowflake account via walkSnowflakeAccount, creates sources and snapshots', async () => {
+      setupCrawlMocks([discoveredTable]);
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(probeService.walkSnowflakeAccount).toHaveBeenCalledWith(
+        snowflakeConnector,
+        undefined, // no databases scope on the connector config
+      );
+      expect(result.status).toBe('succeeded');
+      expect(result.tablesFound).toBe(1);
+      expect(result.sourcesCreated).toBe(1);
+      expect(result.snapshotsCaptured).toBe(1);
+    });
+
+    it('passes databases scope from connectionConfig.databases to walkSnowflakeAccount', async () => {
+      const scopedConnector = makeConnectorEntity({
+        id: 'sf-connector-1',
+        connectorType: 'snowflake' as ConnectorType,
+        connectionConfig: {
+          host: 'xy12345.us-east-1.snowflakecomputing.com',
+          databases: ['PROVENANCE_DEMO'],
+        },
+        credentialArn: VALID_ARN,
+      });
+      connectorRepo.findOne.mockResolvedValue(scopedConnector);
+
+      const runningEvent = {
+        id: 'crawl-scoped',
+        orgId: 'org-1',
+        connectorId: 'sf-connector-1',
+        triggeredBy: 'principal-1',
+        status: 'running',
+        startedAt: new Date(),
+        completedAt: null,
+        metadata: {},
+      };
+      crawlEventRepo.create.mockReturnValue(runningEvent);
+      crawlEventRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+      probeService.walkSnowflakeAccount.mockResolvedValue({
+        catalogs: ['PROVENANCE_DEMO'],
+        schemasWalked: 0,
+        tables: [],
+      });
+
+      await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(probeService.walkSnowflakeAccount).toHaveBeenCalledWith(
+        scopedConnector,
+        ['PROVENANCE_DEMO'],
+      );
+    });
+
+    it('does NOT call lineageService.emitEvent for a snowflake crawl (lineage is deferred to Layer 4)', async () => {
+      setupCrawlMocks([discoveredTable]);
+
+      await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(lineageService.emitEvent).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call walkDatabricksWorkspace or walkDatabricksLineage for a snowflake crawl', async () => {
+      setupCrawlMocks([discoveredTable]);
+
+      await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(probeService.walkDatabricksWorkspace).not.toHaveBeenCalled();
+      expect(probeService.walkDatabricksLineage).not.toHaveBeenCalled();
+    });
+
+    it('returns lineage counts of 0 on a snowflake crawl', async () => {
+      setupCrawlMocks([discoveredTable]);
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(result.metadata).toMatchObject({
+        lineageEdgesEmitted: 0,
+        lineageEdgesSkipped: 0,
+        lineageEdgesFailed: 0,
+        tablesWithLineageErrors: [],
+      });
+    });
+
+    it('skips already-registered sources and does not create duplicates', async () => {
+      connectorRepo.findOne.mockResolvedValue(snowflakeConnector);
+
+      const runningEvent = {
+        id: 'crawl-skip',
+        orgId: 'org-1',
+        connectorId: 'sf-connector-1',
+        triggeredBy: 'principal-1',
+        status: 'running',
+        startedAt: new Date(),
+        completedAt: null,
+        metadata: {},
+      };
+      crawlEventRepo.create.mockReturnValue(runningEvent);
+      crawlEventRepo.save.mockImplementation((e: any) => Promise.resolve(e));
+
+      probeService.walkSnowflakeAccount.mockResolvedValue({
+        catalogs: ['PROVENANCE_DEMO'],
+        schemasWalked: 1,
+        tables: [discoveredTable],
+      });
+      // Source already exists → findOne returns an entity (not null).
+      sourceRepo.findOne.mockResolvedValue(makeSourceEntity({ sourceRef: discoveredTable.fullName }));
+
+      const result = await service.crawlConnector('org-1', 'sf-connector-1', 'principal-1');
+
+      expect(sourceRepo.save).not.toHaveBeenCalled(); // no new source
+      expect(result.sourcesSkipped).toBe(1);
     });
   });
 });
