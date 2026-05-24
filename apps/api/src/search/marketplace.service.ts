@@ -266,8 +266,9 @@ export class MarketplaceService {
     // BM25 relevance order (most-relevant first). If the user did pick a sort
     // (e.g. name_asc), honor it — they overrode the default.
     if (searchScoreById && !filters.sort) {
+      const scores = searchScoreById;
       items.sort(
-        (a, b) => (searchScoreById!.get(b.id) ?? 0) - (searchScoreById!.get(a.id) ?? 0),
+        (a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0),
       );
     }
 
