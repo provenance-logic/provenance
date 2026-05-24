@@ -62,6 +62,7 @@ const makePort = (overrides: Partial<PortDeclarationEntity> = {}): PortDeclarati
   sourceRegistrationId: null,
   sourceObjectPath: null,
   situationAEligibility: false,
+  catalogName: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   product: null as any,

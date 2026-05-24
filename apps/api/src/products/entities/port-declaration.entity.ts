@@ -66,6 +66,16 @@ export class PortDeclarationEntity {
   @Column({ name: 'situation_a_eligibility', type: 'boolean', default: false })
   situationAEligibility!: boolean;
 
+  // F10.14 / Phase 5.11 — producer-facing catalog name. When set, the
+  // consumer-grade snippets address the data by this name instead of
+  // the physical source path. For SQL sources the producer is expected
+  // to back this with `CREATE VIEW <catalog_name> AS ...` at the source
+  // (DDL the platform generates on request but never executes itself per
+  // Constraint 3). NULL means "no catalog-name abstraction; snippets
+  // fall back to source_object_path or generic placeholders." See V36.
+  @Column({ name: 'catalog_name', type: 'text', nullable: true })
+  catalogName!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 
