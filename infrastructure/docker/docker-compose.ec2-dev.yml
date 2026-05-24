@@ -559,6 +559,9 @@ services:
       # local testing. Production deploys leave these unset and rely on
       # real Secrets Manager ARNs.
       DATABRICKS_DEV_TOKEN: ${DATABRICKS_DEV_TOKEN:-}
+      # Snowflake key-pair credential for local-env testing. JSON shape:
+      # {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...","user":"...","account":"..."}
+      SNOWFLAKE_DEV_CRED: ${SNOWFLAKE_DEV_CRED:-}
       # Sample-data button (B-027). When true, an org_admin can populate
       # their org with a small demo workspace via POST /organizations/:orgId/sample-data.
       # Production deploys must keep this false.
