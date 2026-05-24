@@ -16,6 +16,7 @@ import { AccessGrantEntity } from './entities/access-grant.entity.js';
 import { AccessRequestEntity } from './entities/access-request.entity.js';
 import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -51,6 +52,8 @@ export class AccessService {
     private readonly eventRepo: Repository<ApprovalEventEntity>,
     @InjectRepository(DataProductEntity)
     private readonly productRepo: Repository<DataProductEntity>,
+    @InjectRepository(PortDeclarationEntity)
+    private readonly portRepo: Repository<PortDeclarationEntity>,
     @Inject(TEMPORAL_CLIENT)
     private readonly temporalClient: Client | null,
     private readonly connectionPackageService: ConnectionPackageService,
@@ -252,6 +255,133 @@ export class AccessService {
     }
 
     return this.toGrant(saved);
+  }
+
+  /**
+   * F10.19 / Phase 5.13 — Renew an access grant per F10.15 situation routing.
+   *
+   * Auto-renew vs re-trigger approval is decided by the product's port mix:
+   *   - All output ports declared `situation_a_eligibility = true` → auto-
+   *     renew (extend `expiresAt` by the original TTL the grant was issued
+   *     for; reset both warning markers so the 14d/7d tiers fire again on
+   *     the next cycle).
+   *   - Otherwise → re-trigger approval workflow (create a new pending
+   *     access_request linked to the grant via `approval_request_id`). The
+   *     consumer keeps the existing grant active in the meantime; the
+   *     approval flow runs as if it were a fresh request.
+   *
+   * Only the grantee may renew their own grant (cross-org consumer keeps the
+   * grant in their own namespace per B-071 Model A; no cross-org carve-out
+   * needed). A revoked grant cannot be renewed — the consumer must submit a
+   * fresh access request.
+   *
+   * Per F10.19, expired grants are renewable too — the consumer landing on
+   * the expiry message should be able to one-click renew rather than start
+   * the whole flow over.
+   */
+  async renewGrant(
+    orgId: string,
+    grantId: string,
+    callerPrincipalId: string,
+  ): Promise<{
+    mode: 'auto_renewed' | 'approval_required';
+    grant?: AccessGrant;
+    request?: AccessRequest;
+  }> {
+    const grant = await this.grantRepo.findOne({ where: { id: grantId, orgId } });
+    if (!grant) throw new NotFoundException(`Access grant ${grantId} not found`);
+    if (grant.granteePrincipalId !== callerPrincipalId) {
+      throw new ForbiddenException('Only the grantee may renew their own access grant');
+    }
+    if (grant.revokedAt) {
+      throw new ConflictException(
+        'This grant was revoked and cannot be renewed — submit a fresh access request',
+      );
+    }
+
+    const ports = await this.portRepo.find({
+      where: { orgId: grant.orgId, productId: grant.productId, portType: 'output' },
+    });
+    // @cross-tenant-by-design: under Model A the grant lives in the
+    // requester's org but the product lives in the owner's org. The
+    // product lookup is bare-id; the orgId on the resulting row tells the
+    // notification path which org to route through.
+    const product = await this.productRepo.findOne({ where: { id: grant.productId } });
+
+    const allOpenAccess = ports.length > 0 && ports.every((p) => p.situationAEligibility === true);
+
+    if (allOpenAccess) {
+      // Auto-renew: extend by the original TTL the grant was issued for.
+      // If the grant never had an expiresAt (perpetual), nothing to extend
+      // — return as-is.
+      if (!grant.expiresAt) return { mode: 'auto_renewed', grant: this.toGrant(grant) };
+      const originalTTLMs = grant.expiresAt.getTime() - grant.grantedAt.getTime();
+      const baseTime = grant.expiresAt > new Date() ? grant.expiresAt.getTime() : Date.now();
+      grant.expiresAt = new Date(baseTime + originalTTLMs);
+      grant.expiryWarningSentAt = null;
+      grant.expiryWarning7dSentAt = null;
+      const saved = await this.grantRepo.save(grant);
+
+      await this.fireNotification(() =>
+        this.notificationsService.enqueue({
+          orgId: grant.orgId,
+          category: 'access_grant_renewed',
+          recipients: [grant.granteePrincipalId],
+          payload: {
+            grantId: saved.id,
+            productId: saved.productId,
+            productName: product ? product.name : null,
+            mode: 'auto_renewed',
+            newExpiresAt: saved.expiresAt!.toISOString(),
+          },
+          deepLink: `/marketplace/products/${saved.productId}`,
+          dedupKey: `access_grant_renewed:${saved.id}:${saved.expiresAt!.toISOString()}`,
+        }),
+      );
+
+      return { mode: 'auto_renewed', grant: this.toGrant(saved) };
+    }
+
+    // Re-trigger approval workflow. Skip the line-426-style duplicate
+    // check by reusing submitRequest's path, but inline-create the
+    // request so the existing grant ID is captured on it.
+    const request = this.requestRepo.create({
+      orgId: grant.orgId,
+      productId: grant.productId,
+      requesterPrincipalId: callerPrincipalId,
+      justification: 'Renewal request — original grant approaching/past expiry',
+      accessScope: grant.accessScope,
+      status: 'pending',
+      temporalWorkflowId: null,
+    });
+    const savedRequest = await this.requestRepo.save(request);
+    await this.recordEvent(grant.orgId, savedRequest.id, 'submitted', callerPrincipalId, null);
+
+    // Notify the owner per F11.6 — notification lives in the owner's org
+    // (recipient's namespace) per the placeholder cross-org pattern (see
+    // submitRequest above).
+    if (product) {
+      await this.fireNotification(() =>
+        this.notificationsService.enqueue({
+          orgId: product.orgId,
+          category: 'access_request_submitted',
+          recipients: [product.ownerPrincipalId],
+          payload: {
+            requestId: savedRequest.id,
+            productId: product.id,
+            productName: product.name,
+            requesterPrincipalId: callerPrincipalId,
+            requesterOrgId: grant.orgId,
+            justification: savedRequest.justification,
+            renewalOfGrantId: grant.id,
+          },
+          deepLink: `/access/requests/${savedRequest.id}`,
+          dedupKey: `access_request_submitted:${savedRequest.id}`,
+        }),
+      );
+    }
+
+    return { mode: 'approval_required', request: this.toRequest(savedRequest) };
   }
 
   /**

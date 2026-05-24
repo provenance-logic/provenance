@@ -85,6 +85,22 @@ export class AccessController {
     return this.accessService.revokeGrant(ctx.orgId, grantId, ctx.principalId);
   }
 
+  // F10.19 / Phase 5.13 — consumer-initiated renewal. Only the grantee
+  // may renew their own grant (service-layer check), so no Roles guard
+  // here. Grant lives in the requester's org per Model A, so URL :orgId
+  // === JWT orgId — no cross-org carve-out needed.
+  @Post('grants/:grantId/renew')
+  renewGrant(
+    @ReqContext() ctx: RequestContext,
+    @Param('grantId') grantId: string,
+  ): Promise<{
+    mode: 'auto_renewed' | 'approval_required';
+    grant?: AccessGrant;
+    request?: AccessRequest;
+  }> {
+    return this.accessService.renewGrant(ctx.orgId, grantId, ctx.principalId);
+  }
+
   // ---------------------------------------------------------------------------
   // Access Requests
   // ---------------------------------------------------------------------------

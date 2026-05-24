@@ -52,4 +52,13 @@ export class AccessGrantEntity {
    */
   @Column({ name: 'expiry_warning_sent_at', type: 'timestamptz', nullable: true })
   expiryWarningSentAt!: Date | null;
+
+  /**
+   * Sibling idempotency marker for the 7-day expiry warning tier
+   * (F10.19 / Phase 5.13). The 14-day tier uses `expiryWarningSentAt`.
+   * Both are NULL until each tier fires; the worker query joins on
+   * `IS NULL` to skip already-warned grants per tier.
+   */
+  @Column({ name: 'expiry_warning_7d_sent_at', type: 'timestamptz', nullable: true })
+  expiryWarning7dSentAt!: Date | null;
 }

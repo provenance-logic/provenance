@@ -10,6 +10,7 @@ import { AccessGrantEntity } from './entities/access-grant.entity.js';
 import { AccessRequestEntity } from './entities/access-request.entity.js';
 import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
+import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
 import { TEMPORAL_CLIENT } from './temporal/temporal-client.provider.js';
 import { createApprovalActivities } from './temporal/approval.activities.js';
 import { ConnectionPackageService } from './connection-package.service.js';
@@ -68,6 +69,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   approvalRequestId: null,
   connectionPackage: null,
   expiryWarningSentAt: null,
+  expiryWarning7dSentAt: null,
   ...overrides,
 });
 
@@ -139,6 +141,7 @@ describe('AccessService', () => {
         { provide: getRepositoryToken(AccessRequestEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(ApprovalEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity),   useFactory: mockRepo },
+        { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
         { provide: TEMPORAL_CLIENT, useFactory: mockTemporalClient },
         {
           provide: ConnectionPackageService,

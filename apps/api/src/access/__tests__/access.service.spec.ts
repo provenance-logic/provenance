@@ -11,6 +11,7 @@ import { AccessRequestEntity } from '../entities/access-request.entity.js';
 import { ApprovalEventEntity } from '../entities/approval-event.entity.js';
 import { TEMPORAL_CLIENT } from '../temporal/temporal-client.provider.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
+import { PortDeclarationEntity } from '../../products/entities/port-declaration.entity.js';
 import { ConnectionPackageService } from '../connection-package.service.js';
 import { ConsentService } from '../../consent/consent.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
@@ -66,6 +67,7 @@ const makeGrant = (overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
   approvalRequestId: null,
   connectionPackage: null,
   expiryWarningSentAt: null,
+  expiryWarning7dSentAt: null,
   ...overrides,
 });
 
@@ -132,6 +134,7 @@ describe('AccessService', () => {
         { provide: getRepositoryToken(AccessRequestEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(ApprovalEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity),   useFactory: mockRepo },
+        { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
         { provide: TEMPORAL_CLIENT, useFactory: mockTemporalClient },
         {
           provide: ConnectionPackageService,
@@ -331,6 +334,123 @@ describe('AccessService', () => {
       await expect(
         service.revokeGrant('org-1', 'grant-1', 'principal-1'),
       ).rejects.toThrow('cascade db error');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // renewGrant() — F10.19 / Phase 5.13
+  // -------------------------------------------------------------------------
+
+  describe('renewGrant()', () => {
+    const inAYear = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+    function portFixture(situationAEligibility: boolean) {
+      return {
+        id: 'port-1',
+        orgId: 'org-1',
+        productId: 'product-1',
+        portType: 'output',
+        situationAEligibility,
+      };
+    }
+
+    function portRepoFor(ports: ReturnType<typeof portFixture>[]) {
+      const repoMock = (service as unknown as { portRepo: { find: jest.Mock } }).portRepo;
+      repoMock.find.mockResolvedValue(ports);
+    }
+
+    it('throws NotFoundException when the grant does not exist', async () => {
+      grantRepo.findOne.mockResolvedValue(null);
+      await expect(service.renewGrant('org-1', 'missing', 'principal-2')).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ForbiddenException when caller is not the grantee', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant({ granteePrincipalId: 'someone-else' }));
+      await expect(service.renewGrant('org-1', 'grant-1', 'principal-2')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws ConflictException when the grant is revoked (must submit a fresh request)', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant({ revokedAt: now }));
+      await expect(service.renewGrant('org-1', 'grant-1', 'principal-2')).rejects.toThrow(ConflictException);
+    });
+
+    it('auto-renews when all output ports are Situation-A-eligible', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant({
+        grantedAt: now,
+        expiresAt: inAYear,
+      }));
+      grantRepo.save.mockImplementation((g: AccessGrantEntity) => Promise.resolve(g));
+      portRepoFor([portFixture(true), portFixture(true)]);
+      productRepo.findOne.mockResolvedValue(makeProduct() as never);
+
+      const result = await service.renewGrant('org-1', 'grant-1', 'principal-2');
+
+      expect(result.mode).toBe('auto_renewed');
+      expect(result.grant).toBeDefined();
+      expect(result.request).toBeUndefined();
+      // Auto-renew resets both expiry-warning markers so the next cycle fires
+      // again.
+      expect(grantRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expiryWarningSentAt: null,
+          expiryWarning7dSentAt: null,
+        }),
+      );
+      // Notification fires informing the grantee.
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'access_grant_renewed',
+          recipients: ['principal-2'],
+          payload: expect.objectContaining({ mode: 'auto_renewed' }),
+        }),
+      );
+    });
+
+    it('triggers approval workflow when any output port requires per-product grant (Situation B)', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant({
+        grantedAt: now,
+        expiresAt: inAYear,
+      }));
+      portRepoFor([portFixture(true), portFixture(false)]); // mixed → B path
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }) as never);
+      requestRepo.create.mockImplementation((dto: unknown) => dto as never);
+      requestRepo.save.mockImplementation((r: AccessRequestEntity) =>
+        Promise.resolve({ ...r, id: 'request-renew', requestedAt: new Date(), updatedAt: new Date() } as never),
+      );
+
+      const result = await service.renewGrant('org-1', 'grant-1', 'principal-2');
+
+      expect(result.mode).toBe('approval_required');
+      expect(result.request).toBeDefined();
+      expect(result.grant).toBeUndefined();
+      // The grant's expiresAt is unchanged in the approval-required path —
+      // consumer keeps existing access while approval runs.
+      expect(grantRepo.save).not.toHaveBeenCalled();
+      // Owner gets the standard access_request_submitted notification,
+      // with the renewal context in payload.renewalOfGrantId.
+      expect(notificationsService.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'access_request_submitted',
+          recipients: ['owner-1'],
+          payload: expect.objectContaining({ renewalOfGrantId: 'grant-1' }),
+        }),
+      );
+    });
+
+    it('approval-required path when no output ports exist (defensive: no all-A short-circuit)', async () => {
+      grantRepo.findOne.mockResolvedValue(makeGrant({
+        grantedAt: now,
+        expiresAt: inAYear,
+      }));
+      portRepoFor([]); // empty — the all-A check requires non-empty
+      productRepo.findOne.mockResolvedValue(makeProduct({ ownerPrincipalId: 'owner-1' }) as never);
+      requestRepo.create.mockImplementation((dto: unknown) => dto as never);
+      requestRepo.save.mockImplementation((r: AccessRequestEntity) =>
+        Promise.resolve({ ...r, id: 'request-renew', requestedAt: new Date(), updatedAt: new Date() } as never),
+      );
+
+      const result = await service.renewGrant('org-1', 'grant-1', 'principal-2');
+      expect(result.mode).toBe('approval_required');
     });
   });
 

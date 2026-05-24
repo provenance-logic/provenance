@@ -32,6 +32,7 @@ import { getConfig } from '../config.js';
 
 const SLA_WARNING_THRESHOLD = 0.8;
 const GRANT_EXPIRY_WARNING_DAYS = 14;
+const GRANT_EXPIRY_WARNING_7D = 7;
 
 @Injectable()
 export class AccessNotificationsTriggerWorker {
@@ -56,6 +57,7 @@ export class AccessNotificationsTriggerWorker {
         this.runSlaWarning(),
         this.runSlaBreach(),
         this.runGrantExpiry(),
+        this.runGrantExpiry7d(),
       ]);
     } catch (err) {
       this.logger.error(
@@ -201,6 +203,59 @@ export class AccessNotificationsTriggerWorker {
       } catch (err) {
         this.logger.error(
           `Grant expiry enqueue failed for grant ${grant.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return count;
+  }
+
+  // ---------------------------------------------------------------------------
+  // F10.19 / Phase 5.13 — 7-day grant expiry tier (urgent reminder)
+  //
+  // Same shape as runGrantExpiry above but with a tighter window and a
+  // distinct idempotency column. Fires for active grants that are 7 days
+  // or fewer from expiry and have not yet been warned at the 7d tier.
+  // The 14d warning may or may not have fired (a grant created with
+  // expires_at less than 14 days out skips the 14d tier entirely;
+  // worker still catches it at the 7d tier).
+  // ---------------------------------------------------------------------------
+  async runGrantExpiry7d(): Promise<number> {
+    const expiryWindowEnd = new Date(
+      Date.now() + GRANT_EXPIRY_WARNING_7D * 24 * 60 * 60 * 1000,
+    );
+
+    const eligible = await this.grantRepo
+      .createQueryBuilder('g')
+      .where('g.revokedAt IS NULL')
+      .andWhere('g.expiresAt IS NOT NULL')
+      .andWhere('g.expiryWarning7dSentAt IS NULL')
+      .andWhere('g.expiresAt <= :end', { end: expiryWindowEnd })
+      .andWhere('g.expiresAt > :now', { now: new Date() })
+      .getMany();
+
+    let count = 0;
+    for (const grant of eligible) {
+      const product = await this.productRepo.findOne({ where: { id: grant.productId, orgId: grant.orgId } });
+      try {
+        await this.notificationsService.enqueue({
+          orgId: grant.orgId,
+          category: 'access_grant_expiring_7d',
+          recipients: [grant.granteePrincipalId],
+          payload: {
+            grantId: grant.id,
+            productId: grant.productId,
+            productName: product ? product.name : null,
+            expiresAt: grant.expiresAt!.toISOString(),
+            warningWindowDays: GRANT_EXPIRY_WARNING_7D,
+          },
+          deepLink: `/marketplace/products/${grant.productId}`,
+          dedupKey: `access_grant_expiring_7d:${grant.id}`,
+        });
+        await this.grantRepo.update({ id: grant.id, orgId: grant.orgId }, { expiryWarning7dSentAt: new Date() });
+        count++;
+      } catch (err) {
+        this.logger.error(
+          `Grant 7d expiry enqueue failed for grant ${grant.id}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

@@ -91,6 +91,7 @@ function makeGrant(overrides: Partial<AccessGrantEntity> = {}): AccessGrantEntit
     approvalRequestId: null,
     connectionPackage: null,
     expiryWarningSentAt: null,
+    expiryWarning7dSentAt: null,
     ...overrides,
   };
 }

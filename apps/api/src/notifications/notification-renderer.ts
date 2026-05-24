@@ -34,6 +34,8 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   access_request_sla_warning: 'Access Request SLA Warning',
   access_request_sla_breach: 'Access Request SLA Breach',
   access_grant_expiring: 'Access Grant Expiring',
+  access_grant_expiring_7d: 'Access Grant Expiring Soon',
+  access_grant_renewed: 'Access Grant Renewed',
   product_deprecated: 'Product Deprecated',
   product_decommissioned: 'Product Decommissioned',
   product_published: 'Product Published',
