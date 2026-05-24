@@ -1,0 +1,85 @@
+openapi: 3.1.0
+info:
+  title: Provenance Me API
+  version: 0.1.0
+  description: |
+    Per-principal self-referential endpoints under `/me`. The caller's
+    identity comes from the JWT — every route here operates on the
+    authenticated principal's own row by definition. Sibling preference
+    routes (`/me/preferences`, F7.46) are documented separately.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Me
+    description: |
+      Authenticated principal's profile + per-principal self-referential reads.
+
+paths:
+  /me:
+    get:
+      tags: [Me]
+      summary: Get the current caller's profile (F7.48 — Provenance Account Surface)
+      description: |
+        Returns the data the `/account` page needs to render: who the caller
+        is signed in as, the org they're scoped to, and the roles they hold.
+        All identity fields are derived from JWT claims; roles come from
+        the request context (resolved server-side at JWT validation time
+        from `identity.role_assignments`); the org name and slug come from
+        a single `organizations.orgs` row lookup by primary key.
+      operationId: getMyProfile
+      responses:
+        '200':
+          description: Caller profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeProfileResponse'
+        '401':
+          description: Unauthenticated
+        '404':
+          description: Org row not found for the caller's `provenance_org_id` claim — programming-error path; should not happen because the auth guard rejects no-org callers earlier.
+
+components:
+  schemas:
+    MeProfileResponse:
+      type: object
+      required: [principalId, keycloakSubject, principalType, displayName, email, org, roles]
+      properties:
+        principalId:
+          type: string
+          format: uuid
+        keycloakSubject:
+          type: string
+        principalType:
+          type: string
+          enum: [human_user, service_account, ai_agent, platform_admin]
+        displayName:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+          format: email
+        org:
+          type: object
+          required: [id, name, slug]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            slug:
+              type: string
+        roles:
+          type: array
+          items:
+            type: string
+            enum:
+              - org_admin
+              - domain_owner
+              - data_product_owner
+              - consumer
+              - governance_member
+              - platform_admin
+              - platform_observer

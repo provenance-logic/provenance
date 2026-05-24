@@ -22,6 +22,7 @@ import { AgentsPage } from '../features/agents/AgentsPage.js';
 import { AgentDetailPage } from '../features/agents/AgentDetailPage.js';
 import { ConnectorsPage } from '../features/connectors/ConnectorsPage.js';
 import { PendingAccessRequestsPage } from '../features/access-requests/PendingAccessRequestsPage.js';
+import { AccountPage } from '../features/account/AccountPage.js';
 
 function NotFoundPage() {
   return (
@@ -107,6 +108,11 @@ export function AppRouter() {
           {/* Pending access requests — approver workflow surface
               (replaces the prior "click notification to approve" flow per B-055). */}
           <Route path="access-requests" element={<PendingAccessRequestsPage />} />
+
+          {/* F7.48 — Provenance Account Surface. Read-only profile + change
+              password + sign out. Reached via the avatar dropdown in the
+              sidebar bottom (NavShell → UserMenu). */}
+          <Route path="account" element={<AccountPage />} />
 
           <Route path="*" element={<NotFoundPage />} />
         </Route>

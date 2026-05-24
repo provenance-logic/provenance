@@ -928,10 +928,10 @@ Control plane availability and latency, lineage emission throughput, federated q
 
 **F7.48 - Provenance Account Surface** *(new v1.6, OSR blocker)*
 
-The platform shall provide every authenticated user with a self-service account surface accessible from a top-right avatar dropdown in the global navigation shell.
+The platform shall provide every authenticated user with a self-service account surface accessible from an avatar dropdown in the global navigation shell. Exact placement follows the shell layout: top-right for top-bar shells, bottom-of-sidebar for left-sidebar shells (Linear / Notion / Slack pattern). The MVP shell uses a left sidebar, so the avatar lives at the bottom of the sidebar.
 
-**Avatar surface (header):**
-- Top-right avatar element rendering the user's initials (derived from `firstName + lastName`, fallback to first two characters of email).
+**Avatar surface (in the navigation shell):**
+- Avatar element rendering the user's initials (derived from `firstName + lastName`, fallback to first two characters of email).
 - Click opens a dropdown containing two entries: "Account" (routes to `/account`) and "Sign out" (performs Keycloak logout and returns the user to the login screen).
 - Clicking outside the dropdown closes it. Keyboard escape closes it.
 

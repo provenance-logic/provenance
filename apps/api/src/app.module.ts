@@ -20,6 +20,7 @@ import { AgentsModule } from './agents/agents.module.js';
 import { SeedModule } from './seed/seed.module.js';
 import { SampleDataModule } from './sample-data/sample-data.module.js';
 import { PreferencesModule } from './preferences/preferences.module.js';
+import { MeModule } from './me/me.module.js';
 import { OrgContextMiddleware } from './database/org-context.middleware.js';
 
 @Module({
@@ -45,6 +46,7 @@ import { OrgContextMiddleware } from './database/org-context.middleware.js';
     SeedModule,
     SampleDataModule,
     PreferencesModule,
+    MeModule,
   ],
 })
 export class AppModule implements NestModule {

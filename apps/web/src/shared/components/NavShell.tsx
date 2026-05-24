@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { useAuth } from '../../auth/AuthProvider.js';
 import { NotificationBell } from '../../features/notifications/NotificationBell.js';
+import { UserMenu } from './UserMenu.js';
 
 interface NavItem {
   to: string;
@@ -17,8 +17,6 @@ const navItems: NavItem[] = [
 ];
 
 export function NavShell() {
-  const { keycloak } = useAuth();
-
   return (
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
@@ -49,13 +47,11 @@ export function NavShell() {
           </li>
         </ul>
 
-        <div className="px-4 py-4 border-t border-slate-700">
-          <button
-            onClick={() => { void keycloak.logout(); }}
-            className="w-full text-left text-sm text-slate-400 hover:text-white transition-colors"
-          >
-            Sign out
-          </button>
+        <div className="px-2 py-3 border-t border-slate-700">
+          {/* F7.48 — sidebar-bottom avatar dropdown. Replaces the prior
+              naked Sign-out button; surfaces who you're signed in as and
+              routes to /account for the full profile + change-password. */}
+          <UserMenu />
         </div>
       </nav>
 
