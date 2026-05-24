@@ -315,11 +315,14 @@ describe('ConnectorProbeService', () => {
 
   describe('probe() — value outside the enum', () => {
     it('throws rather than synthesizing healthy for a stale connector type', async () => {
+      // 'bigquery' was retired by V32 and never returned — use it as the
+      // "stale value outside the enum" sentinel. ('snowflake' is now a valid
+      // type with a real implementation after V37.)
       await expect(
         service.probe(
-          makeConnector({ connectorType: 'snowflake' as unknown as 'postgresql' }),
+          makeConnector({ connectorType: 'bigquery' as unknown as 'postgresql' }),
         ),
-      ).rejects.toThrow(/Unhandled connector type: snowflake/);
+      ).rejects.toThrow(/Unhandled connector type: bigquery/);
       expect(MockPgClient).not.toHaveBeenCalled();
     });
   });

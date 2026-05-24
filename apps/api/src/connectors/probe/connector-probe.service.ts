@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Client as PgClient } from 'pg';
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import * as crypto from 'crypto';
 import type { HealthStatus } from '@provenance/types';
 import type { ConnectorEntity } from '../entities/connector.entity.js';
 import type { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
@@ -63,11 +64,13 @@ export class ConnectorProbeService {
         return this.probeS3(connector);
       case 'databricks':
         return this.probeDatabricks(connector);
+      case 'snowflake':
+        return this.probeSnowflake(connector);
       default: {
         // Exhaustiveness: every ConnectorType must have a branch above.
         // The runtime throw is reachable only if a row carries a value
         // outside the enum (data corruption or a stale row that escaped
-        // V32's cleanup) — fail loudly rather than synthesize healthy.
+        // migration cleanup) — fail loudly rather than synthesize healthy.
         const _exhaustive: never = connector.connectorType;
         throw new Error(`Unhandled connector type: ${String(_exhaustive)}`);
       }
@@ -90,6 +93,8 @@ export class ConnectorProbeService {
         return this.introspectS3(connector, source);
       case 'databricks':
         return this.introspectDatabricks(connector, source);
+      case 'snowflake':
+        return this.inferSchemaSnowflake(connector, source);
       default: {
         const _exhaustive: never = connector.connectorType;
         throw new Error(`Unhandled connector type: ${String(_exhaustive)}`);
@@ -444,6 +449,265 @@ export class ConnectorProbeService {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Snowflake
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Connectivity probe for a Snowflake account.
+   *
+   * Uses the Snowflake SQL REST API (POST /api/v2/statements) with key-pair
+   * JWT authentication — no npm driver required, pure `fetch` like Databricks.
+   * See `documents/architecture/snowflake-integration-sketch.md` §Layer 1 for
+   * the driver decision rationale (Option B, SQL REST API).
+   *
+   * Credential resolution: credentialArn must be set. Either a real AWS
+   * Secrets Manager ARN or the local-dev sentinel `local-env:VARNAME`.
+   * The secret payload must be JSON with shape:
+   *   { "privateKeyPem": "-----BEGIN PRIVATE KEY-----\n...", "user": "...", "account": "..." }
+   *
+   * connection_config fields:
+   *   host        — full account hostname (e.g. en92180.us-east-1.snowflakecomputing.com)
+   *   warehouse   — compute warehouse name (default: COMPUTE_WH)
+   *   role        — Snowflake role (default: ACCOUNTADMIN)
+   *   database    — optional, narrowing context
+   *   schema      — optional, narrowing context
+   */
+  private async probeSnowflake(connector: ConnectorEntity): Promise<ProbeResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      return {
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage:
+          'Snowflake connector requires connection_config.host (the full account hostname, e.g. xy12345.us-east-1.snowflakecomputing.com)',
+      };
+    }
+
+    const creds = await this.resolveSnowflakeCreds(connector);
+    if (!creds) {
+      return {
+        status: 'credential_error',
+        responseTimeMs: null,
+        errorMessage:
+          'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
+      };
+    }
+
+    let jwt: string;
+    try {
+      jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+    } catch (err) {
+      return {
+        status: 'credential_error',
+        responseTimeMs: null,
+        errorMessage: `Failed to generate Snowflake JWT from private key: ${(err as Error).message}`,
+      };
+    }
+
+    const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
+    const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
+
+    const body: Record<string, unknown> = {
+      statement: 'SELECT 1',
+      timeout: 60,
+      warehouse,
+      role,
+    };
+    if (connector.connectionConfig.database) {
+      body.database = String(connector.connectionConfig.database);
+    }
+    if (connector.connectionConfig.schema) {
+      body.schema = String(connector.connectionConfig.schema);
+    }
+
+    const start = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(`https://${host}/api/v2/statements`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const responseTimeMs = Date.now() - start;
+
+      if (response.ok) {
+        // Parse the body and run the sqlState check as a defensive layer.
+        // In practice, Snowflake returns SQL errors as HTTP 422 (non-2xx),
+        // but we check here too so a hypothetical 200-with-error body
+        // (e.g. async statement pending with an error sqlState) is not
+        // silently reported as healthy.
+        const parsed = await safeReadJson(response);
+        const sqlError = extractSnowflakeSqlError(parsed);
+        if (sqlError) {
+          return {
+            status: classifySnowflakeError(sqlError),
+            responseTimeMs: null,
+            errorMessage: `Snowflake SQL error: ${sqlError}`,
+          };
+        }
+        return { status: 'healthy', responseTimeMs, errorMessage: null };
+      }
+
+      const bodySnippet = await safeReadSnippet(response);
+      return {
+        status: classifySnowflakeHttpStatus(response.status),
+        responseTimeMs: null,
+        errorMessage: `Snowflake returned HTTP ${response.status}${bodySnippet ? `: ${bodySnippet}` : ''}`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        return {
+          status: 'timeout',
+          responseTimeMs: null,
+          errorMessage: 'Snowflake probe timed out after 5s',
+        };
+      }
+      return {
+        status: 'unreachable',
+        responseTimeMs: null,
+        errorMessage: error.message ?? 'Unknown error',
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Schema inference for a Snowflake table via INFORMATION_SCHEMA.COLUMNS.
+   *
+   * sourceRef must be a three-part name: database.schema.table. Two-part
+   * (schema.table without database) is not accepted — Snowflake tables are
+   * always three-part, and defaulting the database would silently hide a
+   * misconfigured source registration.
+   *
+   * Snowflake stores unquoted identifiers uppercased; the UPPER() calls in
+   * the WHERE clause ensure the query matches regardless of the casing the
+   * operator registered.
+   *
+   * As a bonus over Databricks, INFORMATION_SCHEMA.TABLES exposes ROW_COUNT
+   * cheaply — the second query populates rowEstimate without a costly COUNT(*).
+   */
+  private async inferSchemaSnowflake(
+    connector: ConnectorEntity,
+    source: SourceRegistrationEntity,
+  ): Promise<SchemaInferenceResult> {
+    const host = String(connector.connectionConfig.host ?? '').replace(/\/+$/, '');
+    if (!host) {
+      throw new Error(
+        'Snowflake connector requires connection_config.host (the full account hostname)',
+      );
+    }
+
+    const creds = await this.resolveSnowflakeCreds(connector);
+    if (!creds) {
+      throw new Error(
+        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
+      );
+    }
+
+    let jwt: string;
+    try {
+      jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+    } catch (err) {
+      throw new Error(
+        `Failed to generate Snowflake JWT from private key: ${(err as Error).message}`,
+      );
+    }
+
+    const parts = source.sourceRef.split('.');
+    if (parts.length !== 3 || parts.some((p) => p.length === 0)) {
+      throw new Error(
+        `Snowflake sourceRef must be a three-part name (database.schema.table); got "${source.sourceRef}"`,
+      );
+    }
+    const [database, schema, table] = parts;
+
+    const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
+    const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
+    const opts = { warehouse, role, database };
+
+    // Query 1: column metadata from INFORMATION_SCHEMA.COLUMNS.
+    // UPPER() on the comparison values because Snowflake stores unquoted
+    // identifiers as uppercase.
+    const columnsSql = `SELECT column_name, data_type, is_nullable, comment, ordinal_position FROM ${database}.INFORMATION_SCHEMA.COLUMNS WHERE table_schema = UPPER('${schema.replace(/'/g, "''")}') AND table_name = UPPER('${table.replace(/'/g, "''")}') ORDER BY ordinal_position`;
+
+    const colResult = await submitSnowflakeStatement(host, jwt, columnsSql, opts);
+    const colRows = parseSnowflakeRows(colResult);
+
+    const columns = colRows.map((row) => ({
+      name: String(row[0] ?? ''),
+      type: String(row[1] ?? 'unknown'),
+      nullable: String(row[2] ?? 'YES') === 'YES',
+      comment: row[3] !== null && row[3] !== undefined ? String(row[3]) : null,
+      position: row[4] !== null && row[4] !== undefined ? parseInt(String(row[4]), 10) : null,
+    }));
+
+    // Query 2: table metadata from INFORMATION_SCHEMA.TABLES (ROW_COUNT + TABLE_TYPE + comment).
+    // This is cheap — Snowflake pre-computes ROW_COUNT; no COUNT(*) needed.
+    let tableType: string | null = null;
+    let tableComment: string | null = null;
+    let rowEstimate: number | null = null;
+    try {
+      const tablesSql = `SELECT table_type, comment, row_count FROM ${database}.INFORMATION_SCHEMA.TABLES WHERE table_schema = UPPER('${schema.replace(/'/g, "''")}') AND table_name = UPPER('${table.replace(/'/g, "''")}')`;
+      const tblResult = await submitSnowflakeStatement(host, jwt, tablesSql, opts);
+      const tblRows = parseSnowflakeRows(tblResult);
+      if (tblRows.length > 0) {
+        tableType = tblRows[0][0] !== null ? String(tblRows[0][0]) : null;
+        tableComment = tblRows[0][1] !== null ? String(tblRows[0][1]) : null;
+        const rawCount = tblRows[0][2];
+        if (rawCount !== null && rawCount !== undefined && rawCount !== '') {
+          const n = parseInt(String(rawCount), 10);
+          if (!isNaN(n)) rowEstimate = n;
+        }
+      }
+    } catch {
+      // Table metadata query is best-effort; column metadata is the primary result.
+      // Failure here does not fail the overall inference.
+    }
+
+    return {
+      schemaDefinition: {
+        columns,
+        tableType,
+        comment: tableComment,
+      },
+      columnCount: columns.length,
+      rowEstimate,
+    };
+  }
+
+  private async resolveSnowflakeCreds(
+    connector: ConnectorEntity,
+  ): Promise<{ privateKeyPem: string; user: string; account: string } | null> {
+    if (!connector.credentialArn) return null;
+    try {
+      const creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      if (
+        typeof creds.privateKeyPem === 'string' && creds.privateKeyPem.length > 0 &&
+        typeof creds.user === 'string' && creds.user.length > 0 &&
+        typeof creds.account === 'string' && creds.account.length > 0
+      ) {
+        return {
+          privateKeyPem: creds.privateKeyPem,
+          user: creds.user,
+          account: creds.account,
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   /**
    * Walks a Databricks workspace via Unity Catalog REST and returns every
    * table the connector's principal can see. Used by ConnectorsService's
@@ -697,6 +961,185 @@ interface UnityCatalogTableResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Snowflake helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a Snowflake key-pair JWT for use with the SQL REST API.
+ *
+ * The JWT is signed with RS256. Claims follow Snowflake's key-pair auth spec:
+ *   iss  = "<ACCOUNT>.<USER>.SHA256:<base64(sha256(DER-SPKI of public key))>"
+ *   sub  = "<ACCOUNT>.<USER>"
+ *   iat  = now (seconds)
+ *   exp  = now + 3600 (1 hour)
+ *
+ * Both ACCOUNT and USER are uppercased per Snowflake's requirement.
+ * The fingerprint uses the SHA-256 of the DER-encoded SubjectPublicKeyInfo
+ * (SPKI) of the RSA public key derived from the supplied private key — this
+ * is what Snowflake actually checks when validating the JWT.
+ *
+ * @param privateKeyPem  PEM-encoded PKCS#8 RSA private key (no passphrase).
+ * @param account        Snowflake account identifier (e.g. "EN92180" or "xy12345.us-east-1").
+ * @param user           Snowflake username (e.g. "PROVENANCE_SVC").
+ * @returns              Signed JWT string.
+ */
+export function generateSnowflakeJwt(
+  privateKeyPem: string,
+  account: string,
+  user: string,
+): string {
+  const accountUpper = account.toUpperCase();
+  const userUpper = user.toUpperCase();
+
+  // Load the private key object.
+  const privateKeyObject = crypto.createPrivateKey(privateKeyPem);
+
+  // Derive the public key and export as DER-encoded SPKI.
+  const publicKeyObject = crypto.createPublicKey(privateKeyObject);
+  const spkiDer = publicKeyObject.export({ type: 'spki', format: 'der' });
+
+  // Compute SHA-256 fingerprint of the SPKI DER bytes, base64-encoded.
+  const fp = 'SHA256:' + crypto.createHash('sha256').update(spkiDer).digest('base64');
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: `${accountUpper}.${userUpper}.${fp}`,
+    sub: `${accountUpper}.${userUpper}`,
+    iat: nowSec,
+    exp: nowSec + 3600,
+  };
+
+  const b64Header = toBase64Url(Buffer.from(JSON.stringify(header)));
+  const b64Payload = toBase64Url(Buffer.from(JSON.stringify(payload)));
+  const signingInput = `${b64Header}.${b64Payload}`;
+
+  const signature = crypto.sign(
+    'RSA-SHA256',
+    Buffer.from(signingInput),
+    privateKeyObject,
+  );
+
+  return `${signingInput}.${toBase64Url(signature)}`;
+}
+
+/**
+ * Submits a SQL statement to the Snowflake SQL REST API and returns the
+ * parsed response body.
+ *
+ * POST https://<host>/api/v2/statements
+ * Auth: Bearer <jwt>, X-Snowflake-Authorization-Token-Type: KEYPAIR_JWT
+ *
+ * Throws on non-2xx responses (Snowflake returns SQL errors as HTTP 422) or
+ * if a 200 response body carries a non-"00000" sqlState (defensive check).
+ * The caller is responsible for parsing `data` rows from the result.
+ */
+export async function submitSnowflakeStatement(
+  host: string,
+  jwt: string,
+  sql: string,
+  opts: { warehouse: string; role: string; database?: string; schema?: string },
+): Promise<SnowflakeStatementResult> {
+  const body: Record<string, unknown> = {
+    statement: sql,
+    timeout: 60,
+    warehouse: opts.warehouse,
+    role: opts.role,
+  };
+  if (opts.database) body.database = opts.database;
+  if (opts.schema) body.schema = opts.schema;
+
+  const response = await fetch(`https://${host}/api/v2/statements`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const parsed = await safeReadJson(response);
+
+  if (!response.ok) {
+    const msg = extractSnowflakeSqlError(parsed) ?? `HTTP ${response.status}`;
+    throw new Error(`Snowflake statement failed: ${msg}`);
+  }
+
+  const sqlError = extractSnowflakeSqlError(parsed);
+  if (sqlError) {
+    throw new Error(`Snowflake SQL error: ${sqlError}`);
+  }
+
+  return parsed as SnowflakeStatementResult;
+}
+
+/**
+ * Extracts the row array from a Snowflake SQL REST API response.
+ * Each element of the outer array is an array of strings (one per column,
+ * in the order defined by `resultSetMetaData.rowType`).
+ */
+export function parseSnowflakeRows(result: SnowflakeStatementResult): Array<Array<string | null>> {
+  return Array.isArray(result?.data) ? result.data : [];
+}
+
+function toBase64Url(buf: Buffer): string {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Extracts a SQL error string from a Snowflake SQL REST API response body.
+ *
+ * Detection is based exclusively on `sqlState` — the SQL-standard completion
+ * code — NOT on Snowflake's proprietary `code` field. This matters because:
+ *   - A successful Snowflake response carries `code: "090001"` (success
+ *     statement code) and `sqlState: "00000"`. Using `code` for error
+ *     detection would false-positive on every successful query.
+ *   - SQL errors (HTTP 422 in practice) carry `sqlState` values like "42S02"
+ *     (object not found), "57014" (query cancelled), "08001" (auth failure),
+ *     etc.
+ *   - `sqlState === "00000"` (or absent/empty) is SQL-standard successful
+ *     completion — never an error.
+ *
+ * The function is intentionally null-safe: a non-object body (e.g. an HTML
+ * 404 page) returns null, letting the caller fall back to HTTP-status
+ * classification.
+ */
+function extractSnowflakeSqlError(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const b = body as Record<string, unknown>;
+  const sqlState = typeof b.sqlState === 'string' ? b.sqlState : '';
+  // sqlState absent or "00000" → successful completion, not an error.
+  if (!sqlState || sqlState === '00000') return null;
+  // Any other sqlState → SQL-level error. Prefer the human-readable message;
+  // prefix with the Snowflake code when present so operators can look it up.
+  const code = typeof b.code === 'string' && b.code.length > 0 ? b.code : null;
+  const message = typeof b.message === 'string' ? b.message : `sqlState ${sqlState}`;
+  return code ? `[${code}] ${message}` : message;
+}
+
+async function safeReadJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+interface SnowflakeStatementResult {
+  resultSetMetaData?: {
+    rowType?: Array<{ name: string; type: string }>;
+    numRows?: number;
+  };
+  data?: Array<Array<string | null>>;
+  code?: string;
+  message?: string;
+  sqlState?: string;
+  status?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Error classifiers
 // ---------------------------------------------------------------------------
 
@@ -728,6 +1171,27 @@ function classifyS3Error(err: Error & { name?: string; Code?: string }): HealthS
 function classifyDatabricksHttpStatus(status: number): HealthStatus {
   if (status === 401 || status === 403) return 'credential_error';
   if (status === 408 || status === 504) return 'timeout';
+  return 'unreachable';
+}
+
+function classifySnowflakeHttpStatus(status: number): HealthStatus {
+  if (status === 401 || status === 403) return 'credential_error';
+  if (status === 408 || status === 504) return 'timeout';
+  return 'unreachable';
+}
+
+/**
+ * Classifies a SQL-level error message extracted from a Snowflake response.
+ * In practice these arrive as HTTP 422, but the classification logic is the
+ * same regardless of transport status. Most SQL errors indicate a
+ * reachable-but-misconfigured state (suspended warehouse, wrong role,
+ * object not found) → unreachable. JWT/auth errors at the SQL layer →
+ * credential_error.
+ */
+function classifySnowflakeError(message: string): HealthStatus {
+  if (/jwt|token|authentication|invalid credentials/i.test(message)) {
+    return 'credential_error';
+  }
   return 'unreachable';
 }
 
