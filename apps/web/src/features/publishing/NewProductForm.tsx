@@ -1,15 +1,22 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { productsApi } from '../../shared/api/products.js';
 import type { DataClassification } from '@provenance/types';
 import { useAuth } from '../../auth/AuthProvider.js';
+import type { SourceBindingNavState } from '../../shared/navigation/source-binding-nav.js';
 
 const classifications: DataClassification[] = ['public', 'internal', 'confidential', 'restricted'];
 
 export function NewProductForm() {
   const { orgId, domainId } = useParams<{ orgId: string; domainId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { keycloak } = useAuth();
+
+  // B-075 Tier A: if we arrived from a connector's discovered-source list, the
+  // source identity rides in router state so the new product's port can be
+  // pre-bound to it once the product (and a port) exist.
+  const bindSource = (location.state as SourceBindingNavState | null)?.bindSource;
 
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
@@ -33,14 +40,23 @@ export function NewProductForm() {
     try {
       const principalId = (keycloak.tokenParsed as { provenance_principal_id?: string } | undefined)
         ?.provenance_principal_id ?? keycloak.subject ?? '';
-      await productsApi.create(orgId, domainId, {
+      const created = await productsApi.create(orgId, domainId, {
         name,
         slug,
         ...(description !== '' ? { description } : {}),
         classification,
         ownerPrincipalId: principalId,
       });
-      navigate(`/dashboard/${orgId}/domains/${domainId}`);
+      // B-075 Tier A: when binding a discovered source, drop the producer
+      // straight into the new product with the source carried forward (the
+      // port form opens pre-bound). Otherwise keep the original behaviour of
+      // returning to the domain dashboard.
+      if (bindSource) {
+        const forward: SourceBindingNavState = { bindSource };
+        navigate(`/dashboard/${orgId}/domains/${domainId}/products/${created.id}`, { state: forward });
+      } else {
+        navigate(`/dashboard/${orgId}/domains/${domainId}`);
+      }
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
@@ -50,6 +66,15 @@ export function NewProductForm() {
   return (
     <div className="p-8 max-w-2xl mx-auto">
       <h1 className="text-2xl font-semibold text-slate-900 mb-6">New Data Product</h1>
+
+      {bindSource && (
+        <div className="mb-6 rounded-md border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-slate-700">
+          This product's first output port will bind to{' '}
+          <span className="font-medium text-slate-900">{bindSource.sourceDisplayName}</span>{' '}
+          <span className="text-slate-500">(from {bindSource.connectorName})</span>. Create the
+          product below, then you'll land on the port form with that source pre-selected.
+        </div>
+      )}
 
       <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-5">
         <Field label="Name" required>

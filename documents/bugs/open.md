@@ -201,7 +201,7 @@ The fix scope, post-PRD-decision, is comparable to #164's blast radius for Model
 ## B-075 — Connector → discovery → data product journey has no visible thread in the UI; registered connectors are a dead-end and the domain-owner publishing flow has no clear front door
 
 - **Severity:** **Medium** (UX friction — the capabilities all work and a workaround path exists, but the path through them is undiscoverable). **This is the headline finding of the 2026-05-24 domain-owner persona walkthrough**, and it's high-value: it's the gap between "API-complete" and "a person can actually use the platform." Worth treating as an OSR-experience polish item even though it doesn't break a P0 flow outright.
-- **Status:** Open.
+- **Status:** Partially open. **Surface 1 detail page shipped (#205)** — connector detail route, discovery summary, discovered-sources table. **Surface 1 per-source "Create data product" deep-link wired (Tier A, PR `feat/create-product-from-source`)** — the button now threads the source through `NewProductForm` into `ProductDetail` with the output port's binding pre-selected (was a v1 stub that navigated to `/dashboard` and dropped the source). **Remaining:** Surface 1 lineage view for discovered objects; all of Surface 2 (front door, navigate-into-product-after-create, discovered-source→product nudge, heavy publish gate); and the contract-schema auto-default (the producer must still hand-author the Contract Schema JSON even on a source-bound port — the schema was already discovered). The contract-schema auto-default is the natural next slice and is flagged in-UI on the bound port form.
 - **Area:** `apps/web/src/features/connectors/ConnectorsPage.tsx` (no detail surface), `apps/web/src/app/Router.tsx` (no connector detail route), `apps/web/src/shared/components/NavShell.tsx` (nav labels), `apps/web/src/features/publishing/` (`DashboardRedirect`, `NewProductForm`, `DomainDashboard`, `ProductDetail`). Backend already exposes everything needed (discovered sources, crawl events, lineage, capability manifests, port binding) — **this is a frontend-surfacing gap, not a backend gap.**
 - **Discovered:** 2026-05-24, by Matt running a domain-owner persona walkthrough immediately after the Snowflake connector tranche shipped (#197–#202). The full discover→publish→consume capability is real and verified end-to-end at the data layer; the UI just doesn't give a domain owner a navigable thread through it. Same class as [B-055](resolved.md) (no standalone front door for an approver until a walkthrough forced the question). See memory `feedback_persona_walkthroughs_catch_what_audits_miss`.
 
@@ -213,9 +213,9 @@ Registering a connector (and the auto-crawl that follows) does real, valuable wo
 - no view of the **discovered sources** the crawl found,
 - no **crawl status / results** ("what did the last crawl discover, and when?"),
 - no **lineage** view for discovered objects,
-- no **"create a data product from this source"** action.
+- ~~no **"create a data product from this source"** action.~~ → **shipped (#205 detail page + Tier A deep-link).** The per-source button now deep-links into authoring and pre-binds the new product's output port to the source.
 
-The discovered sources surface **only** inside the "Bind to a discovered source" dropdown buried in the port-authoring form. So a user who registers a connector has no in-product answer to "what did this do, and what do I do next?" — the connector's core feature (auto-discovery) is invisible.
+The discovered sources now also have a first-class home (the detail page's discovered-sources table). They previously surfaced **only** inside the "Bind to a discovered source" dropdown buried in the port-authoring form. So a user who registers a connector has no in-product answer to "what did this do, and what do I do next?" — the connector's core feature (auto-discovery) is invisible.
 
 ### Surface 2 — the domain-owner publishing flow has weak front doors
 

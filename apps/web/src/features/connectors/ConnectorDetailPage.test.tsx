@@ -257,7 +257,7 @@ describe('DiscoveredSourcesTable', () => {
     expect(screen.getByText('none')).toBeInTheDocument();
   });
 
-  it('renders a "Create data product" button per source and calls onCreateProduct with sourceId', () => {
+  it('renders a "Create data product" button per source and calls onCreateProduct with the full source', () => {
     const handler = vi.fn();
     render(
       <DiscoveredSourcesTable
@@ -268,7 +268,9 @@ describe('DiscoveredSourcesTable', () => {
 
     const btn = screen.getByRole('button', { name: /create data product/i });
     fireEvent.click(btn);
-    expect(handler).toHaveBeenCalledWith('00000000-0000-0000-0000-000000000010');
+    // B-075 Tier A: the handler receives the whole source (it needs sourceRef +
+    // displayName to build the deep-link router state), not just the id.
+    expect(handler).toHaveBeenCalledWith(baseSource());
   });
 
   it('renders the correct source count in the subtitle', () => {
