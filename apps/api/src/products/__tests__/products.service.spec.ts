@@ -348,7 +348,7 @@ describe('ProductsService', () => {
         owner:        { id: 'principal-1', displayName: 'Jane', email: 'jane@ex.com' },
         domainTeam:   null,
         freshness:    null,
-        accessStatus: { status: 'granted', grantedAt: now.toISOString(), expiresAt: null },
+        accessStatus: { status: 'granted', grantedAt: now.toISOString(), expiresAt: null, grantId: null },
         columnSchema: null,
       });
 

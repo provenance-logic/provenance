@@ -278,7 +278,7 @@ describe('ProductEnrichmentService', () => {
         .mockResolvedValueOnce({ status: 'pending' })   // pending lookup
         .mockResolvedValueOnce(null);                    // denied lookup (not reached)
       await expect(service.resolveAccessStatus('org-1', 'product-1', mockCtx))
-        .resolves.toEqual({ status: 'pending', grantedAt: null, expiresAt: null });
+        .resolves.toEqual({ status: 'pending', grantedAt: null, expiresAt: null, grantId: null });
     });
 
     it('returns not_requested when no grant and no pending/denied request', async () => {
@@ -287,7 +287,7 @@ describe('ProductEnrichmentService', () => {
         .mockResolvedValueOnce(null)   // pending
         .mockResolvedValueOnce(null);  // denied
       await expect(service.resolveAccessStatus('org-1', 'product-1', mockCtx))
-        .resolves.toEqual({ status: 'not_requested', grantedAt: null, expiresAt: null });
+        .resolves.toEqual({ status: 'not_requested', grantedAt: null, expiresAt: null, grantId: null });
     });
   });
 
@@ -312,7 +312,7 @@ describe('ProductEnrichmentService', () => {
         owner:         { id: 'p-1', displayName: 'Alice', email: 'alice@example.com' },
         domainTeam:    null,
         freshness:     null,
-        accessStatus:  { status: 'not_requested', grantedAt: null, expiresAt: null },
+        accessStatus:  { status: 'not_requested', grantedAt: null, expiresAt: null, grantId: null },
         columnSchema:  null,
       });
     });

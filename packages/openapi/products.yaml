@@ -279,6 +279,14 @@ components:
         expiresAt:
           $ref: "#/components/schemas/Timestamp"
           nullable: true
+        grantId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          nullable: true
+          description: |
+            ID of the active grant when status === 'granted'; null otherwise.
+            Used by the consumer-side renewal flow (F10.19) to call POST
+            /grants/:grantId/renew without an extra grant-list roundtrip.
 
     ProductColumnSchema:
       type: object
