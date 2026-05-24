@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   marketplaceApi,
@@ -6,6 +6,7 @@ import {
   type SnippetDestination,
   type PortSnippetResponse,
 } from '../../shared/api/marketplace.js';
+import { accessApi } from '../../shared/api/access.js';
 import type { PortSituationResponse } from '@provenance/types';
 import { ApiError } from '../../shared/api/client.js';
 import { useAuth } from '../../auth/AuthProvider.js';
@@ -789,17 +790,21 @@ function deriveAccessState(
 function AccessTab({
   product,
   onRequestAccess,
+  onAccessRenewed,
   effectiveState,
 }: {
   product: MarketplaceProductDetail;
   onRequestAccess: () => void;
+  onAccessRenewed: () => void;
   effectiveState: EffectiveAccessState;
 }) {
-  const { principalId } = useAuth();
+  const { principalId, orgId: callerOrgId } = useAuth();
 
   const [myRequest, setMyRequest]   = useState<AccessRequest | null>(null);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
+  const [renewing, setRenewing]     = useState(false);
+  const [renewMessage, setRenewMessage] = useState<{ kind: 'success' | 'pending' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     if (!principalId) { setLoading(false); return; }
@@ -814,6 +819,44 @@ function AccessTab({
         setLoading(false);
       });
   }, [product.id, principalId]);
+
+  // F10.19 / Phase 5.13 — consumer-initiated renewal. The grant lives in
+  // the requester's org per Model A; orgId on the URL is the caller's org.
+  // Calls /access/grants/:grantId/renew and branches on `mode`:
+  //   - auto_renewed → success toast with new expiry; parent refreshes
+  //     the product so accessStatus.expiresAt picks up the extension.
+  //   - approval_required → pending-message; parent refreshes so the
+  //     pending request appears in the tab.
+  const handleRenew = async () => {
+    if (!callerOrgId || !product.accessStatus?.grantId) return;
+    setRenewing(true);
+    setRenewMessage(null);
+    try {
+      const result = await accessApi.grants.renew(callerOrgId, product.accessStatus.grantId);
+      if (result.mode === 'auto_renewed' && result.grant) {
+        const newExpiry = result.grant.expiresAt
+          ? new Date(result.grant.expiresAt).toLocaleDateString()
+          : 'no expiry';
+        setRenewMessage({
+          kind: 'success',
+          text: `Renewed — new expiry ${newExpiry}`,
+        });
+      } else {
+        setRenewMessage({
+          kind: 'pending',
+          text: 'Renewal request sent. The product owner will review; you keep access in the meantime.',
+        });
+      }
+      onAccessRenewed();
+    } catch (err) {
+      setRenewMessage({
+        kind: 'error',
+        text: err instanceof ApiError ? err.message : 'Renewal failed',
+      });
+    } finally {
+      setRenewing(false);
+    }
+  };
 
   if (loading) return <LoadingState label="access status" />;
   if (error)   return <ErrorState message={error} />;
@@ -842,6 +885,34 @@ function AccessTab({
           </p>
           {myRequest?.resolutionNote && (
             <p className="text-xs text-green-700 mt-1">Note: {myRequest.resolutionNote}</p>
+          )}
+          {/* F10.19 — renewal CTA. Only renders when the active grant has
+              an expiry (perpetual grants can't be renewed) AND we have
+              the grant id from the access-status enrichment. */}
+          {product.accessStatus?.expiresAt && product.accessStatus.grantId && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleRenew()}
+                disabled={renewing}
+                className="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-white text-green-800 hover:bg-green-100 disabled:opacity-50 transition-colors"
+              >
+                {renewing ? 'Renewing…' : 'Renew access'}
+              </button>
+              {renewMessage && (
+                <span
+                  className={
+                    renewMessage.kind === 'success'
+                      ? 'text-xs text-green-800 font-medium'
+                      : renewMessage.kind === 'pending'
+                      ? 'text-xs text-amber-700'
+                      : 'text-xs text-red-700'
+                  }
+                >
+                  {renewMessage.text}
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -967,6 +1038,16 @@ export function ProductDetailPage() {
   const [activeTab, setActiveTab]       = useState<TabId>('overview');
   const [showAccessRequest, setShowAccessRequest] = useState(false);
   const [submittedRequest, setSubmittedRequest]   = useState<AccessRequest | null>(null);
+
+  const reloadProduct = useCallback(() => {
+    if (!productId) return;
+    marketplaceApi.products.getGlobal(productId)
+      .then((p) => setProduct(p))
+      .catch(() => {
+        // Silent — a reload failure leaves the prior state intact; the
+        // initial fetch's error handling stays in the main load path.
+      });
+  }, [productId]);
 
   useEffect(() => {
     if (!productId) return;
@@ -1118,6 +1199,7 @@ export function ProductDetailPage() {
           <AccessTab
             product={product}
             onRequestAccess={() => setShowAccessRequest(true)}
+            onAccessRenewed={reloadProduct}
             effectiveState={effectiveState}
           />
         )}

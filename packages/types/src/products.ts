@@ -274,6 +274,12 @@ export interface ProductAccessStatus {
   status: ProductAccessStatusValue;
   grantedAt: IsoTimestamp | null;
   expiresAt: IsoTimestamp | null;
+  /**
+   * ID of the active grant when `status === 'granted'`; null otherwise.
+   * Used by the consumer-side renewal flow (F10.19) to call the renewal
+   * endpoint without an extra grant-list roundtrip.
+   */
+  grantId: Uuid | null;
 }
 
 export interface ProductColumnSchemaColumn {

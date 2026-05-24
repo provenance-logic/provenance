@@ -139,18 +139,19 @@ export class ProductEnrichmentService {
           status: 'granted',
           grantedAt: grant.grantedAt.toISOString(),
           expiresAt: grant.expiresAt?.toISOString() ?? null,
+          grantId: grant.id,
         };
       }
       const request = await this.accessRequestRepo.findOne({
         where: { orgId, productId, requesterPrincipalId: principalId, status: 'pending' },
       });
-      if (request) return { status: 'pending', grantedAt: null, expiresAt: null };
+      if (request) return { status: 'pending', grantedAt: null, expiresAt: null, grantId: null };
       const denied = await this.accessRequestRepo.findOne({
         where: { orgId, productId, requesterPrincipalId: principalId, status: 'denied' },
         order: { resolvedAt: 'DESC' },
       });
-      if (denied) return { status: 'denied', grantedAt: null, expiresAt: null };
-      return { status: 'not_requested', grantedAt: null, expiresAt: null };
+      if (denied) return { status: 'denied', grantedAt: null, expiresAt: null, grantId: null };
+      return { status: 'not_requested', grantedAt: null, expiresAt: null, grantId: null };
     } catch { return null; }
   }
 

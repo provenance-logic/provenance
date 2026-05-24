@@ -107,5 +107,34 @@ export const accessApi = {
 
     get: (orgId: string, grantId: string): Promise<AccessGrant> =>
       api.get<AccessGrant>(`${base(orgId)}/grants/${grantId}`),
+
+    /**
+     * F10.19 / Phase 5.13 — consumer-initiated grant renewal.
+     *
+     * Returns `{mode, grant?, request?}`:
+     *   - `auto_renewed`: all the product's output ports are
+     *     situation-A-eligible (open access); the grant's `expiresAt`
+     *     extended by the original TTL; warning markers reset. `grant`
+     *     contains the updated row.
+     *   - `approval_required`: any port requires per-product grant;
+     *     a new pending access_request was created linked to this
+     *     grant via `payload.renewalOfGrantId`. `request` contains
+     *     the new pending request. The existing grant stays active
+     *     while approval runs.
+     *
+     * Only the grantee may call. 409 if the grant is revoked.
+     */
+    renew: (
+      orgId: string,
+      grantId: string,
+    ): Promise<{
+      mode: 'auto_renewed' | 'approval_required';
+      grant?: AccessGrant;
+      request?: AccessRequest;
+    }> =>
+      api.post(
+        `${base(orgId)}/grants/${grantId}/renew`,
+        {},
+      ),
   },
 };
