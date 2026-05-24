@@ -1,4 +1,5 @@
-import { ConnectorProbeService } from './connector-probe.service.js';
+import * as crypto from 'crypto';
+import { ConnectorProbeService, generateSnowflakeJwt, submitSnowflakeStatement, parseSnowflakeRows } from './connector-probe.service.js';
 import { SecretsManagerService } from './secrets-manager.service.js';
 import type { ConnectorEntity } from '../entities/connector.entity.js';
 import type { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
@@ -273,14 +274,17 @@ describe('ConnectorProbeService.probeDatabricks (B-063 Layer 1)', () => {
   // ---------- exhaustiveness — values outside the enum throw ----------
 
   it('throws rather than synthesizing healthy for a connector type outside the enum', async () => {
+    // 'bigquery' was retired by V32 and never returned — use it as the
+    // "stale value outside the enum" sentinel. ('snowflake' is now a valid
+    // type with a real implementation after V37.)
     await expect(
       service.probe(
         makeDatabricksConnector({
-          connectorType: 'snowflake' as unknown as 'databricks',
+          connectorType: 'bigquery' as unknown as 'databricks',
           connectionConfig: {},
         }),
       ),
-    ).rejects.toThrow(/Unhandled connector type: snowflake/);
+    ).rejects.toThrow(/Unhandled connector type: bigquery/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -784,5 +788,849 @@ describe('ConnectorProbeService.walkDatabricksLineage (B-063 Layer 4)', () => {
     ).rejects.toThrow(/credentialArn/);
 
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake — JWT generation (Layer 1, key-pair auth)
+// ---------------------------------------------------------------------------
+
+describe('generateSnowflakeJwt (Snowflake Layer 1 — key-pair JWT)', () => {
+  // Generate a fresh throwaway RSA-2048 key for every test group.
+  // This ensures all fingerprint assertions are internally consistent —
+  // we compute the expected fingerprint from the same key we generate,
+  // never from a hardcoded value.
+  let privateKeyPem: string;
+  let spkiDer: Buffer;
+
+  beforeAll(() => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+    });
+    privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    spkiDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+  });
+
+  function decodeJwtPart(b64url: string): unknown {
+    // base64url → base64 → Buffer → JSON
+    const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
+  }
+
+  it('produces a three-part JWT (header.payload.signature)', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'EN92180', 'PROVENANCE_SVC');
+    const parts = jwt.split('.');
+    expect(parts).toHaveLength(3);
+    // Each part must be non-empty base64url.
+    for (const part of parts) {
+      expect(part.length).toBeGreaterThan(0);
+      expect(part).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
+  });
+
+  it('header declares alg=RS256 and typ=JWT', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'EN92180', 'PROVENANCE_SVC');
+    const header = decodeJwtPart(jwt.split('.')[0]) as Record<string, unknown>;
+    expect(header.alg).toBe('RS256');
+    expect(header.typ).toBe('JWT');
+  });
+
+  it('sub is <ACCOUNT>.<USER> uppercased', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'en92180', 'provenance_svc');
+    const payload = decodeJwtPart(jwt.split('.')[1]) as Record<string, unknown>;
+    expect(payload.sub).toBe('EN92180.PROVENANCE_SVC');
+  });
+
+  it('iss is <ACCOUNT>.<USER>.SHA256:<fingerprint> uppercased', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'en92180', 'provenance_svc');
+    const payload = decodeJwtPart(jwt.split('.')[1]) as Record<string, unknown>;
+    const expectedFp =
+      'SHA256:' + crypto.createHash('sha256').update(spkiDer).digest('base64');
+    expect(payload.iss).toBe(`EN92180.PROVENANCE_SVC.${expectedFp}`);
+  });
+
+  it('exp - iat === 3600 (1 hour token lifetime)', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'EN92180', 'PROVENANCE_SVC');
+    const payload = decodeJwtPart(jwt.split('.')[1]) as Record<string, string | number>;
+    expect(Number(payload.exp) - Number(payload.iat)).toBe(3600);
+  });
+
+  it('iat is close to now (within 5 seconds)', () => {
+    const before = Math.floor(Date.now() / 1000);
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'EN92180', 'PROVENANCE_SVC');
+    const after = Math.floor(Date.now() / 1000);
+    const payload = decodeJwtPart(jwt.split('.')[1]) as Record<string, number>;
+    expect(payload.iat).toBeGreaterThanOrEqual(before);
+    expect(payload.iat).toBeLessThanOrEqual(after + 1);
+  });
+
+  it('signature is verifiable with the derived public key', () => {
+    const jwt = generateSnowflakeJwt(privateKeyPem, 'EN92180', 'PROVENANCE_SVC');
+    const [h, p, sig] = jwt.split('.');
+    const signingInput = `${h}.${p}`;
+    // Reconstruct base64 from base64url for verification.
+    const sigBuf = Buffer.from(sig.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const publicKey = crypto.createPublicKey(privateKeyPem);
+    const valid = crypto.verify(
+      'RSA-SHA256',
+      Buffer.from(signingInput),
+      publicKey,
+      sigBuf,
+    );
+    expect(valid).toBe(true);
+  });
+
+  it('throws on invalid/non-PEM private key input', () => {
+    expect(() => generateSnowflakeJwt('not-a-key', 'EN92180', 'SVC')).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake — probe (Layer 1)
+// ---------------------------------------------------------------------------
+
+const SNOWFLAKE_HOST = 'en92180.us-east-1.snowflakecomputing.com';
+const SNOWFLAKE_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-snowflake-AbCdEf';
+
+// Build a minimal valid RSA key for probe/inferSchema tests.
+// Generated once at module scope so tests don't pay key-gen cost each run.
+const { privateKey: THROWAWAY_KEY } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+const THROWAWAY_KEY_PEM = THROWAWAY_KEY.export({ type: 'pkcs8', format: 'pem' }) as string;
+
+const SNOWFLAKE_SECRET = {
+  privateKeyPem: THROWAWAY_KEY_PEM,
+  user: 'PROVENANCE_SVC',
+  account: 'EN92180',
+};
+
+function makeSnowflakeConnector(
+  overrides: Partial<ConnectorEntity> = {},
+): ConnectorEntity {
+  return {
+    id: '00000000-0000-0000-0000-000000000002',
+    orgId: '00000000-0000-0000-0000-000000000099',
+    domainId: '00000000-0000-0000-0000-0000000000aa',
+    name: 'test-snowflake',
+    description: null,
+    connectorType: 'snowflake',
+    connectionConfig: {
+      host: SNOWFLAKE_HOST,
+      warehouse: 'COMPUTE_WH',
+      role: 'ACCOUNTADMIN',
+    },
+    credentialArn: SNOWFLAKE_ARN,
+    healthStatus: 'pending',
+    lastValidatedAt: null,
+    createdByPrincipalId: '00000000-0000-0000-0000-0000000000bb',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  } as ConnectorEntity;
+}
+
+function makeSnowflakeSource(
+  sourceRef = 'PROD_DB.SALES.ORDERS',
+): SourceRegistrationEntity {
+  return {
+    id: '00000000-0000-0000-0000-00000000d001',
+    orgId: '00000000-0000-0000-0000-000000000099',
+    connectorId: '00000000-0000-0000-0000-000000000002',
+    sourceType: 'table',
+    sourceRef,
+    displayName: sourceRef,
+    description: null,
+    registeredBy: '00000000-0000-0000-0000-0000000000bb',
+    registeredAt: new Date(),
+    updatedAt: new Date(),
+  } as SourceRegistrationEntity;
+}
+
+/**
+ * Representative Snowflake SQL REST API success envelope for SELECT 1.
+ *
+ * Captured from a live Snowflake account (HTTP 200). Key fields:
+ *   code: "090001"   — Snowflake's proprietary *success* statement code,
+ *                      NOT an error indicator. Must NOT trip extractSnowflakeSqlError.
+ *   sqlState: "00000" — SQL-standard successful completion.
+ *   message: "Statement executed successfully." — informational, not an error.
+ *
+ * This envelope is the regression test for the bug where using `code` for
+ * error detection false-positived on every successful Snowflake query.
+ */
+function sfOkResponse(): string {
+  return JSON.stringify({
+    resultSetMetaData: {
+      numRows: 1,
+      rowType: [{ name: '1', type: 'fixed' }],
+    },
+    data: [['1']],
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+    status: undefined,
+  });
+}
+
+describe('ConnectorProbeService.probeSnowflake (Layer 1)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = {
+      getSecretValue: jest.fn(),
+    } as unknown as jest.Mocked<SecretsManagerService>;
+    secretsManager.getSecretValue.mockResolvedValue(SNOWFLAKE_SECRET as unknown as Record<string, string>);
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // ---------- happy path ----------
+
+  it('returns healthy with responseTimeMs when Snowflake returns 200 with valid result', async () => {
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('healthy');
+    expect(result.responseTimeMs).not.toBeNull();
+    expect(result.responseTimeMs!).toBeGreaterThanOrEqual(0);
+    expect(result.errorMessage).toBeNull();
+  });
+
+  it('POSTs to the SQL REST API endpoint on the configured host', async () => {
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    await service.probe(makeSnowflakeConnector());
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`https://${SNOWFLAKE_HOST}/api/v2/statements`);
+    expect((init.headers as Record<string, string>)['X-Snowflake-Authorization-Token-Type']).toBe(
+      'KEYPAIR_JWT',
+    );
+    expect((init.headers as Record<string, string>)['Authorization']).toMatch(/^Bearer /);
+    expect(init.method).toBe('POST');
+  });
+
+  it('sends SELECT 1 as the statement with warehouse and role', async () => {
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    await service.probe(makeSnowflakeConnector());
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.statement).toBe('SELECT 1');
+    expect(body.warehouse).toBe('COMPUTE_WH');
+    expect(body.role).toBe('ACCOUNTADMIN');
+  });
+
+  it('includes optional database and schema in the request body when set', async () => {
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    await service.probe(
+      makeSnowflakeConnector({
+        connectionConfig: {
+          host: SNOWFLAKE_HOST,
+          warehouse: 'COMPUTE_WH',
+          role: 'ACCOUNTADMIN',
+          database: 'PROD_DB',
+          schema: 'SALES',
+        },
+      }),
+    );
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.database).toBe('PROD_DB');
+    expect(body.schema).toBe('SALES');
+  });
+
+  it('omits database and schema from the request body when not set', async () => {
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    await service.probe(makeSnowflakeConnector());
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect('database' in body).toBe(false);
+    expect('schema' in body).toBe(false);
+  });
+
+  // ---------- HTTP error classification ----------
+
+  it('classifies 401 as credential_error', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response('{"message":"JWT token is invalid"}', { status: 401 }),
+    );
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(result.errorMessage).toContain('401');
+  });
+
+  it('classifies 403 as credential_error', async () => {
+    fetchSpy.mockResolvedValue(new Response('{"message":"access denied"}', { status: 403 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(result.errorMessage).toContain('403');
+  });
+
+  it('classifies 504 gateway timeout as timeout', async () => {
+    fetchSpy.mockResolvedValue(new Response('', { status: 504 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('timeout');
+  });
+
+  it('classifies 500 as unreachable', async () => {
+    fetchSpy.mockResolvedValue(new Response('internal server error', { status: 500 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('unreachable');
+    expect(result.errorMessage).toContain('500');
+  });
+
+  // ---------- success-envelope regression test ----------
+
+  it('returns healthy for the real live Snowflake success envelope (code 090001 + sqlState 00000)', async () => {
+    // Regression test for the bug where extractSnowflakeSqlError checked
+    // `code !== "00000"` and false-positived on Snowflake's proprietary
+    // success code "090001". A healthy account must report healthy.
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('healthy');
+    expect(result.errorMessage).toBeNull();
+    expect(result.responseTimeMs).not.toBeNull();
+  });
+
+  // ---------- 422 SQL error (real Snowflake behaviour) ----------
+
+  it('classifies a 422 SQL error response as unreachable', async () => {
+    // Snowflake returns HTTP 422 (not 200) for SQL-level errors.
+    // Body carries code "002003" and sqlState "42S02" for object-not-found.
+    const errorBody = JSON.stringify({
+      code: '002003',
+      sqlState: '42S02',
+      message: "SQL compilation error:\nObject 'X' does not exist or not authorized.",
+      status: undefined,
+    });
+    fetchSpy.mockResolvedValue(new Response(errorBody, { status: 422 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    // Non-2xx path: classifySnowflakeHttpStatus(422) → unreachable.
+    expect(result.status).toBe('unreachable');
+    expect(result.errorMessage).toContain('422');
+  });
+
+  it('classifies a 401 JWT error response as credential_error', async () => {
+    const errorBody = JSON.stringify({
+      code: '390144',
+      sqlState: '08001',
+      message: 'JWT token is invalid. Invalid token: JWT is expired.',
+    });
+    fetchSpy.mockResolvedValue(new Response(errorBody, { status: 401 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+  });
+
+  // ---------- defensive: 200 with bad sqlState ----------
+
+  it('classifies a hypothetical 200 response with non-"00000" sqlState as unreachable', async () => {
+    // Defensive edge case: if Snowflake ever returns HTTP 200 with an error
+    // sqlState (e.g. async statement that resolved to an error), the probe
+    // must not report healthy.
+    const edgeBody = JSON.stringify({
+      code: '090001',
+      sqlState: '42S02',
+      message: "Object 'X' does not exist or not authorized.",
+    });
+    fetchSpy.mockResolvedValue(new Response(edgeBody, { status: 200 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('unreachable');
+    expect(result.errorMessage).toContain('SQL error');
+  });
+
+  // ---------- network / timeout ----------
+
+  it('classifies an AbortError (5s timeout) as timeout', async () => {
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    fetchSpy.mockRejectedValue(abortErr);
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('timeout');
+    expect(result.errorMessage).toContain('5s');
+  });
+
+  it('classifies a thrown network error as unreachable', async () => {
+    fetchSpy.mockRejectedValue(new Error('ENOTFOUND en92180.snowflakecomputing.com'));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('unreachable');
+    expect(result.errorMessage).toContain('ENOTFOUND');
+  });
+
+  // ---------- config and credential validation ----------
+
+  it('returns unreachable with a clear message when host is missing', async () => {
+    const result = await service.probe(
+      makeSnowflakeConnector({ connectionConfig: {} }),
+    );
+
+    expect(result.status).toBe('unreachable');
+    expect(result.errorMessage).toContain('connection_config.host');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns credential_error when credentialArn is not set', async () => {
+    const result = await service.probe(
+      makeSnowflakeConnector({ credentialArn: null }),
+    );
+
+    expect(result.status).toBe('credential_error');
+    expect(result.errorMessage).toContain('credentialArn');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns credential_error when the resolved secret lacks required fields', async () => {
+    secretsManager.getSecretValue.mockResolvedValue({ someOtherField: 'value' } as unknown as Record<string, string>);
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns credential_error when secrets manager resolution throws', async () => {
+    secretsManager.getSecretValue.mockRejectedValue(new Error('Local-dev secret not set'));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns credential_error when the private key PEM is malformed', async () => {
+    secretsManager.getSecretValue.mockResolvedValue({
+      privateKeyPem: 'NOT-A-VALID-PEM',
+      user: 'SVC',
+      account: 'EN92180',
+    } as unknown as Record<string, string>);
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(result.errorMessage).toContain('JWT');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake — schema inference (Layer 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Representative Snowflake INFORMATION_SCHEMA.COLUMNS REST response.
+ * Includes the real success-envelope fields (code, sqlState, message) so that
+ * schema-inference tests pin that those fields don't cause false SQL errors.
+ */
+function sfColumnsResponse(
+  cols: Array<{
+    name: string;
+    type: string;
+    nullable: string;
+    comment: string | null;
+    position: string;
+  }>,
+): string {
+  return JSON.stringify({
+    resultSetMetaData: {
+      numRows: cols.length,
+      rowType: [
+        { name: 'COLUMN_NAME', type: 'text' },
+        { name: 'DATA_TYPE', type: 'text' },
+        { name: 'IS_NULLABLE', type: 'text' },
+        { name: 'COMMENT', type: 'text' },
+        { name: 'ORDINAL_POSITION', type: 'fixed' },
+      ],
+    },
+    data: cols.map((c) => [c.name, c.type, c.nullable, c.comment, c.position]),
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+/**
+ * Representative INFORMATION_SCHEMA.TABLES response.
+ * Includes the real success-envelope fields (code, sqlState, message).
+ */
+function sfTablesResponse(tableType: string, comment: string | null, rowCount: string): string {
+  return JSON.stringify({
+    resultSetMetaData: {
+      numRows: 1,
+      rowType: [
+        { name: 'TABLE_TYPE', type: 'text' },
+        { name: 'COMMENT', type: 'text' },
+        { name: 'ROW_COUNT', type: 'fixed' },
+      ],
+    },
+    data: [[tableType, comment, rowCount]],
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+describe('ConnectorProbeService.inferSchemaSnowflake (Layer 2)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = {
+      getSecretValue: jest.fn(),
+    } as unknown as jest.Mocked<SecretsManagerService>;
+    secretsManager.getSecretValue.mockResolvedValue(SNOWFLAKE_SECRET as unknown as Record<string, string>);
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // ---------- happy path ----------
+
+  it('returns column-level schema from INFORMATION_SCHEMA.COLUMNS', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          sfColumnsResponse([
+            { name: 'ORDER_ID', type: 'NUMBER', nullable: 'NO', comment: 'PK', position: '1' },
+            { name: 'CUSTOMER_ID', type: 'NUMBER', nullable: 'NO', comment: null, position: '2' },
+            { name: 'STATUS', type: 'TEXT', nullable: 'YES', comment: 'Order status', position: '3' },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(sfTablesResponse('BASE TABLE', 'Orders table', '42000'), { status: 200 }),
+      );
+
+    const result = await service.inferSchema(
+      makeSnowflakeConnector(),
+      makeSnowflakeSource('PROD_DB.SALES.ORDERS'),
+    );
+
+    expect(result.columnCount).toBe(3);
+    expect(result.rowEstimate).toBe(42000);
+    const def = result.schemaDefinition as {
+      columns: Array<{ name: string; type: string; nullable: boolean; comment: string | null; position: number | null }>;
+      tableType: string | null;
+      comment: string | null;
+    };
+    expect(def.tableType).toBe('BASE TABLE');
+    expect(def.comment).toBe('Orders table');
+    expect(def.columns).toEqual([
+      { name: 'ORDER_ID', type: 'NUMBER', nullable: false, comment: 'PK', position: 1 },
+      { name: 'CUSTOMER_ID', type: 'NUMBER', nullable: false, comment: null, position: 2 },
+      { name: 'STATUS', type: 'TEXT', nullable: true, comment: 'Order status', position: 3 },
+    ]);
+  });
+
+  it('maps IS_NULLABLE YES→true and NO→false correctly', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          sfColumnsResponse([
+            { name: 'A', type: 'TEXT', nullable: 'YES', comment: null, position: '1' },
+            { name: 'B', type: 'TEXT', nullable: 'NO', comment: null, position: '2' },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(sfTablesResponse('BASE TABLE', null, '0'), { status: 200 }),
+      );
+
+    const result = await service.inferSchema(makeSnowflakeConnector(), makeSnowflakeSource());
+    const def = result.schemaDefinition as { columns: Array<{ nullable: boolean }> };
+    expect(def.columns[0].nullable).toBe(true);
+    expect(def.columns[1].nullable).toBe(false);
+  });
+
+  it('returns rowEstimate from INFORMATION_SCHEMA.TABLES ROW_COUNT', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(sfColumnsResponse([
+          { name: 'X', type: 'TEXT', nullable: 'YES', comment: null, position: '1' },
+        ]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(sfTablesResponse('BASE TABLE', null, '100000'), { status: 200 }),
+      );
+
+    const result = await service.inferSchema(makeSnowflakeConnector(), makeSnowflakeSource());
+    expect(result.rowEstimate).toBe(100000);
+  });
+
+  it('returns rowEstimate null when INFORMATION_SCHEMA.TABLES query fails (best-effort)', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(sfColumnsResponse([
+          { name: 'X', type: 'TEXT', nullable: 'YES', comment: null, position: '1' },
+        ]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response('{"message":"access denied"}', { status: 403 }));
+
+    const result = await service.inferSchema(makeSnowflakeConnector(), makeSnowflakeSource());
+    // rowEstimate is null because the TABLES query failed, but columnCount is still populated.
+    expect(result.rowEstimate).toBeNull();
+    expect(result.columnCount).toBe(1);
+  });
+
+  it('handles zero columns gracefully (empty table)', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(sfColumnsResponse([]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(sfTablesResponse('BASE TABLE', null, '0'), { status: 200 }),
+      );
+
+    const result = await service.inferSchema(makeSnowflakeConnector(), makeSnowflakeSource());
+    expect(result.columnCount).toBe(0);
+    expect((result.schemaDefinition as { columns: unknown[] }).columns).toEqual([]);
+  });
+
+  // ---------- source-ref validation ----------
+
+  it('rejects a two-part source ref (database.table — missing schema)', async () => {
+    await expect(
+      service.inferSchema(
+        makeSnowflakeConnector(),
+        makeSnowflakeSource('PROD_DB.ORDERS'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a one-part source ref', async () => {
+    await expect(
+      service.inferSchema(
+        makeSnowflakeConnector(),
+        makeSnowflakeSource('ORDERS'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a source ref with empty segments', async () => {
+    await expect(
+      service.inferSchema(
+        makeSnowflakeConnector(),
+        makeSnowflakeSource('PROD_DB..ORDERS'),
+      ),
+    ).rejects.toThrow(/three-part name/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // ---------- config validation ----------
+
+  it('throws a clear error when host is missing', async () => {
+    await expect(
+      service.inferSchema(
+        makeSnowflakeConnector({ connectionConfig: {} }),
+        makeSnowflakeSource(),
+      ),
+    ).rejects.toThrow(/connection_config\.host/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws a clear error when credentialArn is missing', async () => {
+    await expect(
+      service.inferSchema(
+        makeSnowflakeConnector({ credentialArn: null }),
+        makeSnowflakeSource(),
+      ),
+    ).rejects.toThrow(/credentialArn/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // ---------- HTTP errors on the columns query ----------
+
+  it('throws a clean error when the columns query returns 401', async () => {
+    fetchSpy.mockResolvedValue(new Response('{"message":"JWT invalid"}', { status: 401 }));
+
+    await expect(
+      service.inferSchema(makeSnowflakeConnector(), makeSnowflakeSource()),
+    ).rejects.toThrow(/statement failed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake — parseSnowflakeRows utility
+// ---------------------------------------------------------------------------
+
+describe('parseSnowflakeRows', () => {
+  it('returns the data array from a Snowflake REST result', () => {
+    const result = {
+      data: [['A', 'B'], ['C', 'D']],
+    };
+    expect(parseSnowflakeRows(result as Parameters<typeof parseSnowflakeRows>[0])).toEqual([
+      ['A', 'B'],
+      ['C', 'D'],
+    ]);
+  });
+
+  it('returns an empty array when data is absent', () => {
+    expect(parseSnowflakeRows({} as Parameters<typeof parseSnowflakeRows>[0])).toEqual([]);
+  });
+
+  it('returns an empty array when data is null', () => {
+    expect(parseSnowflakeRows({ data: null } as unknown as Parameters<typeof parseSnowflakeRows>[0])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake — submitSnowflakeStatement utility
+// ---------------------------------------------------------------------------
+
+describe('submitSnowflakeStatement', () => {
+  let fetchSpy: jest.SpyInstance;
+
+  // Use a throw-away JWT string for the utility tests — the JWT is passed in
+  // and not validated inside the function (the server would validate it).
+  const FAKE_JWT = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.e30.sig';
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('returns the parsed response body on success', async () => {
+    const body = { resultSetMetaData: { numRows: 1 }, data: [['1']] };
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+
+    const result = await submitSnowflakeStatement(
+      SNOWFLAKE_HOST,
+      FAKE_JWT,
+      'SELECT 1',
+      { warehouse: 'COMPUTE_WH', role: 'ACCOUNTADMIN' },
+    );
+
+    expect(result).toMatchObject({ data: [['1']] });
+  });
+
+  it('throws on a non-2xx HTTP response', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response('{"message":"not found","code":"002003"}', { status: 404 }),
+    );
+
+    await expect(
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+        warehouse: 'COMPUTE_WH',
+        role: 'ACCOUNTADMIN',
+      }),
+    ).rejects.toThrow(/statement failed/);
+  });
+
+  it('throws on a 200 response with a non-"00000" sqlState (defensive check)', async () => {
+    // Defensive: if Snowflake returns HTTP 200 with an error sqlState, the
+    // function must throw rather than silently return the body as success.
+    // The real SQL error path is HTTP 422 (tested separately), but
+    // submitSnowflakeStatement checks sqlState on the 200 path too.
+    const errorBody = JSON.stringify({
+      code: '002043',
+      sqlState: '57014',
+      message: 'Statement reached its statement or warehouse timeout of 60 second(s).',
+    });
+    fetchSpy.mockResolvedValue(new Response(errorBody, { status: 200 }));
+
+    await expect(
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+        warehouse: 'COMPUTE_WH',
+        role: 'ACCOUNTADMIN',
+      }),
+    ).rejects.toThrow(/SQL error/);
+  });
+
+  it('returns the parsed body on a 200 with the real success envelope (code 090001 + sqlState 00000)', async () => {
+    // Regression: the real success envelope must not be flagged as an error.
+    const body = {
+      resultSetMetaData: { numRows: 1, rowType: [{ name: '1', type: 'fixed' }] },
+      data: [['1']],
+      code: '090001',
+      sqlState: '00000',
+      message: 'Statement executed successfully.',
+    };
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+
+    const result = await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+      warehouse: 'COMPUTE_WH',
+      role: 'ACCOUNTADMIN',
+    });
+
+    expect(result).toMatchObject({ data: [['1']] });
+  });
+
+  it('throws on a 422 SQL error and includes the structured message from the body', async () => {
+    // Real Snowflake SQL error path: HTTP 422 with structured JSON body.
+    // The error message should come from the body, not just "HTTP 422".
+    const errorBody = JSON.stringify({
+      code: '002003',
+      sqlState: '42S02',
+      message: "SQL compilation error:\nObject 'PROD_DB.SALES.MISSING_TABLE' does not exist or not authorized.",
+    });
+    fetchSpy.mockResolvedValue(new Response(errorBody, { status: 422 }));
+
+    await expect(
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+        warehouse: 'COMPUTE_WH',
+        role: 'ACCOUNTADMIN',
+      }),
+    ).rejects.toThrow(/SQL compilation error/);
+  });
+
+  it('includes optional database in the request body when provided', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    );
+
+    await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+      warehouse: 'COMPUTE_WH',
+      role: 'ACCOUNTADMIN',
+      database: 'PROD_DB',
+    });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const reqBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(reqBody.database).toBe('PROD_DB');
   });
 });

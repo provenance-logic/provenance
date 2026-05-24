@@ -18,12 +18,18 @@ import type { Uuid, IsoTimestamp, PaginatedList } from './common.js';
  * Adding a new value: implement the probe + inferSchema branches in
  * ConnectorProbeService (TypeScript exhaustiveness check will fail the
  * build otherwise), add a CHECK constraint update migration, ship a
- * capability manifest row, update the registration UI dropdown.
+ * capability manifest row, and update the registration UI dropdown.
+ *
+ * Snowflake (V37, F3.2a): probe (Layer 1) and schema inference (Layer 2)
+ * are implemented. Discovery crawl (Layer 3) and lineage (Layer 4) ship
+ * in subsequent PRs. The registration UI dropdown is deliberately NOT
+ * updated yet — UI exposure waits for live-account end-to-end verification.
  */
 export type ConnectorType =
   | 'postgresql'
   | 's3'
-  | 'databricks';
+  | 'databricks'
+  | 'snowflake';
 
 export type SourceType =
   | 'table'

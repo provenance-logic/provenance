@@ -436,6 +436,7 @@ components:
         - postgresql
         - s3
         - databricks
+        - snowflake
 
     SourceType:
       type: string
