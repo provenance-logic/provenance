@@ -647,6 +647,7 @@ export class MarketplaceService {
       sourceRegistrationId: entity.sourceRegistrationId ?? null,
       sourceObjectPath: entity.sourceObjectPath ?? null,
       situationAEligibility: entity.situationAEligibility ?? false,
+      catalogName: entity.catalogName ?? null,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
     };

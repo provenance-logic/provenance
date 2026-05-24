@@ -149,6 +149,17 @@ export interface Port {
    * (Situation B — grant required).
    */
   situationAEligibility: boolean;
+  /**
+   * F10.14 / Phase 5.11 — producer-facing catalog name. When set, the
+   * consumer sees this name (e.g. `customer_360`) and the snippets
+   * reference it as the table identifier. NULL = no catalog-name
+   * abstraction; snippets fall back to source_object_path or generic
+   * placeholders. For SQL sources the producer is expected to back the
+   * name with a `CREATE VIEW <catalog_name> AS ...` at the source —
+   * the platform generates the DDL via the source-view-ddl endpoint
+   * but never executes it (Constraint 3).
+   */
+  catalogName: string | null;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -166,6 +177,8 @@ export interface DeclarePortRequest {
   sourceObjectPath?:     string;
   /** F10.15 — defaults to false (Situation B); set true for open-access ports. */
   situationAEligibility?: boolean;
+  /** F10.14 — optional user-facing catalog name for sql snippet addressing. */
+  catalogName?: string;
 }
 
 export interface UpdatePortRequest {
@@ -183,6 +196,11 @@ export interface UpdatePortRequest {
   sourceObjectPath?:     string | null;
   /** F10.15 — explicit boolean toggles the eligibility; undefined leaves untouched. */
   situationAEligibility?: boolean;
+  /**
+   * F10.14 — explicit string sets the catalog name; explicit null clears
+   * it; undefined leaves untouched.
+   */
+  catalogName?: string | null;
 }
 
 // ---------------------------------------------------------------------------

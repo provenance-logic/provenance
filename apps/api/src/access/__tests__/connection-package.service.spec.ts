@@ -51,6 +51,7 @@ const makePort = (
   sourceRegistrationId: null,
   sourceObjectPath: null,
   situationAEligibility: false,
+  catalogName: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   product: null as any,
@@ -642,6 +643,153 @@ describe('ConnectionPackageService', () => {
       const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'requester-1');
       expect(result?.available).toBe(false);
       expect(result?.reason).toBe('request_access_required');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F10.14 / Phase 5.11 — catalog-name resolution in snippet generation
+  // ---------------------------------------------------------------------------
+
+  describe('generateSnippetForPort — catalog-name resolution (F10.14)', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    function activeGrant() {
+      return {
+        id: 'grant-1',
+        orgId: 'org-1',
+        productId: 'product-1',
+        granteePrincipalId: 'owner-1',
+        grantedAt: new Date(),
+        expiresAt: null,
+        revokedAt: null,
+      };
+    }
+
+    it('uses port.catalogName as the SQL table reference when set', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ catalogName: 'customer_360' }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('SELECT * FROM customer_360 LIMIT 10;');
+    });
+
+    it('falls back to sourceObjectPath when catalogName is null', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        catalogName: null,
+        sourceObjectPath: 'prod.customer.events',
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain('SELECT * FROM prod.customer.events LIMIT 10;');
+    });
+
+    it('falls back to a generic placeholder when neither is set', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ catalogName: null, sourceObjectPath: null }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.available).toBe(true);
+      // makePort's connection_details uses schema 'public' by default
+      expect(result?.code).toContain('SELECT * FROM public.<table> LIMIT 10;');
+    });
+
+    it('catalogName trumps sourceObjectPath when both are set', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        catalogName: 'customer_360',
+        sourceObjectPath: 'prod.customer.events',
+      }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'python', 'owner-1');
+      expect(result?.code).toContain('SELECT * FROM customer_360 LIMIT 10;');
+      expect(result?.code).not.toContain('prod.customer.events');
+    });
+
+    it('dbt snippet emits a commented source() hint when catalogName is set', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ catalogName: 'customer_360' }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'owner-1');
+      expect(result?.available).toBe(true);
+      expect(result?.code).toContain(`source('provenance_revenue_daily', 'customer_360')`);
+    });
+
+    it('dbt snippet has no source() hint when catalogName is null', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({ catalogName: null }));
+      grantRepo.findOne.mockResolvedValue(activeGrant());
+      const result = await svc.generateSnippetForPort('org-1', 'product-1', 'port-1', 'dbt', 'owner-1');
+      expect(result?.code).not.toContain('source(');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F10.14 / Phase 5.11 — source-side view DDL
+  // ---------------------------------------------------------------------------
+
+  describe('resolveSourceViewDdl', () => {
+    const PRODUCT = { id: 'product-1', orgId: 'org-1', slug: 'revenue-daily', ownerPrincipalId: 'owner-1' };
+
+    it('returns null when the product does not exist', async () => {
+      productRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSourceViewDdl('org-1', 'missing', 'port-1');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the port does not exist', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(null);
+      const result = await svc.resolveSourceViewDdl('org-1', 'product-1', 'missing');
+      expect(result).toBeNull();
+    });
+
+    it('returns unsupported_interface_type for non-sql_jdbc ports', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        interfaceType: 'rest_api',
+        catalogName: 'whatever',
+        sourceObjectPath: 'whatever',
+      }));
+      const result = await svc.resolveSourceViewDdl('org-1', 'product-1', 'port-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('unsupported_interface_type');
+    });
+
+    it('returns missing_catalog_name when catalogName is null', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        catalogName: null,
+        sourceObjectPath: 'prod.customer.events',
+      }));
+      const result = await svc.resolveSourceViewDdl('org-1', 'product-1', 'port-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('missing_catalog_name');
+    });
+
+    it('returns missing_source_object_path when sourceObjectPath is null', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        catalogName: 'customer_360',
+        sourceObjectPath: null,
+      }));
+      const result = await svc.resolveSourceViewDdl('org-1', 'product-1', 'port-1');
+      expect(result?.available).toBe(false);
+      expect(result?.reason).toBe('missing_source_object_path');
+    });
+
+    it('emits a CREATE OR REPLACE VIEW DDL when both fields are set', async () => {
+      productRepo.findOne.mockResolvedValue(PRODUCT);
+      portRepo.findOne.mockResolvedValue(makePort({
+        catalogName: 'customer_360',
+        sourceObjectPath: 'prod.customer.events',
+      }));
+      const result = await svc.resolveSourceViewDdl('org-1', 'product-1', 'port-1');
+      expect(result?.available).toBe(true);
+      expect(result?.ddl).toContain('CREATE OR REPLACE VIEW customer_360 AS');
+      expect(result?.ddl).toContain('SELECT * FROM prod.customer.events;');
     });
   });
 });

@@ -175,7 +175,11 @@ export class ConnectionPackageService {
       };
     }
 
-    const code = buildSnippet(details, destination, product.slug);
+    // F10.14 / Phase 5.11 — resolve the catalog reference per the
+    // precedence rule: explicit catalogName > F2.8a source_object_path >
+    // null (snippet builders fall back to a placeholder for sql_jdbc).
+    const catalogRef = port.catalogName ?? port.sourceObjectPath ?? null;
+    const code = buildSnippet(details, destination, product.slug, catalogRef);
     if (code === null) {
       return {
         destination,
@@ -270,6 +274,80 @@ export class ConnectionPackageService {
       callerHasActiveGrant: hasGrant,
       declaredSituationAEligible: false,
     };
+  }
+
+  /**
+   * F10.14 / Phase 5.11 — generate the source-side view DDL the producer
+   * copies into their source system. Returns null when the port doesn't
+   * exist; throws when prerequisites aren't met (caller renders the
+   * error to the producer).
+   *
+   * Per Constraint 3 / ADR-011 the platform never executes this DDL — it
+   * surfaces it for the producer to paste into their source system. The
+   * shape varies trivially across PG / Snowflake / Databricks; the
+   * single-statement `CREATE VIEW IF NOT EXISTS <catalog_name> AS SELECT
+   * * FROM <source_object_path>;` is the conservative cross-dialect form
+   * that parses across all three.
+   *
+   * Requires sql_jdbc interface + both `catalogName` and
+   * `sourceObjectPath` set. For non-SQL interfaces (REST, GraphQL,
+   * Kafka, file_export) the catalog-name abstraction is UI-only (the
+   * snippet builders fall back to the source-system identifier
+   * directly); no DDL is meaningful, so this endpoint returns null.
+   *
+   * Owner-only at the call site (producer-facing surface — only the
+   * port owner needs the DDL). Controller applies the role check.
+   */
+  resolveSourceViewDdl(
+    productOrgId: string,
+    productId: string,
+    portId: string,
+  ): Promise<{
+    available: boolean;
+    ddl: string | null;
+    reason?:
+      | 'port_or_product_not_found'
+      | 'unsupported_interface_type'
+      | 'missing_catalog_name'
+      | 'missing_source_object_path';
+  } | null> {
+    return (async () => {
+      const product = await this.productRepo.findOne({
+        where: { id: productId, orgId: productOrgId },
+      });
+      if (!product) return null;
+      const port = await this.portRepo.findOne({
+        where: { id: portId, orgId: productOrgId, productId },
+      });
+      if (!port) return null;
+
+      if (port.interfaceType !== 'sql_jdbc') {
+        return { available: false, ddl: null, reason: 'unsupported_interface_type' };
+      }
+      if (!port.catalogName) {
+        return { available: false, ddl: null, reason: 'missing_catalog_name' };
+      }
+      if (!port.sourceObjectPath) {
+        return { available: false, ddl: null, reason: 'missing_source_object_path' };
+      }
+
+      // The catalog name is an SQL identifier; the source_object_path
+      // could be a qualified name (e.g. `prod.customer.events`). Neither
+      // is wrapped in quotes — the producer's source system applies its
+      // own identifier rules. Comment block tells them what to do.
+      const ddl = [
+        `-- Provenance F10.14 source-side view for port "${port.name}"`,
+        `-- Generated for product "${product.name}". Paste into your source`,
+        `-- system to back the catalog name "${port.catalogName}" with a view`,
+        `-- over the physical source path. Drop and recreate (CREATE OR`,
+        `-- REPLACE) is safe if the underlying source changes.`,
+        ``,
+        `CREATE OR REPLACE VIEW ${port.catalogName} AS`,
+        `SELECT * FROM ${port.sourceObjectPath};`,
+      ].join('\n');
+
+      return { available: true, ddl };
+    })();
   }
 
   async generateForProduct(orgId: string, productId: string): Promise<ConnectionPackage | null> {
@@ -404,7 +482,11 @@ export class ConnectionPackageService {
     return {
       jdbcUrl,
       driver,
-      pythonSnippet: buildSqlJdbcPython(d),
+      // Legacy connection-package path (F10.8) — port object isn't
+      // threaded here; pass null catalogRef and fall back to the
+      // schema.<table> placeholder. The per-port snippet endpoint
+      // (generateSnippetForPort) does the catalog-name resolution.
+      pythonSnippet: buildSqlJdbcPython(d, null),
       sampleQuery,
       dataDictionary,
     };
@@ -495,7 +577,8 @@ function extractColumns(schema: Record<string, unknown> | null): DataDictionaryC
   });
 }
 
-function buildSqlJdbcPython(d: SqlJdbcConnectionDetails): string {
+function buildSqlJdbcPython(d: SqlJdbcConnectionDetails, catalogRef: string | null): string {
+  const tableRef = catalogRef ?? `${d.schema}.<table>`;
   return [
     'import psycopg2',
     'conn = psycopg2.connect(',
@@ -506,6 +589,10 @@ function buildSqlJdbcPython(d: SqlJdbcConnectionDetails): string {
     `    user=${quote(d.username ?? '<set via env>')},`,
     `    password=${quote('<set via env>')},`,
     ')',
+    'with conn.cursor() as cur:',
+    `    cur.execute(${quote(`SELECT * FROM ${tableRef} LIMIT 10;`)})`,
+    '    for row in cur.fetchall():',
+    '        print(row)',
   ].join('\n');
 }
 
@@ -678,10 +765,11 @@ function buildSnippet(
   details: ConnectionDetails,
   destination: SnippetDestination,
   productSlug: string,
+  catalogRef: string | null,
 ): string | null {
   if (destination === 'python') {
     switch (details.kind) {
-      case 'sql_jdbc':          return buildSqlJdbcPython(details);
+      case 'sql_jdbc':          return buildSqlJdbcPython(details, catalogRef);
       case 'rest_api':          return buildRestPython(details);
       case 'graphql':           return buildGraphQlPython(details);
       case 'streaming_topic':   return buildKafkaPython(details);
@@ -690,7 +778,7 @@ function buildSnippet(
     }
   }
   if (destination === 'dbt') {
-    if (details.kind === 'sql_jdbc') return buildSqlJdbcDbt(details, productSlug);
+    if (details.kind === 'sql_jdbc') return buildSqlJdbcDbt(details, productSlug, catalogRef);
     return null;
   }
   if (destination === 'sql_client' || destination === 'jdbc') {
@@ -713,7 +801,11 @@ function buildSnippet(
  * The output is intended to be pasted into ~/.dbt/profiles.yml under a new
  * profile name; the consumer fills in the user/password via env vars.
  */
-function buildSqlJdbcDbt(d: SqlJdbcConnectionDetails, productSlug: string): string {
+function buildSqlJdbcDbt(
+  d: SqlJdbcConnectionDetails,
+  productSlug: string,
+  catalogRef: string | null,
+): string {
   const driver = (() => {
     if (d.host.includes('snowflakecomputing.com') || d.port === 443) return 'snowflake';
     if (d.host.includes('databricks')) return 'databricks';
@@ -736,6 +828,14 @@ function buildSqlJdbcDbt(d: SqlJdbcConnectionDetails, productSlug: string): stri
     `      sslmode: ${d.sslMode}`,
     `      threads: 4`,
   ];
+  if (catalogRef) {
+    // F10.14 — show the producer how to reference the catalog name as a
+    // dbt source. Commented so it doesn't break a profiles.yml paste if
+    // the user only wants the connection profile.
+    lines.push('');
+    lines.push(`# Reference the catalog name in your dbt model:`);
+    lines.push(`#   {{ source('${profileName}', '${catalogRef}') }}`);
+  }
   return lines.join('\n');
 }
 

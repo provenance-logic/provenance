@@ -590,6 +590,19 @@ components:
             port is open to all source-system principals (Situation A);
             no per-product grant is required at the consumer connect
             flow. Default false (Situation B — grant required).
+        catalogName:
+          type: string
+          nullable: true
+          description: |
+            F10.14 / Phase 5.11 — producer-facing catalog name (e.g.
+            `customer_360`). When set, consumer-grade snippets address
+            data by this name instead of the physical source path. NULL
+            means no abstraction; snippets fall back to
+            source_object_path or generic placeholders. For SQL sources
+            the producer backs this with `CREATE VIEW <catalog_name>
+            AS ...` at the source — the platform generates DDL via
+            `GET .../ports/:portId/source-view-ddl` but never executes
+            it.
         createdAt:
           $ref: "#/components/schemas/Timestamp"
         updatedAt:
@@ -634,6 +647,9 @@ components:
         situationAEligibility:
           type: boolean
           description: F10.15 — default false (Situation B); set true for open-access ports.
+        catalogName:
+          type: string
+          description: F10.14 — optional user-facing catalog name for sql snippet addressing.
 
     UpdatePortRequest:
       type: object
@@ -668,6 +684,10 @@ components:
         situationAEligibility:
           type: boolean
           description: F10.15 — explicit boolean toggles eligibility; undefined leaves untouched.
+        catalogName:
+          type: string
+          nullable: true
+          description: F10.14 — explicit string sets the name; explicit null clears it; undefined leaves untouched.
 
     PortList:
       type: object
