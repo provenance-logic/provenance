@@ -1767,6 +1767,326 @@ function emptyShowEnvelope(): string {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Snowflake — OBJECT_DEPENDENCIES lineage walk (Layer 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a Snowflake SQL REST API response envelope for an
+ * OBJECT_DEPENDENCIES SELECT query.
+ *
+ * Real column order and row shape captured from a live Snowflake trial account
+ * (PROVENANCE_DEMO database, SALES schema):
+ *   REFERENCED_DATABASE, REFERENCED_SCHEMA, REFERENCED_OBJECT_NAME,
+ *   REFERENCED_OBJECT_DOMAIN,
+ *   REFERENCING_DATABASE, REFERENCING_SCHEMA, REFERENCING_OBJECT_NAME,
+ *   REFERENCING_OBJECT_DOMAIN,
+ *   DEPENDENCY_TYPE
+ *
+ * Semantics: REFERENCED_* is the upstream/source; REFERENCING_* is the
+ * downstream/target (the object that depends on the referenced one).
+ * Edge direction: sourceFullName = REFERENCED_*; targetFullName = REFERENCING_*.
+ */
+function objDepsEnvelope(
+  rows: Array<{
+    refDb: string; refSchema: string; refName: string; refDomain: string;
+    ingDb: string; ingSchema: string; ingName: string; ingDomain: string;
+    depType: string;
+  }>,
+): string {
+  const rowType = [
+    { name: 'REFERENCED_DATABASE', type: 'text' },
+    { name: 'REFERENCED_SCHEMA', type: 'text' },
+    { name: 'REFERENCED_OBJECT_NAME', type: 'text' },
+    { name: 'REFERENCED_OBJECT_DOMAIN', type: 'text' },
+    { name: 'REFERENCING_DATABASE', type: 'text' },
+    { name: 'REFERENCING_SCHEMA', type: 'text' },
+    { name: 'REFERENCING_OBJECT_NAME', type: 'text' },
+    { name: 'REFERENCING_OBJECT_DOMAIN', type: 'text' },
+    { name: 'DEPENDENCY_TYPE', type: 'text' },
+  ];
+  const data = rows.map((r) => [
+    r.refDb, r.refSchema, r.refName, r.refDomain,
+    r.ingDb, r.ingSchema, r.ingName, r.ingDomain,
+    r.depType,
+  ]);
+  return JSON.stringify({
+    resultSetMetaData: { numRows: data.length, rowType },
+    data,
+    code: '090001',
+    sqlState: '00000',
+    message: 'Statement executed successfully.',
+  });
+}
+
+/** Two real rows from PROVENANCE_DEMO.SALES.OBJECT_DEPENDENCIES. */
+const REAL_OBJ_DEPS_ROWS = [
+  {
+    refDb: 'PROVENANCE_DEMO', refSchema: 'SALES', refName: 'CUSTOMERS', refDomain: 'TABLE',
+    ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMER_ORDER_SUMMARY', ingDomain: 'VIEW',
+    depType: 'BY_NAME',
+  },
+  {
+    refDb: 'PROVENANCE_DEMO', refSchema: 'SALES', refName: 'ORDERS', refDomain: 'TABLE',
+    ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMER_ORDER_SUMMARY', ingDomain: 'VIEW',
+    depType: 'BY_NAME',
+  },
+];
+
+describe('ConnectorProbeService.walkSnowflakeLineage (B-063 Layer 4 — OBJECT_DEPENDENCIES)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = {
+      getSecretValue: jest.fn(),
+    } as unknown as jest.Mocked<SecretsManagerService>;
+    secretsManager.getSecretValue.mockResolvedValue(
+      SNOWFLAKE_SECRET as unknown as Record<string, string>,
+    );
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // ---------- happy path — real row data ----------
+
+  it('returns 2 edges from the real OBJECT_DEPENDENCIES rows: CUSTOMERS→CUSTOMER_ORDER_SUMMARY and ORDERS→CUSTOMER_ORDER_SUMMARY', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(objDepsEnvelope(REAL_OBJ_DEPS_ROWS), { status: 200 }),
+    );
+
+    const tableFullNames = [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.ORDERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ];
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), tableFullNames);
+
+    expect(result.edges).toHaveLength(2);
+    expect(result.tablesWithErrors).toEqual([]);
+
+    const edgeKeys = result.edges.map((e) => `${e.sourceFullName}->${e.targetFullName}`);
+    expect(edgeKeys).toContain('PROVENANCE_DEMO.SALES.CUSTOMERS->PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY');
+    expect(edgeKeys).toContain('PROVENANCE_DEMO.SALES.ORDERS->PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY');
+  });
+
+  it('edge direction: sourceFullName=REFERENCED_*, targetFullName=REFERENCING_* (upstream→downstream)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(objDepsEnvelope([REAL_OBJ_DEPS_ROWS[0]]), { status: 200 }),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+
+    expect(result.edges[0].sourceFullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMERS');
+    expect(result.edges[0].targetFullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY');
+  });
+
+  // ---------- system-schema / system-db filtering ----------
+
+  it('skips edges where either endpoint is in INFORMATION_SCHEMA', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        objDepsEnvelope([
+          // Real edge — must be kept.
+          REAL_OBJ_DEPS_ROWS[0],
+          // INFORMATION_SCHEMA source — must be skipped.
+          {
+            refDb: 'PROVENANCE_DEMO', refSchema: 'INFORMATION_SCHEMA', refName: 'COLUMNS', refDomain: 'VIEW',
+            ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMER_ORDER_SUMMARY', ingDomain: 'VIEW',
+            depType: 'BY_NAME',
+          },
+          // INFORMATION_SCHEMA target — must be skipped.
+          {
+            refDb: 'PROVENANCE_DEMO', refSchema: 'SALES', refName: 'CUSTOMERS', refDomain: 'TABLE',
+            ingDb: 'PROVENANCE_DEMO', ingSchema: 'INFORMATION_SCHEMA', ingName: 'TABLES', ingDomain: 'VIEW',
+            depType: 'BY_NAME',
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+
+    // Only the real edge survives; both INFORMATION_SCHEMA edges are dropped.
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].sourceFullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMERS');
+  });
+
+  it('skips edges where either endpoint database is a system database (SNOWFLAKE / SNOWFLAKE_SAMPLE_DATA / USER$*)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        objDepsEnvelope([
+          REAL_OBJ_DEPS_ROWS[0],
+          // System-db source — must be skipped.
+          {
+            refDb: 'SNOWFLAKE', refSchema: 'ACCOUNT_USAGE', refName: 'QUERY_HISTORY', refDomain: 'VIEW',
+            ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMER_ORDER_SUMMARY', ingDomain: 'VIEW',
+            depType: 'BY_NAME',
+          },
+          // USER$ scratch-db target — must be skipped.
+          {
+            refDb: 'PROVENANCE_DEMO', refSchema: 'SALES', refName: 'CUSTOMERS', refDomain: 'TABLE',
+            ingDb: 'USER$MCGARVEYMA', ingSchema: 'PUBLIC', ingName: 'MY_SCRATCH', ingDomain: 'TABLE',
+            depType: 'BY_NAME',
+          },
+          // SNOWFLAKE_SAMPLE_DATA — must be skipped.
+          {
+            refDb: 'SNOWFLAKE_SAMPLE_DATA', refSchema: 'TPCH_SF1', refName: 'ORDERS', refDomain: 'TABLE',
+            ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMER_ORDER_SUMMARY', ingDomain: 'VIEW',
+            depType: 'BY_NAME',
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].sourceFullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMERS');
+  });
+
+  // ---------- cross-db lineage (target in scope, source out-of-scope) ----------
+
+  it('emits an edge when the target is in the discovered set even if source is from a different (non-system) database', async () => {
+    // Cross-database lineage is real and useful — do not suppress it just because
+    // the source database wasn't in the walkSnowflakeAccount walk scope.
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        objDepsEnvelope([
+          {
+            refDb: 'EXTERNAL_DB', refSchema: 'PUBLIC', refName: 'RAW_FEED', refDomain: 'TABLE',
+            ingDb: 'PROVENANCE_DEMO', ingSchema: 'SALES', ingName: 'CUSTOMERS', ingDomain: 'TABLE',
+            depType: 'BY_NAME',
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    ]);
+
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].sourceFullName).toBe('EXTERNAL_DB.PUBLIC.RAW_FEED');
+    expect(result.edges[0].targetFullName).toBe('PROVENANCE_DEMO.SALES.CUSTOMERS');
+  });
+
+  // ---------- deduplicate rows ----------
+
+  it('deduplicates identical OBJECT_DEPENDENCIES rows (same source→target appearing twice)', async () => {
+    // Should not happen with a well-behaved account, but guard against it.
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        objDepsEnvelope([REAL_OBJ_DEPS_ROWS[0], REAL_OBJ_DEPS_ROWS[0]]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+
+    expect(result.edges).toHaveLength(1);
+  });
+
+  // ---------- query construction ----------
+
+  it('issues exactly ONE SELECT against OBJECT_DEPENDENCIES (not N per table)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(objDepsEnvelope(REAL_OBJ_DEPS_ROWS), { status: 200 }),
+    );
+
+    await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'PROVENANCE_DEMO.SALES.ORDERS',
+      'PROVENANCE_DEMO.SALES.CUSTOMER_ORDER_SUMMARY',
+    ]);
+
+    // submitSnowflakeStatement → one fetch call for the SELECT.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes the OBJECT_DEPENDENCIES query to the derived database set (IN-list from tableFullNames)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(objDepsEnvelope([]), { status: 200 }),
+    );
+
+    await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+      'ANALYTICS_DB.PUBLIC.SUMMARY',
+    ]);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const reqBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    const sql = reqBody.statement as string;
+
+    // Both databases must appear in the IN-list.
+    expect(sql).toContain("'PROVENANCE_DEMO'");
+    expect(sql).toContain("'ANALYTICS_DB'");
+    // Must reference OBJECT_DEPENDENCIES.
+    expect(sql).toContain('OBJECT_DEPENDENCIES');
+  });
+
+  // ---------- graceful degradation ----------
+
+  it('returns empty edges and a tablesWithErrors marker when the OBJECT_DEPENDENCIES query throws (graceful degradation)', async () => {
+    fetchSpy.mockRejectedValueOnce(new Error('ENOTFOUND snowflakecomputing.com'));
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    ]);
+
+    // Must not throw — the crawl continues without lineage.
+    expect(result.edges).toEqual([]);
+    expect(result.tablesWithErrors.length).toBeGreaterThan(0);
+  });
+
+  it('returns empty edges when the OBJECT_DEPENDENCIES query returns HTTP 403 (no ACCOUNT_USAGE access)', async () => {
+    // Snowflake returns non-2xx errors; submitSnowflakeStatement throws.
+    // walkSnowflakeLineage must catch that and degrade gracefully.
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: '390303', sqlState: '42501', message: 'Insufficient privileges' }),
+        { status: 403 },
+      ),
+    );
+
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), [
+      'PROVENANCE_DEMO.SALES.CUSTOMERS',
+    ]);
+
+    expect(result.edges).toEqual([]);
+    expect(result.tablesWithErrors.length).toBeGreaterThan(0);
+  });
+
+  it('returns empty edges and no error when tableFullNames is empty (nothing to query)', async () => {
+    const result = await service.walkSnowflakeLineage(makeSnowflakeConnector(), []);
+
+    // No fetch call — empty IN-list means we skip the query entirely.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.edges).toEqual([]);
+    expect(result.tablesWithErrors).toEqual([]);
+  });
+});
+
 describe('ConnectorProbeService.walkSnowflakeAccount (B-063 Layer 3)', () => {
   let secretsManager: jest.Mocked<SecretsManagerService>;
   let service: ConnectorProbeService;
