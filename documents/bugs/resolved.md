@@ -6,6 +6,41 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-074 — Keycloak advertises OIDC endpoints with `:8080` on TLS-terminated deployments; browser login fails with `ERR_SSL_PROTOCOL_ERROR`
+
+- **Resolved:** 2026-05-24 in the same session it was surfaced
+- **Severity:** Blocker on TLS-terminated deployments (dev / demo / future production) — login is unreachable until fixed; the platform looks fundamentally broken to any new browser session
+- **Area:** `infrastructure/docker/docker-compose.ec2-dev.yml` (and any future TLS-terminated compose override that doesn't pin `KC_HOSTNAME_PORT`)
+
+**What was wrong.** The base `infrastructure/docker/docker-compose.yml` defaults `KC_HOSTNAME_PORT` to `8080` (sensible for local-no-proxy dev where you hit Keycloak directly at `http://localhost:8080`). The EC2 / Caddy override (`docker-compose.ec2-dev.yml`) didn't override that value, so Keycloak on dev was advertising every OIDC endpoint with `:8080` appended:
+
+```
+issuer: https://auth.provenancelogic.com:8080/realms/provenance
+authorization_endpoint: https://auth.provenancelogic.com:8080/...
+token_endpoint: https://auth.provenancelogic.com:8080/...
+```
+
+Browsers receiving the discovery doc would obey the published `authorization_endpoint` and try `https://auth.provenancelogic.com:8080/...`. Port 8080 doesn't speak HTTPS — it's HTTP only — so the TLS handshake fails immediately with `ERR_SSL_PROTOCOL_ERROR`. Caddy never sees the connection (it's a wrong-port request, not a wrong-cert one), so Caddy logs are silent.
+
+The bug was latent for an unknown period — long-lived sessions kept working because they refresh tokens against the `KEYCLOAK_ADMIN_URL` (internal `http://keycloak:8080`) and never re-consult the public discovery endpoint. Fresh logins (or any flow that hits the public OIDC discovery URL) fail. Surfaced 2026-05-24 when a redeploy invalidated the existing browser session and forced a fresh login.
+
+**Diagnostic trail.** Initial symptom looked like a TLS/cert problem. Tested:
+1. `curl https://auth.provenancelogic.com/realms/provenance/.well-known/openid-configuration` from the EC2 box — returned HTTP/2 200 with valid HSTS headers. Cert was good.
+2. AWS security group allows 443/tcp from 0.0.0.0/0. Network was fine.
+3. Caddy was bound to all interfaces, listening, and logs were silent for the failed browser attempts. Caddy wasn't the problem.
+4. Inspected Keycloak's discovery response — saw `:8080` in every URL. That was the smoking gun.
+5. `docker compose exec keycloak env | grep KC_` confirmed `KC_HOSTNAME_PORT=8080`.
+
+**Fix.** Override `KC_HOSTNAME_PORT: "-1"` in `docker-compose.ec2-dev.yml`'s Keycloak environment block. `-1` is Keycloak 24's documented "no explicit port" sentinel — with `KC_PROXY=edge`, Keycloak then derives the public port from `X-Forwarded-Proto` + standard scheme port (443 for HTTPS). Inline comment explains the gotcha for future deploys.
+
+Recreated Keycloak on dev, restarted Caddy (per [[reference-dev-caddy-restart]]), verified discovery now returns clean `https://auth.provenancelogic.com/...` URLs (no port).
+
+**Why the .env.ec2 file didn't save us.** The `.env.ec2` file on dev contains `KC_HOSTNAME_PORT=8080` (stale from a pre-Caddy EIP-only deployment era — same file also has `KC_HOSTNAME=54.83.160.49` and `KC_FRONTEND_URL=http://54.83.160.49:8080`, both also stale). But docker compose loads `.env` by default, not `.env.ec2` — the .env file on dev is empty. So the .env.ec2 entries are NOT active. The actual source of `KC_HOSTNAME_PORT=8080` was the base `docker-compose.yml` default. Cleaning up `.env.ec2` is separate hygiene work; not done here.
+
+**Why this didn't surface in earlier sessions.** Long-lived sessions don't re-fetch OIDC discovery. The bug shape requires either a fresh-login flow OR a session token that expires. The 2026-05-24 redeploy bounced Keycloak, which invalidated all live sessions, forcing the next login attempt down the discovery path → exposed the bug. Cell pattern: configuration bugs in OIDC discovery are silent until session turnover; redeploy day is the first day they're visible.
+
+---
+
 ## B-072 — Marketplace product search returns 0 hits for partial-name queries that should match existing products
 
 - **Resolved:** 2026-05-24 in a single PR
