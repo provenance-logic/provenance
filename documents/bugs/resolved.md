@@ -6,6 +6,33 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-072 — Marketplace product search returns 0 hits for partial-name queries that should match existing products
+
+- **Resolved:** 2026-05-24 in a single PR
+- **Severity:** High (P0 consumer flow — discovery is the front door to the platform)
+- **Area:** `apps/web/src/features/discovery/MarketplacePage.tsx`, `apps/api/src/search/marketplace.{controller,service}.ts`, `apps/api/src/search/marketplace-global.controller.ts`, `packages/types/src/marketplace.ts`, `packages/openapi/marketplace.yaml`
+
+**What was wrong.** The marketplace search box on the home tab was wired to filter by exact `tags` match — not full-text search. Placeholder text "Search by tag…" hinted at this but was easy to miss. Users would rationally type product names (e.g. "campaign") and get "No products found" back because no product had a tag exactly equal to the typed string. Campaign Attribution has tags `['marketing', 'attribution']`, so searching "campaign" returned zero hits — working as coded, broken as designed.
+
+Compounding the issue: a separate full-text search endpoint (`GET /marketplace/search?q=...`) already existed in `MarketplaceController` and hit the OpenSearch BM25 index, but the marketplace UI never called it. The capability was there; nothing reached it.
+
+**Fix.** Extended the marketplace LIST endpoint (`GET /marketplace/products` and `GET /organizations/:orgId/marketplace/products`) to accept an optional `q` parameter that composes with all other filters. When `q` is set:
+
+- `MarketplaceService.queryProducts` calls a new `searchProductIds` helper that hits the `provenance-products` BM25 index with `multi_match` against `name^3`, `description`, `tags^2`, fuzziness AUTO (same boost schedule as the legacy `/marketplace/search` endpoint, kept consistent so users get the same matching across both code paths).
+- OpenSearch returns up to 200 matching IDs ranked by score. The IDs are AND'd into the existing PG query via `andWhere('p.id IN (:...searchIds)')`, preserving the full existing filter pipeline (domain, port type, compliance state, trust score range, tags). Final result set is re-sorted by BM25 score when the user didn't explicitly pick a sort.
+- Short-circuits to empty results when OpenSearch returns zero hits (no point asking PG for products we already know don't match).
+- Falls back to an empty match set when OpenSearch is unreachable (preferred over leaking-all-products when search is meant to constrain the result set).
+
+Frontend: `MarketplacePage.tsx` `handleSearchChange` now sets `filters.q` instead of `filters.tags`. Placeholder updated to "Search products by name, description, or tag…". Search input seeded from `?q=` on mount so refreshes and shared links preserve the search term. URL ↔ filter mappers (`paramsToFilters` / `filtersToParams`) carry `q` through.
+
+**Pre-existing reindex side effect.** Dev's OpenSearch BM25 index was also stale at diagnosis time (no products had been re-indexed since the seed package became authoritative; 16 products in PG vs 0 in the index). `pnpm reindex:search` against the running dev API container repopulated both BM25 and kNN indices (16/16 succeeded). This was a one-shot data fix, not part of the code change, but worth noting: per [B-009](resolved.md#B-009), the publish path keeps the indices in sync going forward, so the staleness was only present because old products predated the double-write.
+
+**Test coverage.** Added 8 tests to `apps/api/src/search/__tests__/marketplace.service.spec.ts` covering: no-q skips OpenSearch entirely; q-with-zero-hits short-circuits without hitting PG; multi_match shape with correct boosts; status filter scopes to published vs. published+deprecated; orgId filter scopes for org vs. cross-org calls; graceful OpenSearch-unavailable fallback. All 19 marketplace tests pass; web vitest suite (15 tests) passes.
+
+**Why this was a B-072 / a real fix and not a workaround.** The bug ledger entry pre-fix hypothesized index staleness (B-009-shaped). The diagnostic step (`pnpm reindex:search`) discovered staleness existed, but the post-reindex search still returned zero — because the search box wasn't wired to text search at all. The real bug was the design-level wiring; the staleness was a coincidental dev-environment data artefact. Both are addressed in the fix PR.
+
+---
+
 ## B-070 — Inbound-outbound bridge missing: `port_declarations` no FK to `source_registrations` or `schema_snapshots`
 
 - **Resolved:** 2026-05-23 across two PRs — backend half #179 (Phase 5.8 backend), producer UI #183 (Phase 5.8 frontend half). Closes [F2.8a](../prd/Provenance_PRD_v1.5.md) end-to-end per anchor decision 4

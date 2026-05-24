@@ -80,6 +80,7 @@ function filtersToParams(
   page: number,
 ): URLSearchParams {
   const p = new URLSearchParams();
+  if (filters.q)                      p.set('q',                filters.q);
   if (filters.domain?.length)         p.set('domain',           filters.domain.join(','));
   if (filters.outputPortType?.length) p.set('outputPortType',   filters.outputPortType.join(','));
   if (filters.compliance?.length)     p.set('compliance',       filters.compliance.join(','));
@@ -98,12 +99,14 @@ function paramsToFilters(params: URLSearchParams): {
   page: number;
 } {
   const filters: MarketplaceFilters = {};
+  const q              = params.get('q');
   const domain         = params.get('domain');
   const portType       = params.get('outputPortType');
   const compliance     = params.get('compliance');
   const trustScoreMin  = params.get('trustScoreMin');
   const trustScoreMax  = params.get('trustScoreMax');
   const tags           = params.get('tags');
+  if (q)             filters.q                = q;
   if (domain)        filters.domain           = domain.split(',');
   if (portType)      filters.outputPortType   = portType.split(',') as OutputPortInterfaceType[];
   if (compliance)    filters.compliance       = compliance.split(',') as ComplianceStateValue[];
@@ -407,7 +410,8 @@ export function MarketplacePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'grid' | 'list'>('grid');
-  const [searchInput, setSearchInput] = useState('');
+  // Seed from URL so a refresh / shared link preserves the search term.
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '');
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (
@@ -451,9 +455,9 @@ export function MarketplacePage() {
     searchDebounceRef.current = setTimeout(() => {
       const updated: MarketplaceFilters = { ...filters };
       if (value.trim()) {
-        updated.tags = [value.trim()];
+        updated.q = value.trim();
       } else {
-        delete updated.tags;
+        delete updated.q;
       }
       setSearchParams(filtersToParams(updated, sort, 1));
     }, 400);
@@ -476,7 +480,7 @@ export function MarketplacePage() {
         <div className="flex-1 min-w-64 relative">
           <input
             type="search"
-            placeholder="Search by tag…"
+            placeholder="Search products by name, description, or tag…"
             value={searchInput}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"

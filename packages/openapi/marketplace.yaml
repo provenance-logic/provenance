@@ -484,6 +484,16 @@ paths:
           required: true
           schema:
             $ref: '#/components/schemas/Uuid'
+        - name: q
+          in: query
+          description: |
+            Optional free-text search. When provided, matches against product
+            name (boost x3), description, and tags (boost x2) via the
+            OpenSearch BM25 index, with fuzzy matching. Composes with all
+            other filters. Empty / unset returns the unfiltered (filter-only)
+            listing.
+          schema:
+            type: string
         - name: domain
           in: query
           description: Filter by one or more domain IDs (comma-separated).
