@@ -198,6 +198,44 @@ The fix scope, post-PRD-decision, is comparable to #164's blast radius for Model
 
 ---
 
+## B-075 — Connector → discovery → data product journey has no visible thread in the UI; registered connectors are a dead-end and the domain-owner publishing flow has no clear front door
+
+- **Severity:** **Medium** (UX friction — the capabilities all work and a workaround path exists, but the path through them is undiscoverable). **This is the headline finding of the 2026-05-24 domain-owner persona walkthrough**, and it's high-value: it's the gap between "API-complete" and "a person can actually use the platform." Worth treating as an OSR-experience polish item even though it doesn't break a P0 flow outright.
+- **Status:** Open.
+- **Area:** `apps/web/src/features/connectors/ConnectorsPage.tsx` (no detail surface), `apps/web/src/app/Router.tsx` (no connector detail route), `apps/web/src/shared/components/NavShell.tsx` (nav labels), `apps/web/src/features/publishing/` (`DashboardRedirect`, `NewProductForm`, `DomainDashboard`, `ProductDetail`). Backend already exposes everything needed (discovered sources, crawl events, lineage, capability manifests, port binding) — **this is a frontend-surfacing gap, not a backend gap.**
+- **Discovered:** 2026-05-24, by Matt running a domain-owner persona walkthrough immediately after the Snowflake connector tranche shipped (#197–#202). The full discover→publish→consume capability is real and verified end-to-end at the data layer; the UI just doesn't give a domain owner a navigable thread through it. Same class as [B-055](resolved.md) (no standalone front door for an approver until a walkthrough forced the question). See memory `feedback_persona_walkthroughs_catch_what_audits_miss`.
+
+### Surface 1 — a registered connector is a UI dead-end (the bigger half)
+
+Registering a connector (and the auto-crawl that follows) does real, valuable work — for the verified Snowflake connector it discovered 3 tables/views, captured their column schemas, and projected lineage into Postgres + Neo4j. **None of that is visible or actionable from the UI.** The Connectors page renders each connector as a row with a name, type, validation pill, and last-validated date — and that's it. There is:
+
+- no connector **detail page** (no route exists at all),
+- no view of the **discovered sources** the crawl found,
+- no **crawl status / results** ("what did the last crawl discover, and when?"),
+- no **lineage** view for discovered objects,
+- no **"create a data product from this source"** action.
+
+The discovered sources surface **only** inside the "Bind to a discovered source" dropdown buried in the port-authoring form. So a user who registers a connector has no in-product answer to "what did this do, and what do I do next?" — the connector's core feature (auto-discovery) is invisible.
+
+### Surface 2 — the domain-owner publishing flow has weak front doors
+
+1. **Hidden entry point.** Product authoring lives under the generically-labeled **"Dashboard"** nav tab (→ pick domain → "New Data Product"), two clicks deep. A domain owner looking to "publish a data product" reasonably lands in **Governance** (which correctly has no authoring) and concludes the capability is missing. No top-level "Publishing" / "My Products" entry.
+2. **Create bounces to a list.** `NewProductForm` navigates back to the domain dashboard product list after create, instead of dropping the user *into* the new product where the natural next steps (add ports → publish) live.
+3. **No discovered-source → product nudge.** Nothing connects "the crawl found N tables" to "make products from them."
+4. **Heavy publish gate.** The pre-publish checklist requires *both* an output port *and* a discovery port, plus a hand-authored Contract Schema JSON, before a single table can be published. For the common "I connected Snowflake, expose one table" path, that's a lot of ceremony.
+
+### Suggested direction (not prescriptive)
+
+- A **connector detail page** that shows discovered sources, last-crawl summary, lineage, and a per-source **"Create data product from this source"** shortcut that deep-links into product authoring with the binding pre-filled.
+- A clearer **publishing front door** (rename/relabel or a dedicated nav entry; navigate into the product after create).
+- Consider whether the discovery-port requirement and hand-written contract schema can be defaulted/derived for a source-bound output port (the bound source already has a captured schema — the contract could be pre-populated from it).
+
+### Why this matters for OSR
+
+The platform's differentiation is "connect a source, get discovery + lineage + governed products + agent-ready consumption." Every piece of that works at the data layer (verified). But a first-time domain owner or operator can't *find* the thread through it in the UI. Closing this is what turns the verified capability into a usable product — the OSR-experience bar, distinct from the OSR-capability bar that B-063 closed.
+
+---
+
 ## B-062 — RLS-by-default: the `provenance.current_org_id` session variable doesn't persist across the connections a request actually uses
 
 - **Severity:** Medium (defense-in-depth gap; the immediate cross-org leak is closed at the controller boundary by [B-061](resolved.md#B-061-cross-org-information-leak-the-jwt-auth-guard-did-not-check-the-url-orgid-against-the-tokens-claim)'s fix, but the database-layer guarantee the platform's RLS policies were designed to provide is not actually in force on most service-layer queries today)
