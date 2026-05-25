@@ -201,15 +201,11 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   for (const agent of seedAgents) {
     const orgId = orgIdBySlug.get(agent.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${agent.orgSlug}`);
-    const kcClient = await ctx.keycloak.ensureClientCredentialsClient({
-      clientId: `agent-${agent.agentSlug}`,
-      name: agent.displayName,
-      serviceAccountAttributes: {
-        provenance_org_id: orgId,
-        provenance_principal_type: 'ai_agent',
-        provenance_agent_slug: agent.agentSlug,
-      },
-    });
+    // The /seed/agents endpoint now provisions the Keycloak client itself via
+    // KeycloakAdminService.createAgentClient(agentId, orgId, `agent-<slug>`).
+    // This ensures the `agent_id` claim in the JWT equals the platform agentId
+    // (which access grants reference), and that the token carries the correct
+    // `provenance_principal_type` claim. See B-076.
     await ctx.api.post('/seed/agents', {
       orgId,
       agentSlug: agent.agentSlug,
@@ -217,8 +213,6 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       description: agent.description,
       trustClassification: agent.trustClassification,
       oversightContactEmail: agent.oversightContactEmail,
-      keycloakClientId: kcClient.clientId,
-      keycloakClientSecret: kcClient.clientSecret,
     });
   }
 

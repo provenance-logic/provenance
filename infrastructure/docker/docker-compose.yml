@@ -563,6 +563,9 @@ services:
   #     OPA_BASE_URL: http://opa:8181
   #     # Keycloak
   #     KEYCLOAK_REALM: provenance
+  #     KEYCLOAK_URL: http://keycloak:8080
+  #     # Public Keycloak URL for JWT issuer validation (B-076 issuer split).
+  #     KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080/realms/provenance}
   #     KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
   #     KEYCLOAK_CLIENT_ID: provenance-agent-query
   #     KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_AGENT_CLIENT_SECRET:-}

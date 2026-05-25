@@ -10,6 +10,17 @@ const envSchema = z.object({
   // Keycloak — JWT validation for agent tokens (ADR-002 Phase 5b)
   KEYCLOAK_URL: z.string().url(),
   KEYCLOAK_REALM: z.string().min(1).default('provenance'),
+  // Full public issuer URL exactly as it appears in the JWT `iss` claim.
+  // In deployed environments, KEYCLOAK_URL is the internal Docker network URL
+  // (e.g. http://keycloak:8080) needed for JWKS fetching, but tokens carry the
+  // public URL (e.g. https://auth-demo.provenancelogic.com/realms/provenance)
+  // as their issuer. Setting KEYCLOAK_ISSUER_URL bridges this split: JWKS is
+  // fetched via KEYCLOAK_URL while jwt.verify() checks against KEYCLOAK_ISSUER_URL.
+  // When unset, falls back to ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM} which is
+  // correct for local-dev where the internal and public URLs are the same.
+  // Mirrors the same split in apps/api/src/config.ts (KEYCLOAK_AUTH_SERVER_URL /
+  // KEYCLOAK_ISSUER_URL). See B-076.
+  KEYCLOAK_ISSUER_URL: z.string().url().optional(),
 
   // ADR-002 Phase 5c: 30-day deprecation compatibility mode.
   // When true, unauthenticated MCP requests are logged but allowed through.

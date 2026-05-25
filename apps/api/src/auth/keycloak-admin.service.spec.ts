@@ -135,7 +135,7 @@ describe('KeycloakAdminService', () => {
       expect(result.keycloak_client_secret).toBe('generated-secret');
     });
 
-    it('includes protocol mappers for principal_type, agent_id, and provenance_org_id', async () => {
+    it('includes protocol mappers for provenance_principal_type, agent_id, and provenance_org_id', async () => {
       fetchSpy
         .mockResolvedValueOnce(fakeTokenResponse())
         .mockResolvedValueOnce(fakeCreateClientResponse())
@@ -150,11 +150,11 @@ describe('KeycloakAdminService', () => {
       expect(mappers).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            name: 'principal_type',
+            name: 'provenance_principal_type',
             protocolMapper: 'oidc-hardcoded-claim-mapper',
             config: expect.objectContaining({
               'claim.value': 'ai_agent',
-              'claim.name': 'principal_type',
+              'claim.name': 'provenance_principal_type',
             }),
           }),
           expect.objectContaining({

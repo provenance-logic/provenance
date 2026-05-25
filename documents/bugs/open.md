@@ -9,6 +9,42 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-076 — MCP agent-auth path broken end-to-end: four independent root causes cause every agent JWT to 401 on `/mcp/sse`
+
+- **Severity:** **Blocker** — Every AI-agent interaction with the platform fails. The MCP server (port 3002) is deployed and responsive, but no agent token passes authentication. This is a Phase 4 "✅ Complete" silent regression (see CLAUDE.md pattern "A phase is not complete until every advertised capability has a user-visible surface"): unit tests were green on both sides of four mismatched cross-service contracts, but no end-to-end test crossed the boundary.
+- **Status:** Fix in progress on branch `fix/mcp-agent-auth`. Pending end-to-end verification on the sandbox environment.
+
+**Root cause 1 — Issuer mismatch in agent-query JWT verification**
+
+`apps/agent-query/src/auth/auth.middleware.ts` computed a single `expectedIssuer` string from the internal Docker network URL (`KEYCLOAK_URL=http://keycloak:8080`) and used it for BOTH the JWKS fetch URI AND the `issuer` option passed to `jwt.verify`. In deployed environments, Keycloak's KC_HOSTNAME / frontendUrl is the public domain, so every token it issues carries `iss: https://auth.provenancelogic.com/realms/provenance`. The middleware compared that against `http://keycloak:8080/realms/provenance` → mismatch → 401 on every valid agent token.
+
+**Fix:** Added `KEYCLOAK_ISSUER_URL` (optional, mirrors the existing split in `apps/api/src/config.ts`) to `apps/agent-query/src/config.ts`. The JWKS client continues to use the internal `KEYCLOAK_URL`; `jwt.verify` uses `KEYCLOAK_ISSUER_URL` when set, falling back to the internal URL (correct for local dev). Added `KEYCLOAK_ISSUER_URL` to the ec2-dev compose env block for agent-query, the commented-out agent-query block in `docker-compose.yml`, and `.env.example`.
+
+**Root cause 2 — Wrong protocol mapper claim name in production agent registration**
+
+`apps/api/src/auth/keycloak-admin.service.ts:49` called `this.hardcodedClaimMapper('principal_type', 'ai_agent')` — the hardcoded claim was named `principal_type`. But every consumer reads `provenance_principal_type` (auth middleware line 90, jwt.strategy line 53). So every properly *registered* agent (not just seeded) received a JWT with a `principal_type` claim that nobody checked, and no `provenance_principal_type` claim, causing the middleware's `decoded.provenance_principal_type !== 'ai_agent'` check to fail with 401. The unit test at `keycloak-admin.service.spec.ts:153,157` asserted the wrong name and therefore never caught this.
+
+**Fix:** Changed `'principal_type'` to `'provenance_principal_type'` in the `hardcodedClaimMapper` call and updated the spec assertion to match.
+
+**Root cause 3 — Seed creates agent KC clients with no protocol mappers**
+
+`packages/seed/src/keycloak-client.ts ensureClientCredentialsClient` created Keycloak clients via `attributes` (client config metadata) and zero `protocolMappers`. So seeded agent tokens carried none of the required claims (`agent_id`, `provenance_principal_type`, `provenance_org_id`). Additionally, the `agent_id` claim needed to equal the platform `agentId` (not just the slug) so the connection-reference guard can resolve access grants by `granteePrincipalId`.
+
+**Fix:** Removed the `ensureClientCredentialsClient` pre-creation from `packages/seed/src/runner.ts`. The `/seed/agents` handler now calls `KeycloakAdminService.createAgentClient(agentId, orgId, 'agent-<slug>')` after the DB transaction commits. `createAgentClient` gained an optional third parameter `clientId` (defaults to `agentId`) so the KC client ID stays `agent-<slug>` (smoke-test compatible) while the `agent_id` claim equals the platform UUID. Removed `KeycloakClientSpec`, `ensureClientCredentialsClient`, and the now-dead `expandAttributes` helper from `keycloak-client.ts`.
+
+**Root cause 4 — Smoke test hit a dead REST endpoint**
+
+`infrastructure/scripts/demo-smoke-test.sh` POSTed to `/mcp/tools/call` which returns 404. MCP is JSON-RPC over SSE: the client must open `GET /mcp/sse`, receive an `event: endpoint` SSE event with the session-scoped messages URL, then POST JSON-RPC to that URL. Tool results return on the SSE stream, not the POST response. There is no REST shim.
+
+**Fix:** Replaced the dead `POST /mcp/tools/call` with a real MCP handshake: open SSE → wait for endpoint event → POST `initialize` → POST `notifications/initialized` → POST `tools/call` → read the SSE stream for the result. Also updated `demo-sync.sh` to resolve the agent client secret from Keycloak Admin API before invoking the smoke test (previously the `SMOKE_AGENT_SECRET` had no automated source).
+
+**Pattern this corroborates:** The four root causes span two repositories (api, agent-query), the seed package, and the smoke-test script. All four were latent for the entire duration of Phase 4 (shipped ≈2026-04-13). Unit tests were green on both sides of each boundary: the api's `hardcodedClaimMapper` test asserted the wrong name; the agent-query middleware tests used a local key with a matching issuer; the seed runner's Keycloak path was never exercised by any integration test. No end-to-end test crossed from "seed creates an agent" → "agent obtains a JWT" → "JWT passes agent-query middleware." This is the same class of failure as the Phase 4 MCP silent-regression caught by the 2026-04-25 demo dry-run (see CLAUDE.md pattern "Phase 4 silent regression").
+
+- **Branch:** `fix/mcp-agent-auth`
+- **Files changed:** `apps/agent-query/src/config.ts`, `apps/agent-query/src/auth/auth.middleware.ts`, `apps/agent-query/src/auth/auth.middleware.spec.ts`, `apps/api/src/auth/keycloak-admin.service.ts`, `apps/api/src/auth/keycloak-admin.service.spec.ts`, `apps/api/src/seed/seed.controller.ts`, `apps/api/src/seed/__tests__/seed.controller.spec.ts`, `packages/seed/src/runner.ts`, `packages/seed/src/keycloak-client.ts`, `infrastructure/docker/docker-compose.ec2-dev.yml`, `infrastructure/docker/docker-compose.yml`, `infrastructure/docker/.env.example`, `infrastructure/scripts/demo-smoke-test.sh`, `infrastructure/scripts/demo-sync.sh`
+
+---
+
 ## B-063 — Connector framework is "register-only" for every connector type except PostgreSQL, S3, and (now) Databricks; Phase 3 PRD claim of "✅ Complete" does not match the codebase (RESOLVED 2026-05-24)
 
 - **Severity:** **Blocker** (elevated from High at end of 2026-05-21 session). The platform's whole differentiation is multi-tenant federated mesh of real connectors. Originally 3 of 12 advertised types did something meaningful; the other 9 silently faked their probe results. By Matt's stated OSR bar — "every single one of those connectors needs to actually work, EVERY ONE" — this was the gating issue, not a category of partial-shipment.

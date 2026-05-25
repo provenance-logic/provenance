@@ -134,8 +134,6 @@ interface SeedAgentDto {
   description: string;
   trustClassification: 'observed' | 'supervised' | 'autonomous';
   oversightContactEmail: string;
-  keycloakClientId: string;
-  keycloakClientSecret: string;
 }
 
 interface SeedLineageEdgeDto {
@@ -601,9 +599,16 @@ export class SeedController {
   @Post('agents')
   @HttpCode(HttpStatus.OK)
   async agent(@Body() dto: SeedAgentDto): Promise<{ id: string }> {
-    // The seed has already created the Keycloak client (see runner.ts
-    // step "agents") and passes the resulting clientId/secret. We only
-    // need to write the agent identity + initial classification rows.
+    // Idempotency guard — if the agent already exists, return early.
+    // We still skip the Keycloak call on repeated runs: the client was
+    // already provisioned on the first run, and re-running createAgentClient
+    // would throw a 409. The agent identity row's keycloakClientProvisioned
+    // flag is the authoritative record.
+    const existing = await this.agentRepo.findOne({
+      where: { orgId: dto.orgId, displayName: dto.displayName },
+    });
+    if (existing) return { id: existing.agentId };
+
     const oversightPrincipal = await this.principalRepo.findOne({
       where: { orgId: dto.orgId, email: dto.oversightContactEmail },
     });
@@ -613,16 +618,14 @@ export class SeedController {
       );
     }
 
-    const existing = await this.agentRepo.findOne({
-      where: { orgId: dto.orgId, displayName: dto.displayName },
-    });
-    if (existing) return { id: existing.agentId };
-
-    return this.dataSource.transaction(async (em) => {
+    // 1. Write the agent identity + initial classification rows in a single
+    //    transaction. keycloakClientProvisioned starts false and is set to true
+    //    after the Keycloak call succeeds (step 2).
+    const agent = await this.dataSource.transaction(async (em) => {
       const agentRepo = em.getRepository(AgentIdentityEntity);
       const classRepo = em.getRepository(AgentTrustClassificationEntity);
 
-      const agent = await agentRepo.save(
+      const saved = await agentRepo.save(
         agentRepo.create({
           orgId: dto.orgId,
           displayName: dto.displayName,
@@ -631,13 +634,13 @@ export class SeedController {
           humanOversightContact: dto.oversightContactEmail,
           registeredByPrincipalId: oversightPrincipal.id,
           currentClassification: titleCase(dto.trustClassification),
-          keycloakClientProvisioned: true,
+          keycloakClientProvisioned: false,
         }),
       );
 
       await classRepo.save(
         classRepo.create({
-          agentId: agent.agentId,
+          agentId: saved.agentId,
           orgId: dto.orgId,
           classification: titleCase(dto.trustClassification),
           scope: 'global',
@@ -647,8 +650,25 @@ export class SeedController {
         }),
       );
 
-      return { id: agent.agentId };
+      return saved;
     });
+
+    // 2. Provision the Keycloak client OUTSIDE the DB transaction so a Keycloak
+    //    failure does not roll back the agent identity row. The client id is
+    //    `agent-<slug>` (matching the smoke-test default SMOKE_AGENT_CLIENT_ID).
+    //    The `agent_id` claim in the token is the platform agentId so the
+    //    connection-reference guard can resolve grants by principal identity.
+    //    Throws loudly on failure — the seed run should surface Keycloak errors.
+    await this.keycloakAdmin.createAgentClient(
+      agent.agentId,
+      dto.orgId,
+      `agent-${dto.agentSlug}`,
+    );
+
+    // 3. Mark the agent identity as provisioned now that Keycloak succeeded.
+    await this.agentRepo.update(agent.agentId, { keycloakClientProvisioned: true });
+
+    return { id: agent.agentId };
   }
 
   // ---------------------------------------------------------------------------

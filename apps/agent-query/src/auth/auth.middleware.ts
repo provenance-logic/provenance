@@ -19,10 +19,18 @@ interface AgentClaims {
  */
 export function createAgentAuthMiddleware() {
   const config = getConfig();
-  const expectedIssuer = `${config.KEYCLOAK_URL}/realms/${config.KEYCLOAK_REALM}`;
+  // JWKS fetch uses the internal Docker network URL (KEYCLOAK_URL) so the
+  // agent-query container can reach the Keycloak JWKS endpoint without going
+  // through the public internet. The issuer check uses KEYCLOAK_ISSUER_URL
+  // (the public URL) because that is what Keycloak embeds in the JWT `iss`
+  // claim when running behind a TLS-terminating reverse proxy. In local dev,
+  // both URLs are the same so the fallback is safe. See B-076.
+  const jwksBaseUrl = `${config.KEYCLOAK_URL}/realms/${config.KEYCLOAK_REALM}`;
+  const expectedIssuer =
+    config.KEYCLOAK_ISSUER_URL ?? `${config.KEYCLOAK_URL}/realms/${config.KEYCLOAK_REALM}`;
 
   const client = new JwksClient({
-    jwksUri: `${expectedIssuer}/protocol/openid-connect/certs`,
+    jwksUri: `${jwksBaseUrl}/protocol/openid-connect/certs`,
     cache: true,
     cacheMaxAge: 3_600_000, // 1 hour
     rateLimit: true,
