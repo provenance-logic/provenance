@@ -9,10 +9,10 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-076 — MCP agent-auth path broken end-to-end: four independent root causes cause every agent JWT to 401 on `/mcp/sse`
+## B-076 — MCP agent-auth path broken end-to-end: five independent root causes block every agent `list_products` call (four cause a 401 on `/mcp/sse`; one causes a 500 once auth passes)
 
-- **Severity:** **Blocker** — Every AI-agent interaction with the platform fails. The MCP server (port 3002) is deployed and responsive, but no agent token passes authentication. This is a Phase 4 "✅ Complete" silent regression (see CLAUDE.md pattern "A phase is not complete until every advertised capability has a user-visible surface"): unit tests were green on both sides of four mismatched cross-service contracts, but no end-to-end test crossed the boundary.
-- **Status:** Fix in progress on branch `fix/mcp-agent-auth`. Pending end-to-end verification on the sandbox environment.
+- **Severity:** **Blocker** — Every AI-agent interaction with the platform fails. The MCP server (port 3002) is deployed and responsive, but no agent token passes authentication, and once it does the first control-plane call 500s. This is a Phase 4 "✅ Complete" silent regression (see CLAUDE.md pattern "A phase is not complete until every advertised capability has a user-visible surface"): unit tests were green on both sides of five mismatched cross-service contracts, but no end-to-end test crossed the boundary. Root causes 1–4 were found together; root cause 5 was only reachable once 1–4 were fixed and the agent's request first reached the control plane.
+- **Status:** Fix applied across all five root causes on branch `fix/mcp-agent-auth`; re-verifying end-to-end on the demo sandbox.
 
 **Root cause 1 — Issuer mismatch in agent-query JWT verification**
 
@@ -38,10 +38,16 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 **Fix:** Replaced the dead `POST /mcp/tools/call` with a real MCP handshake: open SSE → wait for endpoint event → POST `initialize` → POST `notifications/initialized` → POST `tools/call` → read the SSE stream for the result. Also updated `demo-sync.sh` to resolve the agent client secret from Keycloak Admin API before invoking the smoke test (previously the `SMOKE_AGENT_SECRET` had no automated source).
 
+**Root cause 5 — `JwtAuthGuard.agentRepo` is undefined in most modules (500 once auth passes)**
+
+Only reachable after root causes 1–4 were fixed and the agent's request first reached the control plane. The Agent Query Layer calls the control plane as a trusted service — `Authorization: Bearer <MCP_API_KEY>` plus an `x-agent-id` header (ADR-002 Phase 5b-8) — and the API's `JwtAuthGuard.canActivate` (`apps/api/src/auth/jwt-auth.guard.ts:55`) resolves that header to an agent via `this.agentRepo.findOne(...)`. `JwtAuthGuard` is applied per-controller with `@UseGuards(JwtAuthGuard)`. `AuthModule` provides the guard with its `@InjectRepository(AgentIdentityEntity)` resolved and exports it — but modules that apply the guard without importing AuthModule (e.g. `ProductsModule`, which owns `/organizations/:orgId/domains/:domainId/products` and the per-product trust-score reads `list_products` fans out to) instantiate their own copy in a context with no `AgentIdentityEntity` repository. `agentRepo` is therefore `undefined`, and the MCP service-token branch throws `TypeError: Cannot read properties of undefined (reading 'findOne')` → 500. Normal human JWTs never enter that branch (they go through `super.canActivate`), so the gap was invisible.
+
+**Fix:** Marked `AuthModule` `@Global()`. AuthModule already builds the one `JwtAuthGuard` whose `agentRepo` is resolved; making the module global means every `@UseGuards(JwtAuthGuard)` across the app resolves to that single repo-equipped provider instead of a context-local repo-less copy.
+
 **Pattern this corroborates:** The four root causes span two repositories (api, agent-query), the seed package, and the smoke-test script. All four were latent for the entire duration of Phase 4 (shipped ≈2026-04-13). Unit tests were green on both sides of each boundary: the api's `hardcodedClaimMapper` test asserted the wrong name; the agent-query middleware tests used a local key with a matching issuer; the seed runner's Keycloak path was never exercised by any integration test. No end-to-end test crossed from "seed creates an agent" → "agent obtains a JWT" → "JWT passes agent-query middleware." This is the same class of failure as the Phase 4 MCP silent-regression caught by the 2026-04-25 demo dry-run (see CLAUDE.md pattern "Phase 4 silent regression").
 
 - **Branch:** `fix/mcp-agent-auth`
-- **Files changed:** `apps/agent-query/src/config.ts`, `apps/agent-query/src/auth/auth.middleware.ts`, `apps/agent-query/src/auth/auth.middleware.spec.ts`, `apps/api/src/auth/keycloak-admin.service.ts`, `apps/api/src/auth/keycloak-admin.service.spec.ts`, `apps/api/src/seed/seed.controller.ts`, `apps/api/src/seed/__tests__/seed.controller.spec.ts`, `packages/seed/src/runner.ts`, `packages/seed/src/keycloak-client.ts`, `infrastructure/docker/docker-compose.ec2-dev.yml`, `infrastructure/docker/docker-compose.yml`, `infrastructure/docker/.env.example`, `infrastructure/scripts/demo-smoke-test.sh`, `infrastructure/scripts/demo-sync.sh`
+- **Files changed:** `apps/agent-query/src/config.ts`, `apps/agent-query/src/auth/auth.middleware.ts`, `apps/agent-query/src/auth/auth.middleware.spec.ts`, `apps/api/src/auth/auth.module.ts`, `apps/api/src/auth/keycloak-admin.service.ts`, `apps/api/src/auth/keycloak-admin.service.spec.ts`, `apps/api/src/seed/seed.controller.ts`, `apps/api/src/seed/__tests__/seed.controller.spec.ts`, `packages/seed/src/runner.ts`, `packages/seed/src/keycloak-client.ts`, `infrastructure/docker/docker-compose.ec2-dev.yml`, `infrastructure/docker/docker-compose.yml`, `infrastructure/docker/.env.example`, `infrastructure/scripts/demo-smoke-test.sh`, `infrastructure/scripts/demo-sync.sh`
 
 ---
 
