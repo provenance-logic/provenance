@@ -10,15 +10,8 @@ export interface KeycloakUserSpec {
   attributes: Record<string, string>;
 }
 
-export interface KeycloakClientSpec {
-  clientId: string;
-  name: string;
-  serviceAccountAttributes: Record<string, string>;
-}
-
 export interface KeycloakAdminClient {
   ensureUser(spec: KeycloakUserSpec): Promise<{ id: string }>;
-  ensureClientCredentialsClient(spec: KeycloakClientSpec): Promise<{ clientId: string; clientSecret: string }>;
 }
 
 export function createKeycloakClient(config: SeedConfig, logger: Logger): KeycloakAdminClient {
@@ -98,37 +91,6 @@ export function createKeycloakClient(config: SeedConfig, logger: Logger): Keyclo
       const id = created[0]!.id;
       logger.info(`keycloak user created: ${spec.email}`, { id });
       return { id };
-    },
-
-    async ensureClientCredentialsClient(spec) {
-      const existing = await adminCall<Array<{ id: string; clientId: string; secret?: string }>>(
-        'GET',
-        `/clients?clientId=${encodeURIComponent(spec.clientId)}`
-      );
-      let uuid: string;
-      if (existing.length > 0) {
-        uuid = existing[0]!.id;
-      } else {
-        await adminCall('POST', `/clients`, {
-          clientId: spec.clientId,
-          name: spec.name,
-          enabled: true,
-          protocol: 'openid-connect',
-          publicClient: false,
-          standardFlowEnabled: false,
-          directAccessGrantsEnabled: false,
-          serviceAccountsEnabled: true,
-          attributes: spec.serviceAccountAttributes,
-        });
-        const lookup = await adminCall<Array<{ id: string }>>(
-          'GET',
-          `/clients?clientId=${encodeURIComponent(spec.clientId)}`
-        );
-        uuid = lookup[0]!.id;
-      }
-      const secret = await adminCall<{ value: string }>('POST', `/clients/${uuid}/client-secret`);
-      logger.info(`keycloak client ensured: ${spec.clientId}`);
-      return { clientId: spec.clientId, clientSecret: secret.value };
     },
   };
 }

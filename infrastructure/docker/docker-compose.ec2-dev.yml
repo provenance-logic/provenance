@@ -691,6 +691,11 @@ services:
       NODE_ENV: development
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: provenance
+      # KEYCLOAK_ISSUER_URL must match the public Keycloak URL embedded in the
+      # JWT `iss` claim. KEYCLOAK_URL (above) is the internal Docker network URL
+      # used to fetch JWKS; without this split every agent token is rejected with
+      # 401 on issuer mismatch in deployed environments. See B-076.
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://auth.provenancelogic.com/realms/provenance}
       DEPRECATION_WARNING_ONLY: "true"
       # Domain 12 runtime-enforcement plumbing (Connection References).
       # KAFKA_BROKERS: must match the api side (redpanda:9092 inside the

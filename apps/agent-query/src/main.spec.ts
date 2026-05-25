@@ -13,6 +13,8 @@ process.env['MCP_API_KEY'] = 'test-mcp-key';
 process.env['DEFAULT_ORG_ID'] = '00000000-0000-0000-0000-000000000001';
 process.env['KEYCLOAK_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_REALM'] = 'provenance';
+// AQL_INTERNAL_TOKEN is required by the config schema (min 16 chars).
+process.env['AQL_INTERNAL_TOKEN'] = 'test-internal-token-at-least-16-chars';
 
 // ---------------------------------------------------------------------------
 // We test that main.ts applies the auth middleware by importing it and

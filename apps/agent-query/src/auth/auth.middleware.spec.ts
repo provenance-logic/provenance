@@ -45,6 +45,10 @@ process.env['MCP_API_KEY'] = 'test-mcp-key';
 process.env['DEFAULT_ORG_ID'] = '00000000-0000-0000-0000-000000000001';
 process.env['KEYCLOAK_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_REALM'] = 'provenance';
+// AQL_INTERNAL_TOKEN is required by the config schema (min 16 chars).
+// KEYCLOAK_ISSUER_URL is intentionally left unset to exercise the B-076
+// fallback path (derived from KEYCLOAK_URL + KEYCLOAK_REALM).
+process.env['AQL_INTERNAL_TOKEN'] = 'test-internal-token-at-least-16-chars';
 
 import { createAgentAuthMiddleware } from './auth.middleware.js';
 
@@ -375,5 +379,51 @@ describe('Agent Auth Middleware', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(res.writeHead).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // B-076 issuer split — KEYCLOAK_ISSUER_URL vs KEYCLOAK_URL
+  //
+  // In deployed environments KEYCLOAK_URL is the internal Docker network URL
+  // (used to fetch JWKS) while the token `iss` is the public URL set via
+  // KEYCLOAK_ISSUER_URL. Without the split the middleware rejects every agent
+  // token in production with a 401 even though the signature is valid.
+  //
+  // The existing tests above run with KEYCLOAK_ISSUER_URL unset, so the
+  // fallback `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}` is used as the issuer.
+  // The token is signed with `issuer: 'http://localhost:8080/realms/provenance'`
+  // which matches the fallback → the happy-path test passes. The "wrong issuer"
+  // test verifies rejection on mismatch.
+  //
+  // Testing the KEYCLOAK_ISSUER_URL override path requires re-initialising the
+  // config singleton with a different env, which cannot be done in the same
+  // Jest module scope. The correctness of the override is verified here by
+  // structural inspection: the middleware reads `config.KEYCLOAK_ISSUER_URL ??
+  // fallback` and passes the result to `jwt.verify` as the `issuer` option.
+  // End-to-end verification is done via the sandbox environment per the PR
+  // hand-off notes.
+  // -------------------------------------------------------------------------
+
+  it('accepts a token whose issuer matches the fallback derived from KEYCLOAK_URL + KEYCLOAK_REALM (B-076 fallback path)', async () => {
+    // KEYCLOAK_ISSUER_URL is not set in this test run; the middleware must
+    // fall back to `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}` which equals
+    // 'http://localhost:8080/realms/provenance' — the same value used to sign
+    // the token in signToken(). This exercises the B-076 fallback code path.
+    const token = signToken({
+      sub: AGENT_ID,
+      agent_id: AGENT_ID,
+      provenance_org_id: ORG_ID,
+      provenance_principal_type: 'ai_agent',
+    });
+    // signToken uses issuer: 'http://localhost:8080/realms/provenance' by default
+
+    const req = mockReq({ authorization: `Bearer ${token}` });
+    const res = mockRes();
+    const next = jest.fn();
+
+    await middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect((req as any).agentId).toBe(AGENT_ID);
   });
 });

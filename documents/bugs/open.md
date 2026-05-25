@@ -9,6 +9,21 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-078 — `seed:reset:hard` truncates `flyway_schema_history`, breaking the next stack restart (flyway re-applies V1 onto a populated schema)
+
+- **Severity:** **High** — demo/dev reset reliability. After `seed:reset:hard` the schema and seed data are correct, but flyway's history table is emptied. Any *subsequent* container recreate that triggers the `flyway-migrate` dependency fails (`relation "orgs" already exists`), which blocks the api from starting. The stack looks fine until the next `docker compose up`/recreate, then won't boot.
+- **Status:** Open. Worked around on the demo 2026-05-25; root-cause fix not yet landed.
+- **Area:** `packages/seed/` (hard-reset truncation), interacting with the `flyway-migrate` service in `infrastructure/docker/docker-compose.ec2-dev.yml`.
+- **Discovered:** 2026-05-25 during the fresh demo stand-up — force-recreating the api to deploy B-077 re-ran `flyway-migrate`, which failed because an earlier `seed:reset:hard` had emptied `organizations.flyway_schema_history`.
+
+**What's wrong.** `hardReset` truncates data tables to reset seed state, but the truncation also empties `organizations.flyway_schema_history` (it lives in the `organizations` schema, which is flyway's `defaultSchema`). `flyway.conf` sets no `baselineOnMigrate`, so flyway sees an empty history → reports `<< Empty Schema >>` → tries to apply `V1` → fails because `orgs` already exists → exits 1 → the api (which `depends_on` flyway-migrate completing) never starts.
+
+**Workaround applied on the demo (2026-05-25):** `DROP TABLE organizations.flyway_schema_history;` → `flyway baseline -baselineVersion=39` → restart api (migrate is then a clean no-op).
+
+**Proposed fix.** Exclude `flyway_schema_history` from `hardReset`'s truncation — it is flyway bookkeeping, not seed data. As a belt-and-suspenders backstop, optionally set `flyway.baselineOnMigrate=true` + `baselineVersion=<latest>` so a restart self-heals if the history is ever lost. Excluding the table from truncation is the correct primary fix.
+
+---
+
 ## B-063 — Connector framework is "register-only" for every connector type except PostgreSQL, S3, and (now) Databricks; Phase 3 PRD claim of "✅ Complete" does not match the codebase (RESOLVED 2026-05-24)
 
 - **Severity:** **Blocker** (elevated from High at end of 2026-05-21 session). The platform's whole differentiation is multi-tenant federated mesh of real connectors. Originally 3 of 12 advertised types did something meaningful; the other 9 silently faked their probe results. By Matt's stated OSR bar — "every single one of those connectors needs to actually work, EVERY ONE" — this was the gating issue, not a category of partial-shipment.

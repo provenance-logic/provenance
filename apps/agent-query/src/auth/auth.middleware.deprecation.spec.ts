@@ -34,6 +34,8 @@ process.env['DEFAULT_ORG_ID'] = '00000000-0000-0000-0000-000000000001';
 process.env['KEYCLOAK_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_REALM'] = 'provenance';
 process.env['DEPRECATION_WARNING_ONLY'] = 'true';
+// AQL_INTERNAL_TOKEN is required by the config schema (min 16 chars).
+process.env['AQL_INTERNAL_TOKEN'] = 'test-internal-token-at-least-16-chars';
 
 import { createAgentAuthMiddleware } from './auth.middleware.js';
 

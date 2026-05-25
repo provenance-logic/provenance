@@ -144,22 +144,99 @@ AGENT_TOKEN=$(curl -sS -X POST \
 [ -n "$AGENT_TOKEN" ] || fail "agent" "agent client_credentials exchange returned no token"
 ok "agent ${SMOKE_AGENT_CLIENT_ID} obtained JWT"
 
-# SSE handshake — we accept the first chunk then disconnect.
-if ! curl -sS --max-time 5 -H "Accept: text/event-stream" \
-    -H "Authorization: Bearer ${AGENT_TOKEN}" \
-    "${BASE_URL}/mcp/sse" 2>/dev/null | head -c 1 >/dev/null; then
-  fail "agent" "MCP SSE endpoint did not accept agent JWT"
-fi
-ok "MCP SSE endpoint accepted connection"
+# MCP handshake over SSE (JSON-RPC 2.0 transport).
+#
+# Protocol flow (MCP spec 2024-11-05):
+#   1. GET /mcp/sse  → server streams events; first event is:
+#        event: endpoint
+#        data: /mcp/messages?sessionId=<id>
+#   2. POST /mcp/messages?sessionId=<id>  with Content-Type application/json
+#      for each JSON-RPC request. Results arrive on the SSE stream (not the
+#      POST response). Each POST 202-accepts the message; the actual tool result
+#      comes back as an SSE data event on the open GET connection.
+#
+# The old `/mcp/tools/call` REST shim does not exist — this was B-076 root
+# cause #4.
 
-MCP_RESULT=$(curl -sS -X POST \
+SSE_TMP=$(mktemp)
+# Open the SSE stream in the background; capture all events to the temp file.
+curl -sN \
+  -H "Authorization: Bearer ${AGENT_TOKEN}" \
+  -H "Accept: text/event-stream" \
+  "${BASE_URL}/mcp/sse" >"${SSE_TMP}" 2>&1 &
+SSE_PID=$!
+
+# Poll for the endpoint event (up to 10 seconds).
+MCP_ENDPOINT=""
+for _i in $(seq 1 20); do
+  sleep 0.5
+  MCP_ENDPOINT=$(grep -m1 '^data: /mcp/messages' "${SSE_TMP}" 2>/dev/null | sed 's/^data: //' | tr -d '[:space:]')
+  [ -n "${MCP_ENDPOINT}" ] && break
+done
+
+if [ -z "${MCP_ENDPOINT}" ]; then
+  kill "${SSE_PID}" 2>/dev/null || true
+  rm -f "${SSE_TMP}"
+  fail "agent" "MCP SSE endpoint did not emit an endpoint event within 10s (auth or startup failure)"
+fi
+ok "MCP SSE endpoint accepted connection and emitted session endpoint"
+
+MSG_URL="${BASE_URL}${MCP_ENDPOINT}"
+
+# 1. Initialize the MCP session.
+curl -sS -X POST "${MSG_URL}" \
   -H "Authorization: Bearer ${AGENT_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d '{"tool":"list_products","input":{}}' \
-  "${BASE_URL}/mcp/tools/call")
-echo "$MCP_RESULT" | jq -e '.result.products | length > 0' >/dev/null \
-  || fail "agent" "list_products returned no products"
-ok "list_products MCP tool call succeeded end-to-end"
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0"}}}' \
+  >/dev/null
+
+# 2. Send notifications/initialized (required by MCP spec before calling tools).
+curl -sS -X POST "${MSG_URL}" \
+  -H "Authorization: Bearer ${AGENT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+  >/dev/null
+
+# 3. Call list_products and collect the SSE response.
+curl -sS -X POST "${MSG_URL}" \
+  -H "Authorization: Bearer ${AGENT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_products","arguments":{}}}' \
+  >/dev/null
+
+# Poll the SSE stream for the tools/call result (id:2, up to 10 seconds).
+MCP_RESULT=""
+for _i in $(seq 1 20); do
+  sleep 0.5
+  # SSE data lines starting with '{"jsonrpc"' and containing '"id":2'
+  MCP_RESULT=$(grep '^data: {' "${SSE_TMP}" 2>/dev/null \
+    | grep '"id":2' \
+    | head -1 \
+    | sed 's/^data: //' || true)
+  [ -n "${MCP_RESULT}" ] && break
+done
+
+kill "${SSE_PID}" 2>/dev/null || true
+rm -f "${SSE_TMP}"
+
+if [ -z "${MCP_RESULT}" ]; then
+  fail "agent" "list_products MCP call returned no response on the SSE stream within 10s"
+fi
+
+# The MCP result payload is JSON-RPC. The list_products tool returns a
+# human-readable summary in .result.content[0].text — "Found N data products:\n..."
+# (or "No data products found."), NOT a JSON object. First reject an MCP error
+# result (isError:true — e.g. a control-plane 500), then parse the count out of
+# the summary line and require at least one product.
+RESULT_TEXT=$(echo "${MCP_RESULT}" | jq -r '.result.content[0].text // ""')
+IS_ERROR=$(echo "${MCP_RESULT}" | jq -r '.result.isError // false')
+if [ "${IS_ERROR}" = "true" ]; then
+  fail "agent" "list_products returned an MCP error result: ${RESULT_TEXT:0:200}"
+fi
+PRODUCT_COUNT=$(printf '%s' "${RESULT_TEXT}" | sed -n 's/^Found \([0-9]\{1,\}\) data products.*/\1/p')
+{ [ -n "${PRODUCT_COUNT}" ] && [ "${PRODUCT_COUNT}" -gt 0 ]; } \
+  || fail "agent" "list_products reported no products (got: ${RESULT_TEXT:0:200})"
+ok "list_products MCP tool call succeeded end-to-end (${PRODUCT_COUNT} products)"
 
 # ---------------------------------------------------------------------------
 # 5. Data plane

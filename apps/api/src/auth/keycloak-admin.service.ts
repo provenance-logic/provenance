@@ -33,11 +33,12 @@ export class KeycloakAdminService {
   async createAgentClient(
     agentId: string,
     orgId: string,
+    clientId: string = agentId,
   ): Promise<AgentClientCredentials> {
     const token = await this.getAdminToken();
 
     const clientPayload = {
-      clientId: agentId,
+      clientId,
       enabled: true,
       publicClient: false,
       serviceAccountsEnabled: true,
@@ -46,7 +47,7 @@ export class KeycloakAdminService {
       directAccessGrantsEnabled: false,
       protocol: 'openid-connect',
       protocolMappers: [
-        this.hardcodedClaimMapper('principal_type', 'ai_agent'),
+        this.hardcodedClaimMapper('provenance_principal_type', 'ai_agent'),
         this.hardcodedClaimMapper('agent_id', agentId),
         this.hardcodedClaimMapper('provenance_org_id', orgId),
         {
@@ -99,7 +100,7 @@ export class KeycloakAdminService {
     const secretBody = await secretRes.json() as { value: string };
 
     return {
-      keycloak_client_id: agentId,
+      keycloak_client_id: clientId,
       keycloak_client_secret: secretBody.value,
     };
   }

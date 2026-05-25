@@ -98,7 +98,53 @@ log "running seed package"
 ) || fail "seed" "seed run failed — check API and Keycloak logs"
 
 # ---------------------------------------------------------------------------
-# 6. Smoke test
+# 6. Resolve agent client secret for smoke test (B-076)
+#
+# The seed provisions the Keycloak client via the /seed/agents endpoint (which
+# calls KeycloakAdminService.createAgentClient). The client secret is generated
+# by Keycloak and stored there — not echoed back to the seed runner. Resolve it
+# here via the Keycloak Admin API so the smoke test's agent layer is
+# self-sufficient and does not require a manual SMOKE_AGENT_SECRET export.
+#
+# ENV_FILE was sourced in step 5; KEYCLOAK_ADMIN_CLIENT_ID / _SECRET and
+# KEYCLOAK_ADMIN_CLIENT_SECRET are available from it.
+# ---------------------------------------------------------------------------
+
+AUTH_DEMO_DOMAIN="${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}"
+KEYCLOAK_ADMIN_CLIENT_ID="${KEYCLOAK_ADMIN_CLIENT_ID:-provenance-admin}"
+SMOKE_AGENT_CLIENT_ID="${SMOKE_AGENT_CLIENT_ID:-agent-acme-marketing-copilot}"
+
+log "resolving ${SMOKE_AGENT_CLIENT_ID} client secret from Keycloak"
+
+_KC_ADMIN_TOKEN=$(curl -sS -X POST \
+  "https://${AUTH_DEMO_DOMAIN}/realms/provenance/protocol/openid-connect/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=${KEYCLOAK_ADMIN_CLIENT_ID}" \
+  -d "client_secret=${KEYCLOAK_ADMIN_CLIENT_SECRET}" \
+  | jq -r '.access_token // empty')
+[ -n "${_KC_ADMIN_TOKEN}" ] \
+  || fail "agent-secret-resolve" "Keycloak admin token exchange failed (check KEYCLOAK_ADMIN_CLIENT_SECRET in ${ENV_FILE})"
+
+_KC_CLIENT_UUID=$(curl -sS \
+  -H "Authorization: Bearer ${_KC_ADMIN_TOKEN}" \
+  "https://${AUTH_DEMO_DOMAIN}/admin/realms/provenance/clients?clientId=${SMOKE_AGENT_CLIENT_ID}" \
+  | jq -r '.[0].id // empty')
+[ -n "${_KC_CLIENT_UUID}" ] \
+  || fail "agent-secret-resolve" "Keycloak client '${SMOKE_AGENT_CLIENT_ID}' not found — did the seed run successfully?"
+
+_KC_CLIENT_SECRET=$(curl -sS \
+  -H "Authorization: Bearer ${_KC_ADMIN_TOKEN}" \
+  "https://${AUTH_DEMO_DOMAIN}/admin/realms/provenance/clients/${_KC_CLIENT_UUID}/client-secret" \
+  | jq -r '.value // empty')
+[ -n "${_KC_CLIENT_SECRET}" ] \
+  || fail "agent-secret-resolve" "Could not retrieve client secret for '${SMOKE_AGENT_CLIENT_ID}'"
+
+export SMOKE_AGENT_SECRET="${_KC_CLIENT_SECRET}"
+unset _KC_ADMIN_TOKEN _KC_CLIENT_UUID _KC_CLIENT_SECRET
+log "agent client secret resolved (not logged)"
+
+# ---------------------------------------------------------------------------
+# 7. Smoke test
 # ---------------------------------------------------------------------------
 log "running smoke test against https://${DEMO_DOMAIN}"
 bash "${REPO_ROOT}/infrastructure/scripts/demo-smoke-test.sh" "https://${DEMO_DOMAIN}" \

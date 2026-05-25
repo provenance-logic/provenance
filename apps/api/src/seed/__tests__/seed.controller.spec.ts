@@ -100,6 +100,7 @@ describe('SeedController — POST /seed/principals (B-048 Keycloak attribute wri
         { provide: getRepositoryToken(DataProductEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(PortDeclarationEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(AgentIdentityEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(AgentTrustClassificationEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(PolicyVersionEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(EffectivePolicyEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(SloDeclarationEntity), useValue: noopRepo() },
@@ -173,5 +174,181 @@ describe('SeedController — POST /seed/principals (B-048 Keycloak attribute wri
         roles: [],
       }),
     ).resolves.toEqual({ id: PRINCIPAL_ID });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /seed/agents — B-076 Keycloak client provisioning
+//
+// After the DB transaction commits, the handler must call
+// keycloakAdmin.createAgentClient(agentId, orgId, `agent-<slug>`) so tokens
+// issued for seed agents carry:
+//   - `agent_id` = the platform agentId (what access grants reference)
+//   - `provenance_principal_type` = 'ai_agent' (what auth middleware checks)
+//   - `provenance_org_id` = orgId
+// These come from the hardcoded-claim mappers registered by createAgentClient,
+// not from Keycloak service-account attributes.
+// ---------------------------------------------------------------------------
+
+const AGENT_ID = 'agent-uuid-0001';
+const AGENT_ORG_ID = 'org-2';
+const OVERSIGHT_EMAIL = 'overseer@example.com';
+const AGENT_SLUG = 'acme-marketing-copilot';
+
+describe('SeedController — POST /seed/agents (B-076 KC client provisioning)', () => {
+  let controller: SeedController;
+  let keycloakAdmin: { updateUserAttributes: jest.Mock; createAgentClient: jest.Mock };
+  let agentRepo: { findOne: jest.Mock; update: jest.Mock; create: jest.Mock; save: jest.Mock };
+  let principalRepo: { findOne: jest.Mock };
+  let transactionFn: jest.Mock;
+
+  beforeEach(async () => {
+    keycloakAdmin = {
+      updateUserAttributes: jest.fn().mockResolvedValue(undefined),
+      createAgentClient: jest.fn().mockResolvedValue({
+        keycloak_client_id: `agent-${AGENT_SLUG}`,
+        keycloak_client_secret: 'generated-secret',
+      }),
+    };
+
+    agentRepo = {
+      findOne: jest.fn().mockResolvedValue(null), // no existing agent
+      update: jest.fn().mockResolvedValue(undefined),
+      create: jest.fn((dto: any) => dto),
+      save: jest.fn((entity: any) => ({ agentId: AGENT_ID, ...entity })),
+    };
+
+    principalRepo = {
+      findOne: jest.fn().mockResolvedValue({ id: 'oversight-principal-id', orgId: AGENT_ORG_ID, email: OVERSIGHT_EMAIL }),
+    };
+
+    transactionFn = jest.fn(async (cb: (mgr: any) => Promise<any>) => {
+      const mgr: any = {
+        getRepository: (entity: any) => {
+          if (entity === AgentIdentityEntity) {
+            return {
+              create: jest.fn((dto: any) => dto),
+              save: jest.fn((entity: any) => ({ agentId: AGENT_ID, ...entity })),
+            };
+          }
+          if (entity === AgentTrustClassificationEntity) {
+            return {
+              create: jest.fn((dto: any) => dto),
+              save: jest.fn((entity: any) => entity),
+            };
+          }
+          return { findOne: jest.fn(), save: jest.fn(), create: jest.fn() };
+        },
+      };
+      return cb(mgr);
+    });
+
+    const noopRepo = () => ({
+      findOne: jest.fn(),
+      find: jest.fn(),
+      save: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    });
+    const noopService = () => ({});
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SeedController],
+      providers: [
+        { provide: SeedGuard, useValue: { canActivate: () => true } },
+        { provide: KeycloakAdminService, useValue: keycloakAdmin },
+        { provide: getDataSourceToken(), useValue: { transaction: transactionFn } },
+        { provide: getRepositoryToken(OrgEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(DomainEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(PrincipalEntity), useValue: principalRepo },
+        { provide: getRepositoryToken(DataProductEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(PortDeclarationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(AgentIdentityEntity), useValue: agentRepo },
+        { provide: getRepositoryToken(AgentTrustClassificationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(PolicyVersionEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(EffectivePolicyEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(SloDeclarationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(SloEvaluationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(AccessGrantEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(AccessRequestEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(NotificationEntity), useValue: noopRepo() },
+        { provide: TrustScoreService, useValue: noopService() },
+        { provide: LineageService, useValue: noopService() },
+        { provide: SearchIndexingService, useValue: noopService() },
+        { provide: ProductIndexService, useValue: noopService() },
+        { provide: OpaClient, useValue: noopService() },
+      ],
+    }).compile();
+
+    controller = moduleRef.get(SeedController);
+  });
+
+  it('calls createAgentClient with (agentId, orgId, `agent-<slug>`) after the DB transaction', async () => {
+    const result = await controller.agent({
+      orgId: AGENT_ORG_ID,
+      agentSlug: AGENT_SLUG,
+      displayName: 'ACME Marketing Copilot',
+      description: 'Test agent',
+      trustClassification: 'observed',
+      oversightContactEmail: OVERSIGHT_EMAIL,
+    });
+
+    expect(result).toEqual({ id: AGENT_ID });
+
+    // The Keycloak call must happen AFTER the transaction (transactionFn called first)
+    expect(transactionFn).toHaveBeenCalledTimes(1);
+    expect(keycloakAdmin.createAgentClient).toHaveBeenCalledTimes(1);
+    expect(keycloakAdmin.createAgentClient).toHaveBeenCalledWith(
+      AGENT_ID,
+      AGENT_ORG_ID,
+      `agent-${AGENT_SLUG}`,
+    );
+  });
+
+  it('marks the agent identity as provisioned after the Keycloak call succeeds', async () => {
+    await controller.agent({
+      orgId: AGENT_ORG_ID,
+      agentSlug: AGENT_SLUG,
+      displayName: 'ACME Marketing Copilot',
+      description: 'Test agent',
+      trustClassification: 'observed',
+      oversightContactEmail: OVERSIGHT_EMAIL,
+    });
+
+    expect(agentRepo.update).toHaveBeenCalledWith(AGENT_ID, { keycloakClientProvisioned: true });
+  });
+
+  it('returns early without calling createAgentClient when the agent already exists', async () => {
+    agentRepo.findOne.mockResolvedValueOnce({ agentId: AGENT_ID, orgId: AGENT_ORG_ID });
+
+    const result = await controller.agent({
+      orgId: AGENT_ORG_ID,
+      agentSlug: AGENT_SLUG,
+      displayName: 'ACME Marketing Copilot',
+      description: 'Test agent',
+      trustClassification: 'observed',
+      oversightContactEmail: OVERSIGHT_EMAIL,
+    });
+
+    expect(result).toEqual({ id: AGENT_ID });
+    expect(keycloakAdmin.createAgentClient).not.toHaveBeenCalled();
+    expect(transactionFn).not.toHaveBeenCalled();
+  });
+
+  it('throws and does not mark as provisioned when createAgentClient fails', async () => {
+    keycloakAdmin.createAgentClient.mockRejectedValueOnce(new Error('Keycloak client already exists'));
+
+    await expect(
+      controller.agent({
+        orgId: AGENT_ORG_ID,
+        agentSlug: AGENT_SLUG,
+        displayName: 'ACME Marketing Copilot',
+        description: 'Test agent',
+        trustClassification: 'observed',
+        oversightContactEmail: OVERSIGHT_EMAIL,
+      }),
+    ).rejects.toThrow('Keycloak client already exists');
+
+    expect(agentRepo.update).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ process.env['MCP_API_KEY'] = 'test-mcp-key';
 process.env['DEFAULT_ORG_ID'] = '00000000-0000-0000-0000-000000000001';
 process.env['KEYCLOAK_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_REALM'] = 'provenance';
+process.env['AQL_INTERNAL_TOKEN'] = 'test-internal-token-at-least-16-chars';
 
 import axios from 'axios';
 import { ControlPlaneClient } from './control-plane.client.js';
