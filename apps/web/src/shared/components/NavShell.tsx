@@ -21,8 +21,17 @@ export function NavShell() {
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
       <nav className="w-56 flex-shrink-0 bg-slate-900 flex flex-col">
-        <div className="px-6 py-5">
-          <span className="text-white font-semibold text-lg tracking-tight">Provenance</span>
+        <div className="px-4 py-5">
+          {/* The brand logo is all-navy (icon + wordmark), so it would vanish
+              on the navy sidebar. Sit it on a white card to keep the brand
+              colors intact and legible. Asset lives in apps/web/public/. */}
+          <div className="rounded-lg bg-white px-3 py-2 flex items-center justify-center">
+            <img
+              src="/Provenance-Logo.svg"
+              alt="Provenance"
+              className="h-8 w-auto"
+            />
+          </div>
         </div>
 
         <ul className="flex-1 px-3 space-y-1">
