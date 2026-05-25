@@ -1,7 +1,7 @@
 # ADR-012: Connector Authentication Methods and the Spec-Driven Guided Registration Flow
 
 **Date:** May 25, 2026
-**Status:** Accepted (2026-05-25) — direction adopted; **no implementation yet.** This ADR records the decision and the phased build; the work is not started. Triggered by a persona walkthrough of Snowflake connector registration (see Context).
+**Status:** Accepted (2026-05-25) — direction adopted; **phase 1 slices 1–2 shipped.** Slice 1 = spec-driven guided form + Snowflake URL smart-fill (#217); slice 2 = Snowflake PAT authentication (#218, live-verified `SELECT 1` → `200` against a real Snowflake account; surfaced the network/auth-policy prerequisite — see Decision 2.B). Remaining phases not started: auto-generated key-pair, check-with-diagnostics, lifting the spec into the capability manifest, and OAuth (demand-gated). Triggered by a persona walkthrough of Snowflake connector registration (see Context).
 **Author:** Provenance Platform Team
 
 ---
