@@ -78,14 +78,12 @@ describe('RegisterConnectorForm', () => {
     await user.click(screen.getByRole('button', { name: /register connector/i }));
 
     await waitFor(() => expect(connectorsApi.register).toHaveBeenCalledTimes(1));
-    const [orgArg, payload] = (connectorsApi.register as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(orgArg).toBe(ORG_ID);
-    expect(payload.connectorType).toBe('postgresql');
-    expect(payload.connectionConfig).toEqual({
-      host: 'db.internal',
-      port: 5432,
-      database: 'claims',
-      ssl: true,
-    });
+    expect(connectorsApi.register).toHaveBeenCalledWith(
+      ORG_ID,
+      expect.objectContaining({
+        connectorType: 'postgresql',
+        connectionConfig: { host: 'db.internal', port: 5432, database: 'claims', ssl: true },
+      }),
+    );
   });
 });
