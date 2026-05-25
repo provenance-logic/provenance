@@ -1,6 +1,7 @@
 import { api } from './client.js';
 import type {
   Connector,
+  ConnectorHealthEvent,
   ConnectorList,
   DiscoveryCrawlEventRecord,
   RegisterConnectorRequest,
@@ -32,7 +33,7 @@ export const connectorsApi = {
       `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}`,
     ),
   validate: (orgId: string, connectorId: string) =>
-    api.post<{ status: string }>(
+    api.post<ConnectorHealthEvent>(
       `/organizations/${encodeURIComponent(orgId)}/connectors/${encodeURIComponent(connectorId)}/validate`,
       {},
     ),
