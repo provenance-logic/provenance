@@ -32,6 +32,29 @@ Reason: failed to create query: Field 'embedding' is not knn_vector type.
 
 ---
 
+## B-076 — MCP agent-auth path broken end-to-end: five independent root causes block every agent `list_products` call (four cause a 401 on `/mcp/sse`; one causes a 500 once auth passes)
+
+- **Resolved:** 2026-05-25, verified green end-to-end on the demo sandbox (smoke test `agent` section: agent obtains JWT → MCP SSE handshake → `list_products` returns products). Fixes committed 2026-05-24/25.
+- **Severity:** **Blocker** — every AI-agent interaction failed. The MCP server (port 3002) was deployed and responsive, but no agent token passed authentication, and once it did the first control-plane call 500'd. A Phase 4 "✅ Complete" silent regression: unit tests were green on both sides of five mismatched cross-service contracts, but no end-to-end test crossed the boundary. Root causes 1–4 were found together; root cause 5 was only reachable once 1–4 were fixed and the agent's request first reached the control plane.
+- **Area:** `apps/agent-query/src/auth/`, `apps/api/src/auth/`, `packages/seed/`, `infrastructure/scripts/`
+
+**Root cause 1 — Issuer mismatch in agent-query JWT verification.** `auth.middleware.ts` derived a single `expectedIssuer` from the internal `KEYCLOAK_URL=http://keycloak:8080` and used it for BOTH the JWKS fetch URI AND the `jwt.verify` issuer check. Deployed tokens carry the public `iss` (`https://auth-demo…/realms/provenance`) → mismatch → 401 on every valid agent token. **Fix:** added `KEYCLOAK_ISSUER_URL` to `apps/agent-query/src/config.ts` (mirrors the api split); JWKS still uses internal `KEYCLOAK_URL`, `jwt.verify` uses `KEYCLOAK_ISSUER_URL` when set (falls back to internal for local dev). Added the var to ec2-dev compose, the commented agent-query block in `docker-compose.yml`, and `.env.example`.
+
+**Root cause 2 — Wrong protocol-mapper claim name in production agent registration.** `keycloak-admin.service.ts` mapped the hardcoded claim as `principal_type`, but every consumer reads `provenance_principal_type` (auth middleware + jwt.strategy). So even a properly *registered* agent got a token missing the checked claim → 401. The unit test asserted the wrong name, so it never caught this. **Fix:** changed `'principal_type'` → `'provenance_principal_type'` and updated the spec.
+
+**Root cause 3 — Seed creates agent KC clients with no protocol mappers.** `keycloak-client.ts ensureClientCredentialsClient` created clients via `attributes` (config metadata) with zero `protocolMappers`, so seeded agent tokens carried none of `agent_id` / `provenance_principal_type` / `provenance_org_id`. **Fix:** removed the pre-creation from `runner.ts`; `/seed/agents` now calls `createAgentClient(agentId, orgId, 'agent-<slug>')` after the DB tx commits. `createAgentClient` gained an optional `clientId` param (defaults to `agentId`) so the KC client ID stays `agent-<slug>` (smoke-compatible) while the `agent_id` claim equals the platform UUID (so the connection-reference guard resolves grants by `granteePrincipalId`).
+
+**Root cause 4 — Smoke test hit a dead REST endpoint.** The smoke test POSTed to `/mcp/tools/call` (404). MCP is JSON-RPC over SSE. **Fix:** replaced it with a real handshake (open `GET /mcp/sse` → wait for `event: endpoint` → POST `initialize` → `notifications/initialized` → `tools/call` → read result off the SSE stream). `demo-sync.sh` now resolves the agent client secret from the Keycloak Admin API before invoking the smoke test.
+
+**Root cause 5 — `JwtAuthGuard.agentRepo` undefined in most modules (500 once auth passes).** Only reachable after 1–4 were fixed. The AQL calls the control plane as a trusted service (`Bearer <MCP_API_KEY>` + `x-agent-id`); `JwtAuthGuard.canActivate` resolves that header via `this.agentRepo.findOne(...)`. The guard is applied per-controller with `@UseGuards`; modules that didn't import `AuthModule` (e.g. `ProductsModule`, which owns the product/trust-score reads `list_products` fans out to) instantiated their own repo-less copy → `agentRepo` undefined → `TypeError … reading 'findOne'` → 500. Human JWTs go through `super.canActivate` and never hit that branch, so it stayed invisible. **Fix:** marked `AuthModule` `@Global()` and exported `TypeOrmModule` so every `@UseGuards(JwtAuthGuard)` resolves to the single repo-equipped provider.
+
+**Pattern:** Same class as the Phase 4 MCP silent regression — unit tests green on both sides of five boundaries, no end-to-end test from "seed creates an agent" → "agent obtains a JWT" → "JWT passes agent-query middleware" → "control plane serves the agent's call." The rewritten smoke test now crosses all of them.
+
+- **Branch:** `fix/mcp-agent-auth`
+- **Fix commits:** `28680b8` (root causes 1–4), `429f88a` + `217a462` (root cause 5 — `@Global` AuthModule + exported TypeOrmModule), `88519e8` (smoke assertion follow-up)
+
+---
+
 ## B-074 — Keycloak advertises OIDC endpoints with `:8080` on TLS-terminated deployments; browser login fails with `ERR_SSL_PROTOCOL_ERROR`
 
 - **Resolved:** 2026-05-24 in the same session it was surfaced

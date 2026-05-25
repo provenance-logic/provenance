@@ -9,45 +9,18 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-076 — MCP agent-auth path broken end-to-end: five independent root causes block every agent `list_products` call (four cause a 401 on `/mcp/sse`; one causes a 500 once auth passes)
+## B-078 — `seed:reset:hard` truncates `flyway_schema_history`, breaking the next stack restart (flyway re-applies V1 onto a populated schema)
 
-- **Severity:** **Blocker** — Every AI-agent interaction with the platform fails. The MCP server (port 3002) is deployed and responsive, but no agent token passes authentication, and once it does the first control-plane call 500s. This is a Phase 4 "✅ Complete" silent regression (see CLAUDE.md pattern "A phase is not complete until every advertised capability has a user-visible surface"): unit tests were green on both sides of five mismatched cross-service contracts, but no end-to-end test crossed the boundary. Root causes 1–4 were found together; root cause 5 was only reachable once 1–4 were fixed and the agent's request first reached the control plane.
-- **Status:** Fix applied across all five root causes on branch `fix/mcp-agent-auth`; re-verifying end-to-end on the demo sandbox.
+- **Severity:** **High** — demo/dev reset reliability. After `seed:reset:hard` the schema and seed data are correct, but flyway's history table is emptied. Any *subsequent* container recreate that triggers the `flyway-migrate` dependency fails (`relation "orgs" already exists`), which blocks the api from starting. The stack looks fine until the next `docker compose up`/recreate, then won't boot.
+- **Status:** Open. Worked around on the demo 2026-05-25; root-cause fix not yet landed.
+- **Area:** `packages/seed/` (hard-reset truncation), interacting with the `flyway-migrate` service in `infrastructure/docker/docker-compose.ec2-dev.yml`.
+- **Discovered:** 2026-05-25 during the fresh demo stand-up — force-recreating the api to deploy B-077 re-ran `flyway-migrate`, which failed because an earlier `seed:reset:hard` had emptied `organizations.flyway_schema_history`.
 
-**Root cause 1 — Issuer mismatch in agent-query JWT verification**
+**What's wrong.** `hardReset` truncates data tables to reset seed state, but the truncation also empties `organizations.flyway_schema_history` (it lives in the `organizations` schema, which is flyway's `defaultSchema`). `flyway.conf` sets no `baselineOnMigrate`, so flyway sees an empty history → reports `<< Empty Schema >>` → tries to apply `V1` → fails because `orgs` already exists → exits 1 → the api (which `depends_on` flyway-migrate completing) never starts.
 
-`apps/agent-query/src/auth/auth.middleware.ts` computed a single `expectedIssuer` string from the internal Docker network URL (`KEYCLOAK_URL=http://keycloak:8080`) and used it for BOTH the JWKS fetch URI AND the `issuer` option passed to `jwt.verify`. In deployed environments, Keycloak's KC_HOSTNAME / frontendUrl is the public domain, so every token it issues carries `iss: https://auth.provenancelogic.com/realms/provenance`. The middleware compared that against `http://keycloak:8080/realms/provenance` → mismatch → 401 on every valid agent token.
+**Workaround applied on the demo (2026-05-25):** `DROP TABLE organizations.flyway_schema_history;` → `flyway baseline -baselineVersion=39` → restart api (migrate is then a clean no-op).
 
-**Fix:** Added `KEYCLOAK_ISSUER_URL` (optional, mirrors the existing split in `apps/api/src/config.ts`) to `apps/agent-query/src/config.ts`. The JWKS client continues to use the internal `KEYCLOAK_URL`; `jwt.verify` uses `KEYCLOAK_ISSUER_URL` when set, falling back to the internal URL (correct for local dev). Added `KEYCLOAK_ISSUER_URL` to the ec2-dev compose env block for agent-query, the commented-out agent-query block in `docker-compose.yml`, and `.env.example`.
-
-**Root cause 2 — Wrong protocol mapper claim name in production agent registration**
-
-`apps/api/src/auth/keycloak-admin.service.ts:49` called `this.hardcodedClaimMapper('principal_type', 'ai_agent')` — the hardcoded claim was named `principal_type`. But every consumer reads `provenance_principal_type` (auth middleware line 90, jwt.strategy line 53). So every properly *registered* agent (not just seeded) received a JWT with a `principal_type` claim that nobody checked, and no `provenance_principal_type` claim, causing the middleware's `decoded.provenance_principal_type !== 'ai_agent'` check to fail with 401. The unit test at `keycloak-admin.service.spec.ts:153,157` asserted the wrong name and therefore never caught this.
-
-**Fix:** Changed `'principal_type'` to `'provenance_principal_type'` in the `hardcodedClaimMapper` call and updated the spec assertion to match.
-
-**Root cause 3 — Seed creates agent KC clients with no protocol mappers**
-
-`packages/seed/src/keycloak-client.ts ensureClientCredentialsClient` created Keycloak clients via `attributes` (client config metadata) and zero `protocolMappers`. So seeded agent tokens carried none of the required claims (`agent_id`, `provenance_principal_type`, `provenance_org_id`). Additionally, the `agent_id` claim needed to equal the platform `agentId` (not just the slug) so the connection-reference guard can resolve access grants by `granteePrincipalId`.
-
-**Fix:** Removed the `ensureClientCredentialsClient` pre-creation from `packages/seed/src/runner.ts`. The `/seed/agents` handler now calls `KeycloakAdminService.createAgentClient(agentId, orgId, 'agent-<slug>')` after the DB transaction commits. `createAgentClient` gained an optional third parameter `clientId` (defaults to `agentId`) so the KC client ID stays `agent-<slug>` (smoke-test compatible) while the `agent_id` claim equals the platform UUID. Removed `KeycloakClientSpec`, `ensureClientCredentialsClient`, and the now-dead `expandAttributes` helper from `keycloak-client.ts`.
-
-**Root cause 4 — Smoke test hit a dead REST endpoint**
-
-`infrastructure/scripts/demo-smoke-test.sh` POSTed to `/mcp/tools/call` which returns 404. MCP is JSON-RPC over SSE: the client must open `GET /mcp/sse`, receive an `event: endpoint` SSE event with the session-scoped messages URL, then POST JSON-RPC to that URL. Tool results return on the SSE stream, not the POST response. There is no REST shim.
-
-**Fix:** Replaced the dead `POST /mcp/tools/call` with a real MCP handshake: open SSE → wait for endpoint event → POST `initialize` → POST `notifications/initialized` → POST `tools/call` → read the SSE stream for the result. Also updated `demo-sync.sh` to resolve the agent client secret from Keycloak Admin API before invoking the smoke test (previously the `SMOKE_AGENT_SECRET` had no automated source).
-
-**Root cause 5 — `JwtAuthGuard.agentRepo` is undefined in most modules (500 once auth passes)**
-
-Only reachable after root causes 1–4 were fixed and the agent's request first reached the control plane. The Agent Query Layer calls the control plane as a trusted service — `Authorization: Bearer <MCP_API_KEY>` plus an `x-agent-id` header (ADR-002 Phase 5b-8) — and the API's `JwtAuthGuard.canActivate` (`apps/api/src/auth/jwt-auth.guard.ts:55`) resolves that header to an agent via `this.agentRepo.findOne(...)`. `JwtAuthGuard` is applied per-controller with `@UseGuards(JwtAuthGuard)`. `AuthModule` provides the guard with its `@InjectRepository(AgentIdentityEntity)` resolved and exports it — but modules that apply the guard without importing AuthModule (e.g. `ProductsModule`, which owns `/organizations/:orgId/domains/:domainId/products` and the per-product trust-score reads `list_products` fans out to) instantiate their own copy in a context with no `AgentIdentityEntity` repository. `agentRepo` is therefore `undefined`, and the MCP service-token branch throws `TypeError: Cannot read properties of undefined (reading 'findOne')` → 500. Normal human JWTs never enter that branch (they go through `super.canActivate`), so the gap was invisible.
-
-**Fix:** Marked `AuthModule` `@Global()`. AuthModule already builds the one `JwtAuthGuard` whose `agentRepo` is resolved; making the module global means every `@UseGuards(JwtAuthGuard)` across the app resolves to that single repo-equipped provider instead of a context-local repo-less copy.
-
-**Pattern this corroborates:** The four root causes span two repositories (api, agent-query), the seed package, and the smoke-test script. All four were latent for the entire duration of Phase 4 (shipped ≈2026-04-13). Unit tests were green on both sides of each boundary: the api's `hardcodedClaimMapper` test asserted the wrong name; the agent-query middleware tests used a local key with a matching issuer; the seed runner's Keycloak path was never exercised by any integration test. No end-to-end test crossed from "seed creates an agent" → "agent obtains a JWT" → "JWT passes agent-query middleware." This is the same class of failure as the Phase 4 MCP silent-regression caught by the 2026-04-25 demo dry-run (see CLAUDE.md pattern "Phase 4 silent regression").
-
-- **Branch:** `fix/mcp-agent-auth`
-- **Files changed:** `apps/agent-query/src/config.ts`, `apps/agent-query/src/auth/auth.middleware.ts`, `apps/agent-query/src/auth/auth.middleware.spec.ts`, `apps/api/src/auth/auth.module.ts`, `apps/api/src/auth/keycloak-admin.service.ts`, `apps/api/src/auth/keycloak-admin.service.spec.ts`, `apps/api/src/seed/seed.controller.ts`, `apps/api/src/seed/__tests__/seed.controller.spec.ts`, `packages/seed/src/runner.ts`, `packages/seed/src/keycloak-client.ts`, `infrastructure/docker/docker-compose.ec2-dev.yml`, `infrastructure/docker/docker-compose.yml`, `infrastructure/docker/.env.example`, `infrastructure/scripts/demo-smoke-test.sh`, `infrastructure/scripts/demo-sync.sh`
+**Proposed fix.** Exclude `flyway_schema_history` from `hardReset`'s truncation — it is flyway bookkeeping, not seed data. As a belt-and-suspenders backstop, optionally set `flyway.baselineOnMigrate=true` + `baselineVersion=<latest>` so a restart self-heals if the history is ever lost. Excluding the table from truncation is the correct primary fix.
 
 ---
 
