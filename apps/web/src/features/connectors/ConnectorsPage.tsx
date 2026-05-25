@@ -9,17 +9,24 @@ import type {
   Organization,
   ValidationStatus,
 } from '@provenance/types';
+import {
+  CONNECTOR_SPECS,
+  defaultConfigValues,
+  buildConnectionConfig,
+} from './connector-specs.js';
+import { parseSnowflakeUrl } from './snowflake-url.js';
 
 // F7.46 follow-on (B-025) — Connectors page.
 //
 // Lists every connector registered for the active org and exposes a
 // registration form bound to POST /organizations/:orgId/connectors. The
-// form deliberately surfaces connectionConfig as a JSON textarea
-// (default `{}`) rather than rendering connector-type-specific forms —
-// per-type field schemas are a follow-on once the operator UX for
-// credentials is settled. credentialArn is a free-text field so the
-// operator can paste an AWS Secrets Manager ARN; raw credentials never
-// hit the UI.
+// form renders typed, labeled fields per connector type from a declarative
+// spec (`connector-specs.ts`) instead of a raw connection_config JSON blob
+// (ADR-012, decision 1). Snowflake additionally gets a paste-a-URL smart-fill
+// that derives the host. The form assembles the same connection_config payload
+// the backend probe already reads — pure UX, no contract change. credentialArn
+// stays a free-text field (Secrets Manager ARN / local-env sentinel); raw
+// credentials never hit the UI.
 
 // Per PRD F3.2 + F3.2a (2026-05-23 PRD v1.6 reshape closing anchor
 // decision 5 on B-063): the dropdown exposes only types that ship
@@ -195,7 +202,7 @@ function ConnectorTable({
   );
 }
 
-function RegisterConnectorForm({
+export function RegisterConnectorForm({
   orgId,
   domains,
   onRegistered,
@@ -208,29 +215,55 @@ function RegisterConnectorForm({
   const [description, setDescription] = useState('');
   const [domainId, setDomainId] = useState<string>(domains[0]?.id ?? '');
   const [connectorType, setConnectorType] = useState<ConnectorType>('postgresql');
-  const [connectionConfig, setConnectionConfig] = useState<string>('{}');
+  const [configValues, setConfigValues] = useState<Record<string, string>>(
+    () => defaultConfigValues('postgresql'),
+  );
   const [credentialArn, setCredentialArn] = useState('');
+  const [smartFill, setSmartFill] = useState('');
+  const [smartFillNote, setSmartFillNote] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const spec = CONNECTOR_SPECS[connectorType];
+
+  function changeType(next: ConnectorType) {
+    setConnectorType(next);
+    setConfigValues(defaultConfigValues(next));
+    setSmartFill('');
+    setSmartFillNote(null);
+  }
+
+  function setField(key: string, value: string) {
+    setConfigValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function applySmartFill(value: string) {
+    setSmartFill(value);
+    const parsed = parseSnowflakeUrl(value);
+    if (parsed) {
+      setField('host', parsed.host);
+      setSmartFillNote(
+        parsed.account
+          ? `Filled the host below. Your account identifier is ${parsed.account}${parsed.region ? ` (region ${parsed.region})` : ''} — use it in the credential's "account" field.`
+          : 'Filled the host below.',
+      );
+    } else {
+      setSmartFillNote(null);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setResult(null);
 
-    let parsedConfig: Record<string, unknown> = {};
-    if (connectionConfig.trim()) {
-      try {
-        const raw: unknown = JSON.parse(connectionConfig);
-        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-          throw new Error('connection config must be a JSON object');
-        }
-        parsedConfig = raw as Record<string, unknown>;
-      } catch (err) {
-        setSubmitting(false);
-        setResult({ ok: false, message: `Connection config: ${(err as Error).message}` });
-        return;
-      }
+    const missing = spec.fields
+      .filter((f) => f.required && !(configValues[f.key] ?? '').trim())
+      .map((f) => f.label);
+    if (missing.length > 0) {
+      setSubmitting(false);
+      setResult({ ok: false, message: `Please fill required field(s): ${missing.join(', ')}` });
+      return;
     }
 
     try {
@@ -240,14 +273,14 @@ function RegisterConnectorForm({
         domainId,
         name: name.trim(),
         connectorType,
-        connectionConfig: parsedConfig,
+        connectionConfig: buildConnectionConfig(connectorType, configValues),
         ...(trimmedDescription ? { description: trimmedDescription } : {}),
         ...(trimmedArn ? { credentialArn: trimmedArn } : {}),
       });
       setResult({ ok: true, message: `Connector "${name.trim()}" registered. Run a validation check from the row when you're ready.` });
       setName('');
       setDescription('');
-      setConnectionConfig('{}');
+      changeType(connectorType);
       setCredentialArn('');
       await onRegistered();
     } catch (err) {
@@ -260,9 +293,7 @@ function RegisterConnectorForm({
   return (
     <div className="rounded-md border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Register a connector</h2>
-      <p className="mt-1 text-xs text-slate-500">
-        Validation runs as a separate step after registration. Connection config is a JSON object whose required fields depend on the connector type — pass <code className="font-mono">{'{}'}</code> for now if you only want to record the reference.
-      </p>
+      <p className="mt-1 text-xs text-slate-500">{spec.blurb} Validation runs as a separate step after registration.</p>
       <form onSubmit={(e) => { void handleSubmit(e); }} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
         <Field label="Name">
           <input
@@ -289,20 +320,12 @@ function RegisterConnectorForm({
           <select
             className="input w-full"
             value={connectorType}
-            onChange={(e) => setConnectorType(e.target.value as ConnectorType)}
+            onChange={(e) => changeType(e.target.value as ConnectorType)}
           >
             {CONNECTOR_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
-        </Field>
-        <Field label="Credential ARN (optional)" hint="AWS Secrets Manager ARN. Leave blank for connectors that don't need credentials.">
-          <input
-            className="input w-full"
-            value={credentialArn}
-            onChange={(e) => setCredentialArn(e.target.value)}
-            placeholder="arn:aws:secretsmanager:…"
-          />
         </Field>
         <Field label="Description (optional)">
           <input
@@ -312,14 +335,57 @@ function RegisterConnectorForm({
             placeholder="One-line purpose, owner team, etc."
           />
         </Field>
-        <Field label="Connection config (JSON)" hint="Non-sensitive parameters — host, port, database name, etc. Must parse as a JSON object.">
-          <textarea
-            className="input w-full font-mono text-xs h-20"
-            value={connectionConfig}
-            onChange={(e) => setConnectionConfig(e.target.value)}
-            spellCheck={false}
-          />
-        </Field>
+
+        {spec.smartFill && (
+          <div className="md:col-span-2">
+            <Field label={spec.smartFill.label} hint={smartFillNote ?? spec.smartFill.help}>
+              <input
+                className="input w-full"
+                value={smartFill}
+                onChange={(e) => applySmartFill(e.target.value)}
+                placeholder={spec.smartFill.placeholder}
+                spellCheck={false}
+              />
+            </Field>
+          </div>
+        )}
+
+        {spec.fields.map((f) => (
+          <Field key={f.key} label={f.label} hint={f.help}>
+            {f.type === 'boolean' ? (
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={(configValues[f.key] ?? 'false') === 'true'}
+                onChange={(e) => setField(f.key, e.target.checked ? 'true' : 'false')}
+              />
+            ) : (
+              <input
+                className="input w-full"
+                type={f.type === 'number' ? 'number' : 'text'}
+                value={configValues[f.key] ?? ''}
+                onChange={(e) => setField(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                required={f.required}
+                spellCheck={false}
+              />
+            )}
+          </Field>
+        ))}
+
+        <div className="md:col-span-2">
+          <Field label={spec.credential.label} hint={spec.credential.help}>
+            <input
+              className="input w-full font-mono text-xs"
+              value={credentialArn}
+              onChange={(e) => setCredentialArn(e.target.value)}
+              placeholder={spec.credential.placeholder}
+              required={spec.credential.required}
+              spellCheck={false}
+            />
+          </Field>
+        </div>
+
         <div className="md:col-span-2 flex items-center justify-between gap-3">
           {result && (
             <div
@@ -351,7 +417,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   children: React.ReactNode;
 }) {
   return (
