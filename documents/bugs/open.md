@@ -9,6 +9,25 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-080 — Connector onboarding is not OSR-smooth: Snowflake PAT prerequisites (network/auth policy) are expert-only; `v0.1.0-osr` overstated connector readiness
+
+- **Severity:** **High** — strikes at the platform's core self-service claim. Matt's end-of-session assessment 2026-05-25: "I thought we were OSR, but we are not." Correct for the connector layer.
+- **Status:** Open. The *credential-entry* half is fixed (ADR-013 / #220 — paste a secret in the GUI, vaulted at rest); the *make-it-actually-authenticate* half is not OSR-grade for Snowflake.
+- **Area:** Connector registration UX + Snowflake connector onboarding docs/flow; `apps/web/src/features/connectors/`, `apps/api/src/connectors/`.
+
+**What's actually wrong.** Registering a connector is now *mechanically* self-service after ADR-013 (no more pre-staged ARN / `local-env` dead-end). But getting a **Snowflake** connector to validate green required, in this session, an expert sequence a domain owner could not perform unaided:
+- Snowflake refuses every PAT with `390432 "Network policy is required"` until the account has a network policy, or an authentication policy with `PAT_POLICY NETWORK_POLICY_EVALUATION ≠ REQUIRED`.
+- The obvious `ALTER ACCOUNT SET NETWORK_POLICY` from a Snowsight worksheet fails activation (`"SYSTEM_COMPUTE_POOL_CPU … must be included"`) because the worksheet's requestor is a private network id, not an IP.
+- The working recipe ended up being: a dedicated service user + a network policy allowing **Provenance's egress IP** (`54.83.160.49` on dev) + a PAT minted under that user. None of this is surfaced in the product or docs.
+
+**Still unresolved at the break:** the dev Snowflake connector returns `394400 "Programmatic access token is invalid"` (likely a token-entry issue — wrong column copied from `ADD PROGRAMMATIC ACCESS TOKEN`, or a copy error — not yet confirmed). The full register→validate→crawl loop has **not** been demonstrated green through the GUI on a real account this session (the protocol-level PAT auth *was* proven earlier via direct `SELECT 1` → 200).
+
+**Why it matters / what "done" looks like.** OSR per Matt's bar = "works without weird workarounds." Snowflake onboarding currently *is* the weird workaround. Candidate fixes (to scope when Matt returns): in-product guidance that states the network-policy prerequisite and the egress IP to allowlist; a "test this token" affordance before save; possibly a guided "here's the exact Snowflake SQL for your account" snippet (mirrors the destination-snippet pattern); and revisiting whether OAuth (ADR-012 method A) is the real answer for Snowflake rather than PAT. Also re-examine the same onboarding bar for PG / S3 / Databricks before re-claiming OSR.
+
+**Related:** [ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md) (credential vault, shipped), [ADR-012](../architecture/adr/ADR-012-connector-auth-and-guided-registration.md) (guided form + auth methods). The recurring "✅ Complete ≠ a real user can do it" pattern: B-076, B-077, B-079, and the `local-env` dead-end this session.
+
+---
+
 ## B-078 — `seed:reset:hard` truncates `flyway_schema_history`, breaking the next stack restart (flyway re-applies V1 onto a populated schema)
 
 - **Severity:** **High** — demo/dev reset reliability. After `seed:reset:hard` the schema and seed data are correct, but flyway's history table is emptied. Any *subsequent* container recreate that triggers the `flyway-migrate` dependency fails (`relation "orgs" already exists`), which blocks the api from starting. The stack looks fine until the next `docker compose up`/recreate, then won't boot.
