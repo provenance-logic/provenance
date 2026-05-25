@@ -72,6 +72,21 @@ describe('isValidCredentialArn — sentinel format accepted (B-063)', () => {
     expect(isValidCredentialArn('local-env:mixedCase123')).toBe(true);
   });
 
+  it('accepts vault: UUID references (ADR-013)', () => {
+    expect(
+      isValidCredentialArn('vault:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+    ).toBe(true);
+    expect(
+      isValidCredentialArn('vault:00000000-0000-0000-0000-000000000000'),
+    ).toBe(true);
+  });
+
+  it('rejects vault: with a non-UUID suffix', () => {
+    expect(isValidCredentialArn('vault:')).toBe(false);
+    expect(isValidCredentialArn('vault:not-a-uuid')).toBe(false);
+    expect(isValidCredentialArn('vault:1234')).toBe(false);
+  });
+
   it('rejects a malformed local-env sentinel', () => {
     expect(isValidCredentialArn('local-env:')).toBe(false);
     expect(isValidCredentialArn('local-env:1starts-with-digit')).toBe(false);

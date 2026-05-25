@@ -20,6 +20,7 @@ import { CapabilityManifestService } from './capability-manifest.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
 import { ConnectorProbeService, type WorkspaceWalkResult } from './probe/connector-probe.service.js';
 import { detectRawCredentialKey, isValidCredentialArn } from './probe/raw-credential-guard.js';
+import { ConnectorCredentialVaultService } from './credential-vault.service.js';
 import { KafkaProducerService } from '../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
@@ -86,6 +87,7 @@ export class ConnectorsService {
     private readonly lineageService: LineageService,
     private readonly kafkaProducer: KafkaProducerService,
     private readonly notificationsService: NotificationsService,
+    private readonly credentialVault: ConnectorCredentialVaultService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -129,10 +131,26 @@ export class ConnectorsService {
       );
     }
 
-    // 2. Validate credentialArn format if provided
-    if (dto.credentialArn && !isValidCredentialArn(dto.credentialArn)) {
+    // 2. Handle credentialSecret (self-service vault entry, ADR-013) or validate credentialArn.
+    //    credentialSecret takes precedence when both are supplied.
+    let resolvedCredentialArn: string | undefined = dto.credentialArn;
+    if (dto.credentialSecret !== undefined) {
+      if (
+        typeof dto.credentialSecret !== 'object' ||
+        dto.credentialSecret === null ||
+        Array.isArray(dto.credentialSecret)
+      ) {
+        throw new BadRequestException('credentialSecret must be a JSON object');
+      }
+      if (Object.keys(dto.credentialSecret).length === 0) {
+        throw new BadRequestException('credentialSecret must not be an empty object');
+      }
+      // Vault it — returns vault:<uuid>. The plaintext is encrypted immediately
+      // and the reference is what we store. Never log dto.credentialSecret.
+      resolvedCredentialArn = await this.credentialVault.store(orgId, dto.credentialSecret);
+    } else if (dto.credentialArn && !isValidCredentialArn(dto.credentialArn)) {
       throw new BadRequestException(
-        `credentialArn does not appear to be a valid AWS Secrets Manager ARN: '${dto.credentialArn}'`,
+        `credentialArn does not appear to be a valid credential reference: '${dto.credentialArn}'`,
       );
     }
 
@@ -155,7 +173,7 @@ export class ConnectorsService {
         description: dto.description ?? null,
         connectorType: dto.connectorType,
         connectionConfig: dto.connectionConfig ?? {},
-        credentialArn: dto.credentialArn ?? null,
+        credentialArn: resolvedCredentialArn ?? null,
         validationStatus: 'pending',
         createdBy,
       }),
@@ -220,19 +238,42 @@ export class ConnectorsService {
       }
       connector.connectionConfig = dto.connectionConfig;
     }
-    if (dto.credentialArn !== undefined) {
+
+    // credentialSecret takes precedence; vault it and overwrite the existing ref.
+    if (dto.credentialSecret !== undefined) {
+      if (
+        typeof dto.credentialSecret !== 'object' ||
+        dto.credentialSecret === null ||
+        Array.isArray(dto.credentialSecret)
+      ) {
+        throw new BadRequestException('credentialSecret must be a JSON object');
+      }
+      if (Object.keys(dto.credentialSecret).length === 0) {
+        throw new BadRequestException('credentialSecret must not be an empty object');
+      }
+      // Pass the existing ref so store() can overwrite in place (rotation).
+      // Never log dto.credentialSecret.
+      connector.credentialArn = await this.credentialVault.store(
+        orgId,
+        dto.credentialSecret,
+        connector.credentialArn ?? undefined,
+      );
+      connector.validationStatus = 'stale';
+    } else if (dto.credentialArn !== undefined) {
       if (dto.credentialArn && !isValidCredentialArn(dto.credentialArn)) {
         throw new BadRequestException(
-          `credentialArn is not a valid Secrets Manager ARN: '${dto.credentialArn}'`,
+          `credentialArn is not a valid credential reference: '${dto.credentialArn}'`,
         );
       }
       connector.credentialArn = dto.credentialArn ?? null;
+      connector.validationStatus = 'stale';
     }
+
     if (dto.name !== undefined) connector.name = dto.name;
     if (dto.description !== undefined) connector.description = dto.description ?? null;
 
-    // Credential or config changes invalidate previous validation.
-    if (dto.connectionConfig !== undefined || dto.credentialArn !== undefined) {
+    // Config changes also invalidate previous validation.
+    if (dto.connectionConfig !== undefined) {
       connector.validationStatus = 'stale';
     }
 

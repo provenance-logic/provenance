@@ -62,10 +62,22 @@ const ARN_PATTERN =
 const LOCAL_ENV_PATTERN = /^local-env:[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * Returns true if the string looks like a valid Secrets Manager ARN, or
- * the local-dev environment-variable sentinel. Used to reject credentialArn
- * fields that contain raw values instead of ARN-shaped references.
+ * Platform vault reference pattern (ADR-013).
+ * `vault:<uuid>` references a row in connectors.connector_secrets that holds
+ * an AES-256-GCM encrypted envelope. UUID v4 format: 8-4-4-4-12 hex groups.
+ */
+const VAULT_PATTERN = /^vault:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns true if the string is one of the three valid credential reference
+ * schemes:
+ *   - `arn:aws:secretsmanager:…`  — AWS Secrets Manager (cloud deployments)
+ *   - `local-env:VARNAME`          — process.env sentinel (dev/test only)
+ *   - `vault:<uuid>`               — platform encrypted store (ADR-013, default)
+ *
+ * Used to reject credentialArn fields that contain raw values instead of
+ * reference-shaped strings. Never accepts a plaintext secret.
  */
 export function isValidCredentialArn(arn: string): boolean {
-  return ARN_PATTERN.test(arn) || LOCAL_ENV_PATTERN.test(arn);
+  return ARN_PATTERN.test(arn) || LOCAL_ENV_PATTERN.test(arn) || VAULT_PATTERN.test(arn);
 }

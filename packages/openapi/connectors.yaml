@@ -1,11 +1,15 @@
 openapi: 3.1.0
 info:
   title: Provenance Connectors API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Connector registration, source object management, health monitoring, and schema snapshot capture.
-    Credentials are never stored here — credentialArn holds an AWS Secrets Manager ARN reference only.
-    Raw credentials must never appear in requests or responses.
+
+    Credential handling (ADR-013): submit a raw secret in `credentialSecret` (a JSON object, e.g.
+    `{"token":"dapi…"}`) and the platform encrypts it at rest (AES-256-GCM) and persists only a
+    `vault:<uuid>` reference in `credentialArn`. Alternatively supply a pre-staged AWS Secrets
+    Manager ARN (`arn:aws:…`) directly in `credentialArn`. The `local-env:VARNAME` sentinel is
+    available for dev/test only. Raw credentials must never appear in responses.
 
 servers:
   - url: /api/v1
@@ -512,8 +516,12 @@ components:
           maxLength: 2048
           nullable: true
           description: |
-            AWS Secrets Manager ARN reference. NULL for public sources.
-            Raw credentials are never returned.
+            Credential reference. One of:
+              - `vault:<uuid>` — platform-managed encrypted store (ADR-013; returned when you
+                submitted credentialSecret; this is the default for self-service registrations)
+              - `arn:aws:secretsmanager:…` — AWS Secrets Manager ARN
+              - `local-env:VARNAME` — dev/test sentinel (never used in production)
+            The raw secret is never returned.
         validationStatus:
           $ref: '#/components/schemas/ValidationStatus'
         lastValidatedAt:
@@ -555,7 +563,25 @@ components:
         credentialArn:
           type: string
           maxLength: 2048
-          description: AWS Secrets Manager ARN for sensitive credentials.
+          description: |
+            Pre-staged credential reference: an AWS Secrets Manager ARN (`arn:aws:…`) or the
+            dev-only `local-env:VARNAME` sentinel. Use `credentialSecret` instead for
+            self-service entry via the GUI — the platform will vault it and return `vault:<uuid>`
+            in the response's `credentialArn`.
+        credentialSecret:
+          type: object
+          additionalProperties: true
+          description: |
+            Raw credential payload submitted once over TLS. The platform encrypts it at rest
+            (AES-256-GCM) and stores only a `vault:<uuid>` reference — the plaintext is never
+            persisted, logged, or returned. Mutually exclusive with `credentialArn`; if both
+            are supplied, `credentialSecret` takes precedence.
+            Expected shapes per connector type:
+              - postgresql: {"username":"…","password":"…"}
+              - s3: {"accessKeyId":"…","secretAccessKey":"…"}
+              - databricks: {"token":"dapi…"}
+              - snowflake PAT: {"token":"<PAT>"}
+              - snowflake key-pair: {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\n…","user":"…","account":"…"}
 
     UpdateConnectorRequest:
       type: object
@@ -572,6 +598,16 @@ components:
         credentialArn:
           type: string
           maxLength: 2048
+          description: |
+            Pre-staged credential reference (ARN or local-env sentinel).
+            Use `credentialSecret` for self-service credential rotation.
+        credentialSecret:
+          type: object
+          additionalProperties: true
+          description: |
+            New raw credential payload for credential rotation. Overwrites the existing vault
+            entry in place (same `vault:<uuid>` reference, new encrypted envelope). The plaintext
+            is never persisted, logged, or returned.
 
     ConnectorList:
       type: object

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { CONNECTOR_SPECS, defaultConfigValues, buildConnectionConfig } from './connector-specs.js';
+import {
+  CONNECTOR_SPECS,
+  defaultConfigValues,
+  buildConnectionConfig,
+  buildCredentialSecret,
+} from './connector-specs.js';
 
 describe('defaultConfigValues', () => {
   it('seeds field defaults for snowflake', () => {
@@ -52,6 +57,48 @@ describe('buildConnectionConfig', () => {
       const spec = CONNECTOR_SPECS[type];
       expect(spec.fields.length).toBeGreaterThan(0);
       expect(spec.credential.help).toBeTruthy();
+    }
+  });
+});
+
+describe('buildCredentialSecret (ADR-013)', () => {
+  it('returns null when all secret fields are empty', () => {
+    const result = buildCredentialSecret('databricks', { token: '' });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when no secret field values provided', () => {
+    const result = buildCredentialSecret('databricks', {});
+    expect(result).toBeNull();
+  });
+
+  it('assembles the token for databricks', () => {
+    const result = buildCredentialSecret('databricks', { token: 'dapi-live-token' });
+    expect(result).toEqual({ token: 'dapi-live-token' });
+  });
+
+  it('assembles the token for snowflake', () => {
+    const result = buildCredentialSecret('snowflake', { token: 'my-pat' });
+    expect(result).toEqual({ token: 'my-pat' });
+  });
+
+  it('assembles username+password for postgresql, dropping blank ones', () => {
+    const result = buildCredentialSecret('postgresql', { username: 'reader', password: '' });
+    expect(result).toEqual({ username: 'reader' });
+    expect('password' in (result ?? {})).toBe(false);
+  });
+
+  it('assembles accessKeyId+secretAccessKey for s3', () => {
+    const result = buildCredentialSecret('s3', {
+      accessKeyId: 'AKIATEST',
+      secretAccessKey: 'secret123',
+    });
+    expect(result).toEqual({ accessKeyId: 'AKIATEST', secretAccessKey: 'secret123' });
+  });
+
+  it('every connector has secretFields declared', () => {
+    for (const type of ['postgresql', 's3', 'databricks', 'snowflake'] as const) {
+      expect(CONNECTOR_SPECS[type].credential.secretFields.length).toBeGreaterThan(0);
     }
   });
 });

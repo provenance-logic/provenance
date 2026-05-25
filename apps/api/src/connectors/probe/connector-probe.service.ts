@@ -188,7 +188,7 @@ export class ConnectorProbeService {
     const cfg = connector.connectionConfig;
     let creds: Record<string, string> = {};
     if (connector.credentialArn) {
-      creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      creds = await this.secretsManager.getSecretValue(connector.credentialArn, connector.orgId);
     }
     return new PgClient({
       host: String(cfg.host ?? 'localhost'),
@@ -270,7 +270,7 @@ export class ConnectorProbeService {
   private async buildS3Client(connector: ConnectorEntity): Promise<S3Client> {
     let creds: Record<string, string> = {};
     if (connector.credentialArn) {
-      creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      creds = await this.secretsManager.getSecretValue(connector.credentialArn, connector.orgId);
     }
     return new S3Client({
       ...(creds.accessKeyId
@@ -363,7 +363,7 @@ export class ConnectorProbeService {
   ): Promise<string | null> {
     if (!connector.credentialArn) return null;
     try {
-      const creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      const creds = await this.secretsManager.getSecretValue(connector.credentialArn, connector.orgId);
       if (typeof creds.token === 'string' && creds.token.length > 0) {
         return creds.token;
       }
@@ -687,7 +687,7 @@ export class ConnectorProbeService {
   ): Promise<SnowflakeCreds | null> {
     if (!connector.credentialArn) return null;
     try {
-      const creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      const creds = await this.secretsManager.getSecretValue(connector.credentialArn, connector.orgId);
       // Prefer a programmatic access token when present — the simplest path
       // (one string, no key material), and an operator who supplied a PAT
       // shouldn't be shadowed by stale key-pair fields in the same secret.

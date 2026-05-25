@@ -6,12 +6,14 @@ import { CapabilityManifestController } from './capability-manifest.controller.j
 import { CapabilityManifestService } from './capability-manifest.service.js';
 import { ConnectorProbeService } from './probe/connector-probe.service.js';
 import { SecretsManagerService } from './probe/secrets-manager.service.js';
+import { ConnectorCredentialVaultService } from './credential-vault.service.js';
 import { ConnectorEntity } from './entities/connector.entity.js';
 import { ConnectorHealthEventEntity } from './entities/connector-health-event.entity.js';
 import { SourceRegistrationEntity } from './entities/source-registration.entity.js';
 import { SchemaSnapshotEntity } from './entities/schema-snapshot.entity.js';
 import { DiscoveryCrawlEventEntity } from './entities/discovery-crawl-event.entity.js';
 import { CapabilityManifestEntity } from './entities/capability-manifest.entity.js';
+import { ConnectorSecretEntity } from './entities/connector-secret.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
 import { KafkaModule } from '../kafka/kafka.module.js';
 import { LineageModule } from '../lineage/lineage.module.js';
@@ -26,6 +28,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
       SchemaSnapshotEntity,
       DiscoveryCrawlEventEntity,
       CapabilityManifestEntity,
+      ConnectorSecretEntity,
       RoleAssignmentEntity,
     ]),
     KafkaModule,
@@ -33,6 +36,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
     NotificationsModule,
   ],
   providers: [
+    ConnectorCredentialVaultService,
     SecretsManagerService,
     ConnectorProbeService,
     CapabilityManifestService,

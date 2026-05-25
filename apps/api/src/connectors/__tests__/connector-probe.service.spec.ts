@@ -218,6 +218,7 @@ describe('ConnectorProbeService', () => {
 
       expect(secretsManager.getSecretValue).toHaveBeenCalledWith(
         'arn:aws:secretsmanager:us-east-1:123456789012:secret:MyDb-XYZ',
+        expect.any(String), // orgId — passed for vault: dispatch, ignored for ARNs
       );
     });
 

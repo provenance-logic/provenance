@@ -13,6 +13,7 @@ import {
   CONNECTOR_SPECS,
   defaultConfigValues,
   buildConnectionConfig,
+  buildCredentialSecret,
 } from './connector-specs.js';
 import { parseSnowflakeUrl } from './snowflake-url.js';
 
@@ -21,18 +22,15 @@ import { parseSnowflakeUrl } from './snowflake-url.js';
 // Lists every connector registered for the active org and exposes a
 // registration form bound to POST /organizations/:orgId/connectors. The
 // form renders typed, labeled fields per connector type from a declarative
-// spec (`connector-specs.ts`) instead of a raw connection_config JSON blob
-// (ADR-012, decision 1). Snowflake additionally gets a paste-a-URL smart-fill
-// that derives the host. The form assembles the same connection_config payload
-// the backend probe already reads — pure UX, no contract change. credentialArn
-// stays a free-text field (Secrets Manager ARN / local-env sentinel); raw
-// credentials never hit the UI.
-
-// Per PRD F3.2 + F3.2a (2026-05-23 PRD v1.6 reshape closing anchor
-// decision 5 on B-063): the dropdown exposes only types that ship
-// end-to-end at the consumer-grade bar. Earlier versions advertised 13
-// options; the 10 unimplemented options were retired. Snowflake is the
-// next-scheduled addition under the F3.2a tranche cadence.
+// spec (`connector-specs.ts`; ADR-012 decision 1 + ADR-013 credential vault).
+//
+// Credential entry: secret fields render as masked password inputs. The form
+// assembles `credentialSecret` (a JSON object) and submits it to the API,
+// which encrypts it at rest and returns a `vault:<uuid>` reference. An
+// "Advanced" toggle lets operators supply a pre-staged ARN/local-env ref in
+// `credentialArn` directly instead (the old path, preserved for ops/migration).
+//
+// Per PRD F3.2 + F3.2a: only connector types working end-to-end are exposed.
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'postgresql',  label: 'PostgreSQL' },
   { value: 'databricks',  label: 'Databricks' },
@@ -109,7 +107,7 @@ export function ConnectorsPage() {
         <Link to="/dashboard" className="text-sm text-slate-500 hover:text-slate-700">← Back to dashboard</Link>
         <h1 className="mt-2 text-2xl font-semibold text-slate-900">Connectors</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Connectors register your existing data systems against a domain inside <span className="font-medium text-slate-700">{org.name}</span> so lineage and access can flow through Provenance. Credentials are referenced by AWS Secrets Manager ARN — raw secrets never enter the platform.
+          Connectors register your existing data systems against a domain inside <span className="font-medium text-slate-700">{org.name}</span> so lineage and access can flow through Provenance. Credentials are encrypted at rest — raw secrets are never persisted or returned.
         </p>
       </div>
 
@@ -218,6 +216,10 @@ export function RegisterConnectorForm({
   const [configValues, setConfigValues] = useState<Record<string, string>>(
     () => defaultConfigValues('postgresql'),
   );
+  // Secret field values — assembled into credentialSecret on submit.
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+  // Advanced: allow operator to type a pre-staged ARN or local-env sentinel.
+  const [showAdvancedArn, setShowAdvancedArn] = useState(false);
   const [credentialArn, setCredentialArn] = useState('');
   const [smartFill, setSmartFill] = useState('');
   const [smartFillNote, setSmartFillNote] = useState<string | null>(null);
@@ -229,12 +231,19 @@ export function RegisterConnectorForm({
   function changeType(next: ConnectorType) {
     setConnectorType(next);
     setConfigValues(defaultConfigValues(next));
+    setSecretValues({});
+    setCredentialArn('');
     setSmartFill('');
     setSmartFillNote(null);
+    setShowAdvancedArn(false);
   }
 
   function setField(key: string, value: string) {
     setConfigValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setSecretField(key: string, value: string) {
+    setSecretValues((prev) => ({ ...prev, [key]: value }));
   }
 
   function applySmartFill(value: string) {
@@ -269,19 +278,33 @@ export function RegisterConnectorForm({
     try {
       const trimmedDescription = description.trim();
       const trimmedArn = credentialArn.trim();
+
+      // Prefer credentialSecret (self-service vault) unless the user explicitly
+      // entered a pre-staged ARN in the advanced toggle.
+      const credentialSecret = buildCredentialSecret(connectorType, secretValues);
+
+      // Validate: if credential is required and neither secret fields nor ARN provided, block.
+      if (spec.credential.required && !credentialSecret && !trimmedArn) {
+        setSubmitting(false);
+        setResult({ ok: false, message: `${spec.credential.label} is required.` });
+        return;
+      }
+
       await connectorsApi.register(orgId, {
         domainId,
         name: name.trim(),
         connectorType,
         connectionConfig: buildConnectionConfig(connectorType, configValues),
         ...(trimmedDescription ? { description: trimmedDescription } : {}),
-        ...(trimmedArn ? { credentialArn: trimmedArn } : {}),
+        // credentialSecret takes precedence; if the user entered an ARN
+        // in the advanced field instead, send that as credentialArn.
+        ...(credentialSecret ? { credentialSecret } : {}),
+        ...(!credentialSecret && trimmedArn ? { credentialArn: trimmedArn } : {}),
       });
       setResult({ ok: true, message: `Connector "${name.trim()}" registered. Run a validation check from the row when you're ready.` });
       setName('');
       setDescription('');
       changeType(connectorType);
-      setCredentialArn('');
       await onRegistered();
     } catch (err) {
       setResult({ ok: false, message: (err as Error).message ?? 'Failed to register connector' });
@@ -373,18 +396,72 @@ export function RegisterConnectorForm({
           </Field>
         ))}
 
-        <div className="md:col-span-2">
-          <Field label={spec.credential.label} hint={spec.credential.help}>
-            <input
-              className="input w-full font-mono text-xs"
-              value={credentialArn}
-              onChange={(e) => setCredentialArn(e.target.value)}
-              placeholder={spec.credential.placeholder}
-              required={spec.credential.required}
-              spellCheck={false}
-            />
-          </Field>
-        </div>
+        {/* Self-service secret entry (ADR-013) */}
+        {spec.credential.secretFields.length > 0 && !showAdvancedArn && (
+          <div className="md:col-span-2">
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-700">{spec.credential.label}</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedArn(true)}
+                  className="text-xs text-slate-500 hover:text-slate-700 underline"
+                >
+                  Advanced: use a pre-staged ARN
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">{spec.credential.help} Your secret is encrypted at rest — it is never logged or returned.</p>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {spec.credential.secretFields.map((sf) => (
+                  <Field key={sf.key} label={sf.label} hint={sf.help}>
+                    <input
+                      className="input w-full font-mono text-xs"
+                      type="password"
+                      value={secretValues[sf.key] ?? ''}
+                      onChange={(e) => setSecretField(sf.key, e.target.value)}
+                      placeholder={sf.placeholder}
+                      required={spec.credential.required && sf.required}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Advanced: pre-staged ARN / local-env sentinel */}
+        {(showAdvancedArn || spec.credential.secretFields.length === 0) && (
+          <div className="md:col-span-2">
+            <Field
+              label={spec.credential.secretFields.length > 0 ? 'Credential reference (ARN / local-env)' : spec.credential.label}
+              hint={spec.credential.secretFields.length > 0
+                ? 'Pre-staged AWS Secrets Manager ARN or local-env:VAR sentinel.'
+                : spec.credential.help}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  className="input w-full font-mono text-xs"
+                  value={credentialArn}
+                  onChange={(e) => setCredentialArn(e.target.value)}
+                  placeholder="arn:aws:secretsmanager:… or local-env:MY_VAR"
+                  required={spec.credential.required && spec.credential.secretFields.length === 0}
+                  spellCheck={false}
+                />
+                {spec.credential.secretFields.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setShowAdvancedArn(false); setCredentialArn(''); }}
+                    className="text-xs text-slate-500 hover:text-slate-700 whitespace-nowrap underline"
+                  >
+                    Use secret fields
+                  </button>
+                )}
+              </div>
+            </Field>
+          </div>
+        )}
 
         <div className="md:col-span-2 flex items-center justify-between gap-3">
           {result && (

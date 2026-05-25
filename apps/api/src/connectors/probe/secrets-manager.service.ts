@@ -1,40 +1,65 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from '@aws-sdk/client-secrets-manager';
+import { ConnectorCredentialVaultService, isVaultRef } from '../credential-vault.service.js';
 
 const LOCAL_ENV_PREFIX = 'local-env:';
 
 /**
- * Thin wrapper around AWS Secrets Manager.
- * Fetches the string value of a secret and parses it as JSON.
+ * Thin wrapper around credential resolution — handles three reference schemes:
+ *
+ *   vault:<uuid>                  → ConnectorCredentialVaultService (ADR-013)
+ *   arn:aws:secretsmanager:…      → AWS Secrets Manager
+ *   local-env:VARNAME             → process.env (dev/test only)
+ *
+ * The `vault:` scheme requires the orgId of the owning connector so the lookup
+ * is org-scoped. Pass it via the second parameter; it is ignored for ARN and
+ * local-env refs. The vault service is `@Optional()` so unit tests that only
+ * exercise the ARN or local-env path can skip providing it.
  *
  * The client uses the default credential chain (environment variables,
  * ECS task role, EC2 instance profile, etc.). No credentials are stored
  * in application config.
- *
- * Local-dev sentinel: if the "ARN" starts with `local-env:`, the value
- * after the prefix is treated as an environment variable name and the
- * secret is read from `process.env`. This exists so the connector
- * framework is testable end-to-end on a laptop without an AWS account.
- * Production deployments never trip this branch — the env var won't be
- * set, and resolution fails closed. The ARN-format check in
- * `raw-credential-guard.ts` accepts both real AWS ARNs and the sentinel.
  */
 @Injectable()
 export class SecretsManagerService {
   private readonly client = new SecretsManagerClient({});
 
-  async getSecretValue(arn: string): Promise<Record<string, string>> {
-    if (arn.startsWith(LOCAL_ENV_PREFIX)) {
-      return this.getFromEnv(arn.slice(LOCAL_ENV_PREFIX.length));
+  constructor(
+    @Optional()
+    private readonly vaultService?: ConnectorCredentialVaultService,
+  ) {}
+
+  /**
+   * Resolves a credential reference to its JSON payload.
+   *
+   * @param ref   - One of `vault:<uuid>`, an AWS ARN, or `local-env:VARNAME`.
+   * @param orgId - Required when `ref` starts with `vault:`. Ignored otherwise.
+   */
+  async getSecretValue(ref: string, orgId?: string): Promise<Record<string, string>> {
+    if (isVaultRef(ref)) {
+      if (!this.vaultService) {
+        throw new Error(
+          `vault: credential ref received but ConnectorCredentialVaultService is not injected`,
+        );
+      }
+      if (!orgId) {
+        throw new Error(
+          `vault: credential ref requires orgId for org-scoped lookup`,
+        );
+      }
+      return this.vaultService.resolve(orgId, ref);
+    }
+    if (ref.startsWith(LOCAL_ENV_PREFIX)) {
+      return this.getFromEnv(ref.slice(LOCAL_ENV_PREFIX.length));
     }
     const response = await this.client.send(
-      new GetSecretValueCommand({ SecretId: arn }),
+      new GetSecretValueCommand({ SecretId: ref }),
     );
     if (!response.SecretString) {
-      throw new Error(`Secret ${arn} has no string value (binary secrets are not supported)`);
+      throw new Error(`Secret ${ref} has no string value (binary secrets are not supported)`);
     }
     return JSON.parse(response.SecretString) as Record<string, string>;
   }
