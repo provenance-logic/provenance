@@ -7,16 +7,17 @@ import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.
 import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js';
 
-// @Global so that the single JwtAuthGuard provider — the one whose
-// `@InjectRepository(AgentIdentityEntity) agentRepo` is actually resolved here
-// in AuthModule's context — is the instance every `@UseGuards(JwtAuthGuard)`
-// across the app resolves to. Without this, modules that apply the guard
-// without importing AuthModule (e.g. ProductsModule) instantiate their own
-// copy in a context lacking the AgentIdentityEntity repository, so `agentRepo`
-// is undefined. That path is only exercised by the MCP service-token +
+// @Global + `exports: [TypeOrmModule]` so the AgentIdentityEntity repository
+// token is resolvable in every module's injector. `JwtAuthGuard` is applied
+// per-controller via `@UseGuards(JwtAuthGuard)`, and Nest resolves the guard's
+// `@InjectRepository(AgentIdentityEntity) agentRepo` from the *consuming*
+// module's context — so modules that apply the guard without the repo in scope
+// (e.g. ProductsModule) got `agentRepo === undefined`. Exporting TypeOrmModule
+// from a @Global module re-exports the repositories it registered, making them
+// globally injectable. That repo is only touched by the MCP service-token +
 // x-agent-id flow (ADR-002 Phase 5b-8) the Agent Query Layer uses to call the
-// control plane — normal human JWTs never touch line 55 — which is why the
-// crash stayed invisible until the agent auth path was repaired. See B-076.
+// control plane — normal human JWTs never reach jwt-auth.guard.ts:55 — which is
+// why the crash stayed invisible until the agent auth path was repaired. B-076.
 @Global()
 @Module({
   imports: [
@@ -24,6 +25,6 @@ import { AgentIdentityEntity } from '../agents/entities/agent-identity.entity.js
     TypeOrmModule.forFeature([RoleAssignmentEntity, PrincipalEntity, AgentIdentityEntity]),
   ],
   providers: [JwtStrategy, JwtAuthGuard],
-  exports: [PassportModule, JwtAuthGuard],
+  exports: [PassportModule, JwtAuthGuard, TypeOrmModule],
 })
 export class AuthModule {}
