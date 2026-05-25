@@ -1,18 +1,16 @@
 import type { ConnectorType } from '@provenance/types';
 
-// Declarative per-connector registration spec (ADR-012, decision 1).
+// Declarative per-connector registration spec (ADR-012, decision 1; ADR-013 credential vault).
 //
-// This is the seed of the spec-driven form: each connector type declares its
-// non-sensitive connection_config fields (rendered as typed, labeled inputs
-// instead of a raw JSON blob), plus guidance for the credential the operator
-// supplies behind a Secrets Manager ARN / local-env sentinel. The renderer in
-// ConnectorsPage builds connection_config from these field definitions, so the
-// payload shape is identical to what the backend probe already reads — this is
-// a pure UX layer, no contract change.
+// Each connector type declares its non-sensitive connection_config fields (rendered
+// as typed, labeled inputs) and a credential definition describing the secret input
+// fields the user fills in directly (ADR-013 self-service vault path). The form
+// assembles `credentialSecret` from those inputs and submits to the API, which
+// encrypts it at rest (AES-256-GCM) and returns a `vault:<uuid>` reference in
+// `credentialArn`. The plaintext secret never comes back.
 //
-// Kept frontend-side for now; the intended end-state (ADR-012) is for the spec
-// to be served from the connector capability manifest so the form and the
-// backend share one source of truth. Lifting it server-side is a later slice.
+// An "Advanced" affordance lets operators supply a pre-staged ARN or local-env
+// sentinel directly in `credentialArn` instead.
 
 export type ConnectorFieldType = 'text' | 'number' | 'boolean';
 
@@ -27,12 +25,30 @@ export interface ConnectorFieldSpec {
   default?: string | number | boolean;
 }
 
+/**
+ * A single masked input field in the self-service secret entry form (ADR-013).
+ * The `key` maps to a property in the `credentialSecret` object the form assembles.
+ */
+export interface SecretFieldSpec {
+  /** Key in the assembled credentialSecret object (e.g. "token", "privateKeyPem"). */
+  key: string;
+  label: string;
+  placeholder?: string;
+  help?: string;
+  required?: boolean;
+}
+
 export interface CredentialSpec {
   required: boolean;
   label: string;
-  /** Describes the secret's expected JSON shape, shown as field help. */
+  /** Describes what the user should enter; shown as section help text. */
   help: string;
-  placeholder?: string;
+  /**
+   * Secret input fields the user fills in directly (ADR-013 self-service path).
+   * The form assembles these into `credentialSecret` and submits to the API.
+   * The plaintext is encrypted at rest server-side and is never returned.
+   */
+  secretFields: SecretFieldSpec[];
 }
 
 export interface SmartFillSpec {
@@ -52,8 +68,6 @@ export interface ConnectorSpec {
   smartFill?: SmartFillSpec;
 }
 
-const ARN_PLACEHOLDER = 'arn:aws:secretsmanager:… or local-env:MY_VAR';
-
 export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
   postgresql: {
     type: 'postgresql',
@@ -67,9 +81,12 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: false,
-      label: 'Credential (optional)',
-      help: 'AWS Secrets Manager ARN, or local-env:VAR in dev. Leave blank if the database is reachable without one.',
-      placeholder: ARN_PLACEHOLDER,
+      label: 'Database credentials (optional)',
+      help: 'Leave blank if the database allows unauthenticated connections.',
+      secretFields: [
+        { key: 'username', label: 'Username', placeholder: 'provenance_reader' },
+        { key: 'password', label: 'Password', placeholder: '••••••••' },
+      ],
     },
   },
   s3: {
@@ -82,9 +99,12 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: false,
-      label: 'Credential (optional)',
-      help: 'AWS Secrets Manager ARN, or local-env:VAR in dev. Leave blank to use the platform’s ambient AWS identity.',
-      placeholder: ARN_PLACEHOLDER,
+      label: 'AWS credentials (optional)',
+      help: "Leave blank to use the platform's ambient IAM identity. Fill in for cross-account buckets.",
+      secretFields: [
+        { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA…' },
+        { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '••••••••' },
+      ],
     },
   },
   databricks: {
@@ -103,9 +123,16 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: true,
-      label: 'Personal access token (via secret)',
-      help: 'The secret must hold {"token":"dapi…"}. Generate the token in Databricks → Settings → Developer → Access tokens.',
-      placeholder: ARN_PLACEHOLDER,
+      label: 'Personal access token',
+      help: 'Generate in Databricks → Settings → Developer → Access tokens.',
+      secretFields: [
+        {
+          key: 'token',
+          label: 'Access token',
+          placeholder: 'dapi…',
+          required: true,
+        },
+      ],
     },
   },
   snowflake: {
@@ -115,7 +142,7 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     smartFill: {
       label: 'Paste your Snowflake URL or account identifier',
       placeholder: 'https://xy12345.us-east-1.snowflakecomputing.com  (or  xy12345.us-east-1)',
-      help: 'We’ll fill in the host below and show your account identifier for the credential.',
+      help: "We'll fill in the host below and show your account identifier for the credential.",
     },
     fields: [
       {
@@ -133,9 +160,17 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: true,
-      label: 'Credential (via secret)',
-      help: 'Easiest: a programmatic access token (PAT) — the secret holds {"token":"<PAT>"} (generate it in Snowsight → your user → Programmatic access tokens). Prerequisite: Snowflake refuses every PAT (401 "Network policy is required") until your account has a network policy, or an authentication policy with PAT_POLICY NETWORK_POLICY_EVALUATION set to something other than REQUIRED. Or key-pair: {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"}.',
-      placeholder: ARN_PLACEHOLDER,
+      label: 'Programmatic access token (PAT)',
+      help: 'Generate in Snowsight → your user → Programmatic access tokens. For key-pair auth, use the Advanced option below.',
+      secretFields: [
+        {
+          key: 'token',
+          label: 'Access token (PAT)',
+          placeholder: '••••••••',
+          help: 'Note: Snowflake requires a network policy before PATs can be used.',
+          required: true,
+        },
+      ],
     },
   },
 };
@@ -171,4 +206,22 @@ export function buildConnectionConfig(
     }
   }
   return config;
+}
+
+/**
+ * Assembles the `credentialSecret` object from the secret field values.
+ * Drops empty-string values so the backend doesn't receive blank keys.
+ * Returns null when all fields are empty (no credential provided).
+ */
+export function buildCredentialSecret(
+  type: ConnectorType,
+  values: Record<string, string>,
+): Record<string, string> | null {
+  const spec = CONNECTOR_SPECS[type];
+  const secret: Record<string, string> = {};
+  for (const f of spec.credential.secretFields) {
+    const raw = (values[f.key] ?? '').trim();
+    if (raw !== '') secret[f.key] = raw;
+  }
+  return Object.keys(secret).length > 0 ? secret : null;
 }

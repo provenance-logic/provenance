@@ -15,6 +15,7 @@ import { CapabilityManifestEntity } from '../entities/capability-manifest.entity
 import { CapabilityManifestService } from '../capability-manifest.service.js';
 import { LineageService } from '../../lineage/lineage.service.js';
 import { ConnectorProbeService } from '../probe/connector-probe.service.js';
+import { ConnectorCredentialVaultService } from '../credential-vault.service.js';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import { RoleAssignmentEntity } from '../../organizations/entities/role-assignment.entity.js';
@@ -138,6 +139,7 @@ describe('ConnectorsService', () => {
   let roleRepo: ReturnType<typeof mockRepo>;
   let lineageService: { emitEvent: jest.Mock };
   let notificationsService: { enqueue: jest.Mock };
+  let credentialVault: { store: jest.Mock; resolve: jest.Mock };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -151,6 +153,13 @@ describe('ConnectorsService', () => {
         { provide: getRepositoryToken(CapabilityManifestEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(RoleAssignmentEntity), useFactory: mockRepo },
         { provide: ConnectorProbeService, useFactory: mockProbeService },
+        {
+          provide: ConnectorCredentialVaultService,
+          useValue: {
+            store: jest.fn().mockResolvedValue('vault:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+            resolve: jest.fn().mockResolvedValue({ token: 'dapi-test' }),
+          },
+        },
         {
           provide: CapabilityManifestService,
           useValue: {
@@ -186,6 +195,7 @@ describe('ConnectorsService', () => {
     roleRepo = module.get(getRepositoryToken(RoleAssignmentEntity));
     lineageService = module.get(LineageService);
     notificationsService = module.get(NotificationsService);
+    credentialVault = module.get(ConnectorCredentialVaultService);
   });
 
   // -------------------------------------------------------------------------
@@ -958,6 +968,111 @@ describe('ConnectorsService', () => {
 
       expect(sourceRepo.save).not.toHaveBeenCalled(); // no new source
       expect(result.sourcesSkipped).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // registerConnector() — credentialSecret / vault path (ADR-013)
+  // -------------------------------------------------------------------------
+
+  describe('registerConnector() — credentialSecret vault path', () => {
+    const baseDto = {
+      domainId: 'domain-1',
+      name: 'Databricks Vault',
+      connectorType: 'databricks' as ConnectorType,
+      connectionConfig: { host: 'https://dbc-test.cloud.databricks.com' },
+    };
+
+    const setupSaveSuccess = () => {
+      connectorRepo.findOne
+        .mockResolvedValueOnce(null) // duplicate check
+        .mockResolvedValueOnce(makeConnectorEntity({ validationStatus: 'valid' }));
+      const entity = makeConnectorEntity();
+      connectorRepo.create.mockReturnValue(entity);
+      connectorRepo.save.mockResolvedValue(entity);
+      healthEventRepo.create.mockImplementation((d: any) => d);
+      healthEventRepo.save.mockResolvedValue(makeHealthEventEntity());
+    };
+
+    it('calls vault.store and persists the vault: ref when credentialSecret is provided', async () => {
+      setupSaveSuccess();
+
+      await service.registerConnector('org-1', {
+        ...baseDto,
+        credentialSecret: { token: 'dapi-live-token' },
+      }, 'principal-1');
+
+      expect(credentialVault.store).toHaveBeenCalledWith(
+        'org-1',
+        { token: 'dapi-live-token' },
+      );
+      const createCall = (connectorRepo.create as jest.Mock).mock.calls[0][0] as Partial<ConnectorEntity>;
+      expect(createCall.credentialArn).toBe('vault:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    });
+
+    it('the response does NOT contain credentialSecret', async () => {
+      setupSaveSuccess();
+
+      const result = await service.registerConnector('org-1', {
+        ...baseDto,
+        credentialSecret: { token: 'dapi-live-token' },
+      }, 'principal-1');
+
+      // The Connector type has no credentialSecret field
+      expect((result as unknown as Record<string, unknown>)['credentialSecret']).toBeUndefined();
+      // credentialArn in the response is the vault ref (from the entity)
+      expect(result.credentialArn).toBeDefined();
+    });
+
+    it('throws BadRequestException when credentialSecret is an empty object', async () => {
+      await expect(
+        service.registerConnector('org-1', { ...baseDto, credentialSecret: {} }, 'principal-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException when credentialSecret is not an object', async () => {
+      await expect(
+        service.registerConnector(
+          'org-1',
+          { ...baseDto, credentialSecret: 'raw-token' as unknown as Record<string, unknown> },
+          'principal-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // updateConnector() — credentialSecret rotation (ADR-013)
+  // -------------------------------------------------------------------------
+
+  describe('updateConnector() — credentialSecret rotation', () => {
+    it('calls vault.store with the existing ref (rotation) and sets stale', async () => {
+      const existing = makeConnectorEntity({
+        credentialArn: 'vault:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      });
+      connectorRepo.findOne.mockResolvedValue(existing);
+      connectorRepo.save.mockResolvedValue(existing);
+
+      await service.updateConnector('org-1', 'connector-1', {
+        credentialSecret: { token: 'new-token' },
+      });
+
+      expect(credentialVault.store).toHaveBeenCalledWith(
+        'org-1',
+        { token: 'new-token' },
+        'vault:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      );
+      expect(existing.validationStatus).toBe('stale');
+    });
+
+    it('throws BadRequestException for empty credentialSecret on update', async () => {
+      connectorRepo.findOne.mockResolvedValue(makeConnectorEntity());
+
+      await expect(
+        service.updateConnector('org-1', 'connector-1', {
+          credentialSecret: {},
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

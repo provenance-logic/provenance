@@ -244,7 +244,10 @@ describe('ConnectorProbeService.probeDatabricks (B-063 Layer 1)', () => {
 
     await service.probe(makeDatabricksConnector());
 
-    expect(secretsManager.getSecretValue).toHaveBeenCalledWith(TEST_ARN);
+    expect(secretsManager.getSecretValue).toHaveBeenCalledWith(
+      TEST_ARN,
+      expect.any(String), // orgId — passed for vault: dispatch, ignored for ARNs
+    );
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect((init.headers as Record<string, string>).Authorization).toBe(
       'Bearer dapi-from-secrets-manager',

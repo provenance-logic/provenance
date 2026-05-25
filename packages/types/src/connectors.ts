@@ -72,15 +72,36 @@ export interface RegisterConnectorRequest {
   description?: string;
   connectorType: ConnectorType;
   connectionConfig?: Record<string, unknown>;
-  /** AWS Secrets Manager ARN. Never include raw credentials. */
+  /**
+   * Pre-staged credential reference: an AWS Secrets Manager ARN or the
+   * dev-only `local-env:VARNAME` sentinel. Use `credentialSecret` for
+   * self-service GUI entry instead.
+   */
   credentialArn?: string;
+  /**
+   * Raw credential payload submitted once over TLS (ADR-013). The platform
+   * encrypts it at rest (AES-256-GCM) and stores only a `vault:<uuid>`
+   * reference. The plaintext is never persisted, logged, or returned.
+   * When provided, takes precedence over `credentialArn`.
+   */
+  credentialSecret?: Record<string, unknown>;
 }
 
 export interface UpdateConnectorRequest {
   name?: string;
   description?: string;
   connectionConfig?: Record<string, unknown>;
+  /**
+   * Pre-staged credential reference. Use `credentialSecret` for self-service
+   * credential rotation instead.
+   */
   credentialArn?: string;
+  /**
+   * New raw credential payload for credential rotation (ADR-013). Overwrites
+   * the existing vault entry in place — same `vault:<uuid>` reference, new
+   * encrypted envelope. The plaintext is never persisted, logged, or returned.
+   */
+  credentialSecret?: Record<string, unknown>;
 }
 
 export type ConnectorList = PaginatedList<Connector>;
