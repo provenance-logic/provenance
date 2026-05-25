@@ -6,6 +6,22 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-079 — `ConnectorSecretEntity` registered in `forFeature` but missing from the root `entities[]` → 500 (`EntityMetadataNotFoundError`) on every self-service credential save
+
+- **Resolved:** 2026-05-25, same session it was surfaced (caught on dev minutes after deploying #220, by Matt entering a real PAT in the new credential field).
+- **Severity:** **High** — every self-service credential registration (the entire point of ADR-013 / #220) returned `Internal server error`. The feature was DOA in any real environment.
+- **Area:** `apps/api/src/database/database.module.ts` (the root TypeORM `entities[]` list).
+
+**What was wrong.** `ConnectorCredentialVaultService` injects `@InjectRepository(ConnectorSecretEntity)`, which only requires the entity in the connectors module's `forFeature(...)` — and it was there, so DI resolved and the unit tests (which mock the repo) all passed. But this repo registers entities **explicitly** in `database.module.ts`'s `TypeOrmModule.forRootAsync({ entities: [...] })` (no `autoLoadEntities`), and `ConnectorSecretEntity` was never added to that list. So TypeORM's connection had no metadata for it, and the first real `secretRepo.save()` threw `EntityMetadataNotFoundError: No metadata for "ConnectorSecretEntity" was found.` → 500.
+
+**Fix.** Added the import + the `ConnectorSecretEntity` entry to the root `entities[]` in `database.module.ts`.
+
+**This is the second occurrence of this exact pattern.** [B-072 follow-up / #193](#) hit it with `PrincipalPreferencesEntity` (registered in `forFeature`, missing at `forRootAsync`, 500 on every page load). The trap: `forFeature` is enough for DI to wire `@InjectRepository`, and unit tests mock the repo, so nothing fails until a real query runs against the real connection. **Whenever a new entity is added, it MUST also be added to `database.module.ts`'s `entities[]`.** A regression guard (assert every `forFeature`-registered entity is in the root list, or an integration test that boots the real DataSource) would prevent occurrence #3 — flagged as a follow-up, not built here.
+
+- **Fix commit:** see PR for `fix/connector-secret-entity-registration`.
+
+---
+
 ## B-077 — Semantic search returns zero hits on every fresh stand-up: the `data_products` kNN index is created without a `knn_vector` mapping
 
 - **Resolved:** 2026-05-25 in the same session it was surfaced (during the fresh demo stand-up, immediately after B-076 unblocked the agent layer)
