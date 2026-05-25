@@ -6,6 +6,32 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-077 — Semantic search returns zero hits on every fresh stand-up: the `data_products` kNN index is created without a `knn_vector` mapping
+
+- **Resolved:** 2026-05-25 in the same session it was surfaced (during the fresh demo stand-up, immediately after B-076 unblocked the agent layer)
+- **Severity:** **High** — `semantic_search` is an advertised MVP capability (MCP tool + human marketplace semantic search; the "Data 3.0" headline). It was silently broken on every freshly-provisioned environment. Another "✅ Complete but never end-to-end verified on a clean stack" regression, same class as B-076 and the Phase 4 MCP silent regression.
+- **Area:** `apps/api/src/search/search-indexing.service.ts`
+
+**What was wrong.** `SearchIndexingService` writes documents into the `data_products` kNN index (`client.index(...)`) but had **no `ensureIndex` step** — unlike `ProductIndexService`, which bootstraps the BM25 `provenance-products` index with an explicit mapping on module init. With no index pre-created, OpenSearch auto-creates `data_products` on first write with a *dynamic* mapping: the `embedding` field (a JSON array of floats) is typed as plain `"float"`, and `index.knn` is never enabled. The `knn` query clause in `HybridSearchService` then throws:
+
+```
+search_phase_execution_exception: [query_shard_exception]
+Reason: failed to create query: Field 'embedding' is not knn_vector type.
+```
+
+`HybridSearchService.search` catches the error and returns `[]`, so the endpoint degrades to "zero results" rather than a 500 — which is exactly why it stayed invisible. Live-confirmed on the fresh demo: `data_products` had 20 docs, but `_mapping` showed `embedding: { type: float }` and `_settings` showed `index.knn: null`.
+
+**Fix.** Added `ensureIndex()` to `SearchIndexingService` (mirroring the `ProductIndexService` pattern) called from `onModuleInit`. It creates `data_products` with `settings.index.knn: true` and `embedding` mapped as `{ type: 'knn_vector', dimension: 384 }` (all-MiniLM-L6-v2), plus explicit types for the other queried fields. `resource_already_exists_exception` is swallowed on restart. New unit spec `search-indexing.service.spec.ts` asserts the kNN mapping + module-init wiring. **Operational note:** because the bad index already existed on the demo, the fix path was: deploy → delete the mis-mapped `data_products` index → restart api (so `ensureIndex` recreates it correctly) → `reindex:search`.
+
+**Secondary finding (NOT this bug, flagged separately):** the demo's `ANTHROPIC_API_KEY` is invalid — `NlQueryService.parseQuery` logs `Claude API call failed … 401 invalid x-api-key` and falls back to keyword extraction. Semantic search still works via the keyword+kNN hybrid path; NL query translation is degraded until a valid key is set. Config/secret issue, not code.
+
+**Pattern this corroborates:** Same shape as B-076 — an advertised capability whose unit tests were green on both sides of a boundary (the index-write path and the query path were each tested in isolation against mocks) while no test exercised a real OpenSearch index end-to-end. The kNN index mapping was never created by *anything* — not the indexing service, not the reindex script — so semantic search could only ever have worked on an environment where someone hand-created the mapping. See CLAUDE.md "A phase is not complete until every advertised capability has a user-visible surface" and "Persona walkthroughs are not demo walkthroughs."
+
+- **Branch:** `fix/mcp-agent-auth` (found and fixed during the same fresh-demo stand-up as B-076; flagged for Matt as a distinct logical change bundled on the same branch)
+- **Files changed:** `apps/api/src/search/search-indexing.service.ts`, `apps/api/src/search/__tests__/search-indexing.service.spec.ts`
+
+---
+
 ## B-074 — Keycloak advertises OIDC endpoints with `:8080` on TLS-terminated deployments; browser login fails with `ERR_SSL_PROTOCOL_ERROR`
 
 - **Resolved:** 2026-05-24 in the same session it was surfaced
