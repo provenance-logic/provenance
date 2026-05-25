@@ -25,7 +25,7 @@ export function NavShell() {
           {/* The brand logo is all-navy (icon + wordmark), so it would vanish
               on the navy sidebar. Sit it on a white card to keep the brand
               colors intact and legible. Asset lives in apps/web/public/. */}
-          <div className="rounded-lg bg-white px-3 py-2 flex items-center justify-center">
+          <div className="rounded-lg bg-white px-3 py-2 flex items-center justify-start">
             <img
               src="/Provenance-Logo.svg"
               alt="Provenance"
