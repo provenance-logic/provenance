@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { ConnectorProbeService, generateSnowflakeJwt, submitSnowflakeStatement, parseSnowflakeRows } from './connector-probe.service.js';
+import { ConnectorProbeService, generateSnowflakeJwt, buildSnowflakeAuth, submitSnowflakeStatement, parseSnowflakeRows, type SnowflakeAuth } from './connector-probe.service.js';
 import { SecretsManagerService } from './secrets-manager.service.js';
 import type { ConnectorEntity } from '../entities/connector.entity.js';
 import type { SourceRegistrationEntity } from '../entities/source-registration.entity.js';
@@ -1242,7 +1242,7 @@ describe('ConnectorProbeService.probeSnowflake (Layer 1)', () => {
     const result = await service.probe(makeSnowflakeConnector());
 
     expect(result.status).toBe('credential_error');
-    expect(result.errorMessage).toContain('JWT');
+    expect(result.errorMessage).toContain('Failed to build Snowflake auth');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -1522,9 +1522,12 @@ describe('parseSnowflakeRows', () => {
 describe('submitSnowflakeStatement', () => {
   let fetchSpy: jest.SpyInstance;
 
-  // Use a throw-away JWT string for the utility tests — the JWT is passed in
-  // and not validated inside the function (the server would validate it).
-  const FAKE_JWT = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.e30.sig';
+  // Use a throw-away auth descriptor for the utility tests — the token is passed
+  // in and not validated inside the function (the server would validate it).
+  const FAKE_AUTH: SnowflakeAuth = {
+    authToken: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.e30.sig',
+    tokenType: 'KEYPAIR_JWT',
+  };
 
   beforeEach(() => {
     fetchSpy = jest.spyOn(globalThis, 'fetch');
@@ -1540,7 +1543,7 @@ describe('submitSnowflakeStatement', () => {
 
     const result = await submitSnowflakeStatement(
       SNOWFLAKE_HOST,
-      FAKE_JWT,
+      FAKE_AUTH,
       'SELECT 1',
       { warehouse: 'COMPUTE_WH', role: 'ACCOUNTADMIN' },
     );
@@ -1554,7 +1557,7 @@ describe('submitSnowflakeStatement', () => {
     );
 
     await expect(
-      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_AUTH, 'SELECT 1', {
         warehouse: 'COMPUTE_WH',
         role: 'ACCOUNTADMIN',
       }),
@@ -1574,7 +1577,7 @@ describe('submitSnowflakeStatement', () => {
     fetchSpy.mockResolvedValue(new Response(errorBody, { status: 200 }));
 
     await expect(
-      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_AUTH, 'SELECT 1', {
         warehouse: 'COMPUTE_WH',
         role: 'ACCOUNTADMIN',
       }),
@@ -1592,7 +1595,7 @@ describe('submitSnowflakeStatement', () => {
     };
     fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
 
-    const result = await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+    const result = await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_AUTH, 'SELECT 1', {
       warehouse: 'COMPUTE_WH',
       role: 'ACCOUNTADMIN',
     });
@@ -1611,7 +1614,7 @@ describe('submitSnowflakeStatement', () => {
     fetchSpy.mockResolvedValue(new Response(errorBody, { status: 422 }));
 
     await expect(
-      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+      submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_AUTH, 'SELECT 1', {
         warehouse: 'COMPUTE_WH',
         role: 'ACCOUNTADMIN',
       }),
@@ -1623,7 +1626,7 @@ describe('submitSnowflakeStatement', () => {
       new Response(JSON.stringify({ data: [] }), { status: 200 }),
     );
 
-    await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_JWT, 'SELECT 1', {
+    await submitSnowflakeStatement(SNOWFLAKE_HOST, FAKE_AUTH, 'SELECT 1', {
       warehouse: 'COMPUTE_WH',
       role: 'ACCOUNTADMIN',
       database: 'PROD_DB',
@@ -2343,5 +2346,89 @@ describe('ConnectorProbeService.walkSnowflakeAccount (B-063 Layer 3)', () => {
     expect(result.schemasWalked).toBe(0);
     // No SHOW TABLES / SHOW VIEWS calls made (no databases to walk).
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake PAT authentication (ADR-012 slice 2)
+// ---------------------------------------------------------------------------
+
+const SNOWFLAKE_PAT_SECRET = { token: 'sf-pat-0123456789abcdef' };
+
+describe('buildSnowflakeAuth (PAT vs key-pair)', () => {
+  it('passes a PAT through verbatim with the PROGRAMMATIC_ACCESS_TOKEN token type', () => {
+    const auth = buildSnowflakeAuth({ kind: 'pat', token: 'sf-pat-xyz' });
+    expect(auth).toEqual({ authToken: 'sf-pat-xyz', tokenType: 'PROGRAMMATIC_ACCESS_TOKEN' });
+  });
+
+  it('signs a key-pair credential into a JWT with the KEYPAIR_JWT token type', () => {
+    const auth = buildSnowflakeAuth({
+      kind: 'keypair',
+      privateKeyPem: THROWAWAY_KEY_PEM,
+      user: 'PROVENANCE_SVC',
+      account: 'EN92180',
+    });
+    expect(auth.tokenType).toBe('KEYPAIR_JWT');
+    // Three base64url segments — a well-formed JWT.
+    expect(auth.authToken.split('.')).toHaveLength(3);
+  });
+});
+
+describe('ConnectorProbeService.probeSnowflake — PAT auth (slice 2)', () => {
+  let secretsManager: jest.Mocked<SecretsManagerService>;
+  let service: ConnectorProbeService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    secretsManager = {
+      getSecretValue: jest.fn(),
+    } as unknown as jest.Mocked<SecretsManagerService>;
+    service = new ConnectorProbeService(secretsManager);
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('authenticates with Bearer <PAT> and the PROGRAMMATIC_ACCESS_TOKEN token type', async () => {
+    secretsManager.getSecretValue.mockResolvedValue(
+      SNOWFLAKE_PAT_SECRET as unknown as Record<string, string>,
+    );
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('healthy');
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`https://${SNOWFLAKE_HOST}/api/v2/statements`);
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Snowflake-Authorization-Token-Type']).toBe('PROGRAMMATIC_ACCESS_TOKEN');
+    expect(headers['Authorization']).toBe(`Bearer ${SNOWFLAKE_PAT_SECRET.token}`);
+  });
+
+  it('prefers the PAT when a secret carries both a token and key-pair fields', async () => {
+    secretsManager.getSecretValue.mockResolvedValue(
+      { ...SNOWFLAKE_SECRET, token: 'sf-pat-wins' } as unknown as Record<string, string>,
+    );
+    fetchSpy.mockResolvedValue(new Response(sfOkResponse(), { status: 200 }));
+
+    await service.probe(makeSnowflakeConnector());
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Snowflake-Authorization-Token-Type']).toBe('PROGRAMMATIC_ACCESS_TOKEN');
+    expect(headers['Authorization']).toBe('Bearer sf-pat-wins');
+  });
+
+  it('still returns credential_error when the secret has neither a token nor key-pair fields', async () => {
+    secretsManager.getSecretValue.mockResolvedValue(
+      { somethingElse: 'nope' } as unknown as Record<string, string>,
+    );
+
+    const result = await service.probe(makeSnowflakeConnector());
+
+    expect(result.status).toBe('credential_error');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -133,8 +133,8 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: true,
-      label: 'Key-pair credential (via secret)',
-      help: 'The secret must hold {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"}. A simpler "paste one token" option is coming (ADR-012).',
+      label: 'Credential (via secret)',
+      help: 'Easiest: a programmatic access token (PAT) — the secret holds {"token":"<PAT>"} (generate it in Snowsight → your user → Programmatic access tokens). Prerequisite: Snowflake refuses every PAT (401 "Network policy is required") until your account has a network policy, or an authentication policy with PAT_POLICY NETWORK_POLICY_EVALUATION set to something other than REQUIRED. Or key-pair: {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"}.',
       placeholder: ARN_PLACEHOLDER,
     },
   },
