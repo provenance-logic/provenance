@@ -223,13 +223,19 @@ if [ -z "${MCP_RESULT}" ]; then
   fail "agent" "list_products MCP call returned no response on the SSE stream within 10s"
 fi
 
-# The MCP result payload is JSON-RPC: .result.content[0].text is a JSON string
-# containing the actual tool output. Parse it and verify at least one product.
-PRODUCT_COUNT=$(echo "${MCP_RESULT}" \
-  | jq -r '.result.content[0].text // ""' \
-  | jq -r '.products | length // 0' 2>/dev/null || echo "0")
-[ "${PRODUCT_COUNT}" -gt 0 ] \
-  || fail "agent" "list_products returned 0 products (got: ${MCP_RESULT:0:200})"
+# The MCP result payload is JSON-RPC. The list_products tool returns a
+# human-readable summary in .result.content[0].text — "Found N data products:\n..."
+# (or "No data products found."), NOT a JSON object. First reject an MCP error
+# result (isError:true — e.g. a control-plane 500), then parse the count out of
+# the summary line and require at least one product.
+RESULT_TEXT=$(echo "${MCP_RESULT}" | jq -r '.result.content[0].text // ""')
+IS_ERROR=$(echo "${MCP_RESULT}" | jq -r '.result.isError // false')
+if [ "${IS_ERROR}" = "true" ]; then
+  fail "agent" "list_products returned an MCP error result: ${RESULT_TEXT:0:200}"
+fi
+PRODUCT_COUNT=$(printf '%s' "${RESULT_TEXT}" | sed -n 's/^Found \([0-9]\{1,\}\) data products.*/\1/p')
+{ [ -n "${PRODUCT_COUNT}" ] && [ "${PRODUCT_COUNT}" -gt 0 ]; } \
+  || fail "agent" "list_products reported no products (got: ${RESULT_TEXT:0:200})"
 ok "list_products MCP tool call succeeded end-to-end (${PRODUCT_COUNT} products)"
 
 # ---------------------------------------------------------------------------
