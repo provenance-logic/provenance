@@ -95,11 +95,19 @@ export function ConnectorDetailPage() {
     setValidating(true);
     setValidateResult(null);
     try {
-      await connectorsApi.validate(orgId, connectorId);
-      setValidateResult({ ok: true, message: 'Validation complete. Refreshing…' });
-      // Reload the connector to pick up the new validationStatus.
+      const result = await connectorsApi.validate(orgId, connectorId);
+      // Reload the connector to pick up the new validationStatus, then report
+      // the actual probe outcome inline (not a perpetual "Refreshing…").
       const updated = await connectorsApi.get(orgId, connectorId);
       setConnector(updated);
+      setValidateResult(
+        result.status === 'healthy'
+          ? { ok: true, message: 'Validation passed — connector is reachable and healthy.' }
+          : {
+              ok: false,
+              message: `Validation result: ${result.status}${result.errorMessage ? ` — ${result.errorMessage}` : ''}`,
+            },
+      );
     } catch (err) {
       setValidateResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -113,14 +121,14 @@ export function ConnectorDetailPage() {
     setCrawlResult(null);
     try {
       await connectorsApi.crawl(orgId, connectorId);
-      setCrawlResult({ ok: true, message: 'Crawl complete. Refreshing results…' });
-      // Reload sources and crawl events.
+      // Reload sources and crawl events, then report a terminal result.
       const [events, srcs] = await Promise.all([
         connectorsApi.listCrawlEvents(orgId, connectorId, 10),
         connectorsApi.listSources(orgId, connectorId, 200, 0),
       ]);
       setCrawlEvents(events);
       setSources(srcs.items);
+      setCrawlResult({ ok: true, message: `Crawl complete — ${srcs.items.length} source(s) discovered.` });
     } catch (err) {
       setCrawlResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
     } finally {
