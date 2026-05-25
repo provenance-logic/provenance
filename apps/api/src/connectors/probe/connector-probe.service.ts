@@ -489,19 +489,18 @@ export class ConnectorProbeService {
       return {
         status: 'credential_error',
         responseTimeMs: null,
-        errorMessage:
-          'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
+        errorMessage: SNOWFLAKE_CRED_HINT,
       };
     }
 
-    let jwt: string;
+    let auth: SnowflakeAuth;
     try {
-      jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+      auth = buildSnowflakeAuth(creds);
     } catch (err) {
       return {
         status: 'credential_error',
         responseTimeMs: null,
-        errorMessage: `Failed to generate Snowflake JWT from private key: ${(err as Error).message}`,
+        errorMessage: `Failed to build Snowflake auth from credential: ${(err as Error).message}`,
       };
     }
 
@@ -528,8 +527,8 @@ export class ConnectorProbeService {
       const response = await fetch(`https://${host}/api/v2/statements`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${jwt}`,
-          'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
+          Authorization: `Bearer ${auth.authToken}`,
+          'X-Snowflake-Authorization-Token-Type': auth.tokenType,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
@@ -609,17 +608,15 @@ export class ConnectorProbeService {
 
     const creds = await this.resolveSnowflakeCreds(connector);
     if (!creds) {
-      throw new Error(
-        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
-      );
+      throw new Error(SNOWFLAKE_CRED_HINT);
     }
 
-    let jwt: string;
+    let auth: SnowflakeAuth;
     try {
-      jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+      auth = buildSnowflakeAuth(creds);
     } catch (err) {
       throw new Error(
-        `Failed to generate Snowflake JWT from private key: ${(err as Error).message}`,
+        `Failed to build Snowflake auth from credential: ${(err as Error).message}`,
       );
     }
 
@@ -640,7 +637,7 @@ export class ConnectorProbeService {
     // identifiers as uppercase.
     const columnsSql = `SELECT column_name, data_type, is_nullable, comment, ordinal_position FROM ${database}.INFORMATION_SCHEMA.COLUMNS WHERE table_schema = UPPER('${schema.replace(/'/g, "''")}') AND table_name = UPPER('${table.replace(/'/g, "''")}') ORDER BY ordinal_position`;
 
-    const colResult = await submitSnowflakeStatement(host, jwt, columnsSql, opts);
+    const colResult = await submitSnowflakeStatement(host, auth, columnsSql, opts);
     const colRows = parseSnowflakeRows(colResult);
 
     const columns = colRows.map((row) => ({
@@ -658,7 +655,7 @@ export class ConnectorProbeService {
     let rowEstimate: number | null = null;
     try {
       const tablesSql = `SELECT table_type, comment, row_count FROM ${database}.INFORMATION_SCHEMA.TABLES WHERE table_schema = UPPER('${schema.replace(/'/g, "''")}') AND table_name = UPPER('${table.replace(/'/g, "''")}')`;
-      const tblResult = await submitSnowflakeStatement(host, jwt, tablesSql, opts);
+      const tblResult = await submitSnowflakeStatement(host, auth, tablesSql, opts);
       const tblRows = parseSnowflakeRows(tblResult);
       if (tblRows.length > 0) {
         tableType = tblRows[0][0] !== null ? String(tblRows[0][0]) : null;
@@ -687,16 +684,23 @@ export class ConnectorProbeService {
 
   private async resolveSnowflakeCreds(
     connector: ConnectorEntity,
-  ): Promise<{ privateKeyPem: string; user: string; account: string } | null> {
+  ): Promise<SnowflakeCreds | null> {
     if (!connector.credentialArn) return null;
     try {
       const creds = await this.secretsManager.getSecretValue(connector.credentialArn);
+      // Prefer a programmatic access token when present — the simplest path
+      // (one string, no key material), and an operator who supplied a PAT
+      // shouldn't be shadowed by stale key-pair fields in the same secret.
+      if (typeof creds.token === 'string' && creds.token.length > 0) {
+        return { kind: 'pat', token: creds.token };
+      }
       if (
         typeof creds.privateKeyPem === 'string' && creds.privateKeyPem.length > 0 &&
         typeof creds.user === 'string' && creds.user.length > 0 &&
         typeof creds.account === 'string' && creds.account.length > 0
       ) {
         return {
+          kind: 'keypair',
           privateKeyPem: creds.privateKeyPem,
           user: creds.user,
           account: creds.account,
@@ -942,12 +946,10 @@ export class ConnectorProbeService {
 
     const creds = await this.resolveSnowflakeCreds(connector);
     if (!creds) {
-      throw new Error(
-        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
-      );
+      throw new Error(SNOWFLAKE_CRED_HINT);
     }
 
-    const jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+    const auth = buildSnowflakeAuth(creds);
     const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
     const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
     const opts = { warehouse, role };
@@ -1003,7 +1005,7 @@ export class ConnectorProbeService {
     ].join(' ');
 
     try {
-      const result = await submitSnowflakeStatement(host, jwt, sql, opts);
+      const result = await submitSnowflakeStatement(host, auth, sql, opts);
 
       // Use sfShowRowsToObjects to resolve columns by name — robust against
       // Snowflake adding columns or changing column order in future.
@@ -1089,13 +1091,11 @@ export class ConnectorProbeService {
 
     const creds = await this.resolveSnowflakeCreds(connector);
     if (!creds) {
-      throw new Error(
-        'Snowflake connector requires a credentialArn pointing at a secret with shape {"privateKeyPem":"...","user":"...","account":"..."}',
-      );
+      throw new Error(SNOWFLAKE_CRED_HINT);
     }
 
-    // Generate JWT once and reuse for all SHOW calls in this walk.
-    const jwt = generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user);
+    // Build auth once and reuse for all SHOW calls in this walk.
+    const auth = buildSnowflakeAuth(creds);
 
     const warehouse = String(connector.connectionConfig.warehouse ?? 'COMPUTE_WH');
     const role = String(connector.connectionConfig.role ?? 'ACCOUNTADMIN');
@@ -1120,7 +1120,7 @@ export class ConnectorProbeService {
     } else {
       // No scope — list all databases the principal can see.
       const showDbResult = await submitSnowflakeStatement(
-        host, jwt, 'SHOW DATABASES', opts,
+        host, auth, 'SHOW DATABASES', opts,
       );
       const dbRows = sfShowRowsToObjects(showDbResult);
       databases = dbRows
@@ -1136,7 +1136,7 @@ export class ConnectorProbeService {
       // SHOW TABLES IN DATABASE returns a flat list across all schemas.
       // Each row has name, database_name, schema_name, kind.
       const tableResult = await submitSnowflakeStatement(
-        host, jwt, `SHOW TABLES IN DATABASE "${db}"`, opts,
+        host, auth, `SHOW TABLES IN DATABASE "${db}"`, opts,
       );
       const tableRows = sfShowRowsToObjects(tableResult);
 
@@ -1160,7 +1160,7 @@ export class ConnectorProbeService {
       // SHOW VIEWS IN DATABASE — NOTE: different column ORDER than SHOW TABLES;
       // that's exactly why we resolve indices by column name, not hardcoded index.
       const viewResult = await submitSnowflakeStatement(
-        host, jwt, `SHOW VIEWS IN DATABASE "${db}"`, opts,
+        host, auth, `SHOW VIEWS IN DATABASE "${db}"`, opts,
       );
       const viewRows = sfShowRowsToObjects(viewResult);
 
@@ -1326,11 +1326,47 @@ export function generateSnowflakeJwt(
 }
 
 /**
+ * A resolved Snowflake credential: either a key-pair (signed into a JWT per
+ * request) or a programmatic access token (PAT, used verbatim).
+ */
+export type SnowflakeCreds =
+  | { kind: 'keypair'; privateKeyPem: string; user: string; account: string }
+  | { kind: 'pat'; token: string };
+
+/** Authorization material for a Snowflake SQL REST API request. */
+export interface SnowflakeAuth {
+  authToken: string;
+  tokenType: 'KEYPAIR_JWT' | 'PROGRAMMATIC_ACCESS_TOKEN';
+}
+
+// Shared operator hint naming both accepted credential shapes.
+export const SNOWFLAKE_CRED_HINT =
+  'Snowflake connector requires a credentialArn resolving to a secret holding either {"token":"<PAT>"} (programmatic access token) or {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"} (key-pair).';
+
+/**
+ * Turns a resolved credential into the bearer token + token-type header the
+ * SQL REST API expects. Key-pair creds are signed into a short-lived JWT; a
+ * PAT is used as-is. Snowflake can auto-detect the token type, but we set the
+ * header explicitly per the docs. Throws only for an unusable private key — a
+ * PAT never throws here.
+ */
+export function buildSnowflakeAuth(creds: SnowflakeCreds): SnowflakeAuth {
+  if (creds.kind === 'pat') {
+    return { authToken: creds.token, tokenType: 'PROGRAMMATIC_ACCESS_TOKEN' };
+  }
+  return {
+    authToken: generateSnowflakeJwt(creds.privateKeyPem, creds.account, creds.user),
+    tokenType: 'KEYPAIR_JWT',
+  };
+}
+
+/**
  * Submits a SQL statement to the Snowflake SQL REST API and returns the
  * parsed response body.
  *
  * POST https://<host>/api/v2/statements
- * Auth: Bearer <jwt>, X-Snowflake-Authorization-Token-Type: KEYPAIR_JWT
+ * Auth: Bearer <token>, X-Snowflake-Authorization-Token-Type per the credential
+ * (KEYPAIR_JWT for key-pair, PROGRAMMATIC_ACCESS_TOKEN for a PAT).
  *
  * Throws on non-2xx responses (Snowflake returns SQL errors as HTTP 422) or
  * if a 200 response body carries a non-"00000" sqlState (defensive check).
@@ -1338,7 +1374,7 @@ export function generateSnowflakeJwt(
  */
 export async function submitSnowflakeStatement(
   host: string,
-  jwt: string,
+  auth: SnowflakeAuth,
   sql: string,
   opts: { warehouse: string; role: string; database?: string; schema?: string },
 ): Promise<SnowflakeStatementResult> {
@@ -1354,8 +1390,8 @@ export async function submitSnowflakeStatement(
   const response = await fetch(`https://${host}/api/v2/statements`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${jwt}`,
-      'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
+      Authorization: `Bearer ${auth.authToken}`,
+      'X-Snowflake-Authorization-Token-Type': auth.tokenType,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },

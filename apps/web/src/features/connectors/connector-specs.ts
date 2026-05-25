@@ -133,8 +133,8 @@ export const CONNECTOR_SPECS: Record<ConnectorType, ConnectorSpec> = {
     ],
     credential: {
       required: true,
-      label: 'Key-pair credential (via secret)',
-      help: 'The secret must hold {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"}. A simpler "paste one token" option is coming (ADR-012).',
+      label: 'Credential (via secret)',
+      help: 'Easiest: a programmatic access token (PAT) — the secret holds {"token":"<PAT>"} (generate it in Snowsight → your user → Programmatic access tokens). Or key-pair: {"privateKeyPem":"-----BEGIN PRIVATE KEY-----\\n…","user":"…","account":"…"}.',
       placeholder: ARN_PLACEHOLDER,
     },
   },
