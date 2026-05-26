@@ -5,6 +5,8 @@ It provides the essential context needed to work effectively on this codebase.
 For full detail, read `documents/prd/Provenance_PRD_v1.5.md` and `documents/architecture/Provenance_Architecture_v1.5.md`.
 
 > **Current status:** Read `documents/status-board.md` first — that file is the single source of truth for where the project stands today. **Do not trust any "in progress" or status prose elsewhere in this file**; status content in CLAUDE.md goes stale between sessions and has misled in the past. CLAUDE.md carries architecture, patterns, and constraints — the stuff that doesn't change. Volatile state lives in the status board, `documents/prd/implementation-status.md` (per-feature detail), and `documents/prd/osr-roadmap.md` (stage plan).
+>
+> **Specific correction (as of 2026-05-26):** the "Open Source Ready" language in the Build Phases section below — including "B-063 — the sole remaining OSR blocker — is effectively closed" and the `v0.1.0-osr` framing — **predates and overstates reality.** Post-tag verification found the platform is NOT OSR for *onboarding*: connector self-service (B-080) and consumer/agent access (B-081) require expert setup or are API-only, and two agent-path regressions (B-076, B-077) were live-broken on the tagged commit. The four connectors *function*, but "works end to end" ≠ "a real user can do it unaided." Treat the status board and `documents/bugs/open.md` (B-080, B-081) as authoritative over the Build Phases prose.
 
 ---
 

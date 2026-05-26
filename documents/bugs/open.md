@@ -9,6 +9,55 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
+## B-081 — Consumer-side onboarding is the mirror of B-080: human-consumer access is genuinely self-service; agent-consumer access is API-only with footguns; both raise the same unresolved credential-brokerage question
+
+- **Severity:** **High** — companion to [B-080](#B-080). Together B-080 (register a connector) + B-081 (consume a product, human + agent) cover the three onboarding paths that *are* the platform's whole promise. Matt's framing 2026-05-26: "these three things are among the most important."
+- **Status:** Open — **diagnostic / strategy, not a single fix.** Traced statically through the code 2026-05-26 (both the human-consumer UI flow and the agent connection-reference flow). **Not yet live-walked** — see "Next action" below; the human persona walkthrough is the explicit next step, to come *before* any agent-side work.
+- **Area:** `apps/web/src/features/discovery/` (consumer UI), `apps/api/src/access/` (grants + connection package), `apps/api/src/consent/` (Domain 12 connection references), `apps/agent-query/` (agent path), `apps/web/src/shared/api/consent.ts` + `apps/web/src/features/agents/AgentDetailPage.tsx` (agent UI surface).
+
+### The three onboarding pillars and their honest state
+
+| Pillar | State | Where the friction is |
+|---|---|---|
+| 1. Register a connector (producer) | **Not OSR-smooth** | [B-080](#B-080) — Snowflake PAT/network-policy prerequisites are expert-only; credential provenance unresolved |
+| 2. Human consumer gets access to a product | **Genuinely self-service** | Mild, product-shaped friction only (below) |
+| 3. Agent consumer gets access to a product | **Works, but API-only with footguns** | Real operator friction (below) |
+
+### Pillar 2 — human consumer (the good news)
+
+Fully UI-driven, no shell / env vars / ARNs. Flow: browse marketplace → open product (redacted preview, host only, no creds) → **Request Access** button → form (intended-use required free text, duration default 30d, optional port scope) → owner approves on the Pending Access Requests page → consumer returns to the Ports tab and finds full connection details + a per-tool snippet picker (Python / dbt / JDBC URL / Power BI / Tableau / Snowflake share). This end is **not** the connector ordeal.
+
+Friction points (all product-shaped, none operator-shaped):
+- **"Intended use" field has zero guidance** — open textarea, no hint on length/specificity/approval criteria, no examples.
+- **Approval is async with no SLA shown** to the consumer; no auto-approve path surfaced for Situation-A (open-access) ports — the consumer may request access they didn't need because the Situation-A banner only appears once they're already in the Ports tab.
+- **Cross-org access is hard-blocked** — "Cross-organisation access requests are not supported on this platform yet — contact the publishing organisation directly" (`ProductDetailPage.tsx`). This is a real hole for the *data mesh* story (the whole point is cross-domain/cross-org consumption).
+- **The "ready to paste" snippet is a scaffold, not copy-run-done.** Real values are filled (host/port/database/schema/sslmode/driver/JDBC URL), but three placeholders remain the consumer must edit: credentials (`user='<set via env>'` / `password='<set via env>'` — deliberate, the platform won't inject plaintext secrets), the table (`SELECT * FROM <schema>.<table>` unless the port is source-bound with a catalog name), and for Snowflake `<your_warehouse>` / `<your_role>` if not declared on the port. ~30s of fill-in for a data engineer; a small wall for a non-technical consumer. Builders: `apps/api/src/access/connection-package.service.ts:609` (`buildSqlJdbcPython`) onward.
+
+### Pillar 3 — agent consumer (the friction is real)
+
+The platform's *headline* differentiator ("agents as first-class consumers") is the path with the most unaided-operator friction. The write path is **API-only** — there is no UI to *request* or *approve* a connection reference (`apps/web/src/shared/api/consent.ts` exposes only `list` / `get`; `AgentDetailPage.tsx` *displays* references + grants read-only, including the legacy-ref distinction, but offers no request/approve/deny/revoke action). ~6 manual steps, ~25–30 min per agent:
+- **Register the agent** → mints a Keycloak client + secret, but the **secret is shown exactly once** (lose it = `rotate-secret`); the human oversight contact must already exist in Keycloak or registration 400s (`agents.service.ts:90`).
+- **Create an access grant** (API).
+- **Request a connection reference** (API) — use-case category + **≥50-char** purpose elaboration + port scope; **Observed agents (the default classification) cannot self-request** — a human proxy must submit (`consent.service.ts:298`).
+- **A human approves** (API).
+- Then the runtime guard (`apps/agent-query/src/auth/connection-reference.guard.ts`) is solid: 5 denial codes, audit trail, scope match. *Once approved* the agent path is rock-solid; *getting* approved is the clunk.
+
+### The unifying thread — credential brokerage (this is the real decision)
+
+The producer-side concern from B-080 — *who holds the credential, at what access level* — has a **mirror image on the consumer side.** On approval, the platform **decrypts the stored source credentials and hands them to the consumer** inside the connection package (`connection-package.service.ts` `generateForProduct` → per-port `build*Artifacts`, fed by `EncryptionService` decrypt). That is the platform brokering credentials *outbound*, the same act B-080 wrestles with *inbound*. Tellingly, the **counter-model already exists in the code**: **Situation A** ports tell the consumer "connect with your existing source-system credentials" and skip the request entirely (`F10.15` layer 1). So both models — *platform holds & hands out credentials* vs. *each party authorizes with their own identity* — live in the codebase today.
+
+**This is one strategic question with three surfaces, not three separate problems.** It is the same question deferred on Snowflake in B-080, and it should be decided once for all three pillars: does Provenance broker **credentials** or **configuration**? (See the [configuration-brokerage framing decision](../prd/) — 2026-05-22 — that Provenance brokers configuration, not credentials, and the user keeps their own source-system identity. That decision points toward OAuth on the producer side and Situation-A / bring-your-own on the consumer side, and away from the platform-holds-the-credential path that the current connection package implements.)
+
+### Next action (Matt's stated priority order)
+
+1. **Live persona walkthrough of the human consumer path** — actually click through discover → request → approve → paste-and-run as a real consumer would, on dev. Confirms empirically how clunky the snippet really is (the `<set via env>` / `<table>` placeholders above) and whether the cross-org block bites a realistic mesh scenario. This comes **first** — before any agent-side work.
+2. *Then* the agent-consumer path.
+3. The credential-vs-configuration brokerage decision spans all three pillars (B-080 + B-081) and should be made once.
+
+**Related:** [B-080](#B-080) (producer/connector side of the same question), [ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md), [ADR-012](../architecture/adr/ADR-012-connector-auth-and-guided-registration.md), [ADR-005–008](../architecture/adr/) (connection references / Domain 12). Recurring "✅ Complete ≠ a real user can do it unaided" pattern.
+
+---
+
 ## B-080 — Connector onboarding is not OSR-smooth: Snowflake PAT prerequisites (network/auth policy) are expert-only; `v0.1.0-osr` overstated connector readiness
 
 - **Severity:** **High** — strikes at the platform's core self-service claim. Matt's end-of-session assessment 2026-05-25: "I thought we were OSR, but we are not." Correct for the connector layer.
@@ -23,6 +72,14 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 **Still unresolved at the break:** the dev Snowflake connector returns `394400 "Programmatic access token is invalid"` (likely a token-entry issue — wrong column copied from `ADD PROGRAMMATIC ACCESS TOKEN`, or a copy error — not yet confirmed). The full register→validate→crawl loop has **not** been demonstrated green through the GUI on a real account this session (the protocol-level PAT auth *was* proven earlier via direct `SELECT 1` → 200).
 
 **Why it matters / what "done" looks like.** OSR per Matt's bar = "works without weird workarounds." Snowflake onboarding currently *is* the weird workaround. Candidate fixes (to scope when Matt returns): in-product guidance that states the network-policy prerequisite and the egress IP to allowlist; a "test this token" affordance before save; possibly a guided "here's the exact Snowflake SQL for your account" snippet (mirrors the destination-snippet pattern); and revisiting whether OAuth (ADR-012 method A) is the real answer for Snowflake rather than PAT. Also re-examine the same onboarding bar for PG / S3 / Databricks before re-claiming OSR.
+
+**Update 2026-05-26 (Matt, closing the loop):** the dev Snowflake connector is now **green** — Matt minted a fresh PAT under the dedicated service user and it validates. So the `394400` was the token-entry slip we suspected, not a deeper problem; the full GUI register→validate loop works on a real account with the service-user + network-policy recipe.
+
+But getting it green surfaced a **new, sharper concern that this very recipe is itself non-OSR**: the working PAT had to be minted *from a service account*. Two problems with that as the standard path:
+- **Authority** — a domain owner (persona 2) typically does **not** have rights to create/manage a service account or mint PATs under one. So the "self-service" recipe quietly depends on whoever holds Snowflake admin, not the domain owner doing the onboarding.
+- **Blast radius** — the alternative (one org-wide service account everyone uses) concentrates access: a single credential with broad grants becomes the access level for *all* Provenance↔Snowflake traffic. Over-granting it is an obvious risk; scoping it per-product/per-domain is exactly the work that isn't designed yet.
+
+So even with a green connector, the *credential-provenance* story is unresolved: who is allowed to create the credential, and at what access level. This is real input to the OAuth-vs-PAT strategy call — OAuth (ADR-012 method A) would let each domain owner authorize with **their own** Snowflake identity and grants rather than borrowing a shared service account, which directly addresses both the authority and blast-radius problems. **Deferred to a future session** at Matt's call — "it works for now."
 
 **Related:** [ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md) (credential vault, shipped), [ADR-012](../architecture/adr/ADR-012-connector-auth-and-guided-registration.md) (guided form + auth methods). The recurring "✅ Complete ≠ a real user can do it" pattern: B-076, B-077, B-079, and the `local-env` dead-end this session.
 
