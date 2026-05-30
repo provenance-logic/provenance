@@ -237,7 +237,7 @@ function StepBody({
     return (
       <Body
         title={STEP_TITLES.register_connector}
-        description="Connectors register your existing data systems against a domain so lineage and access flow through Provenance. Credentials are referenced by AWS Secrets Manager ARN — raw secrets never enter the platform."
+        description="Connectors register your existing data systems against a domain so lineage and access flow through Provenance. Paste your credential in the connector form — the platform encrypts it at rest, never stores plaintext, and never returns it to any client."
       >
         <Actions>
           <PrimaryButton onClick={() => navigate('/connectors')}>Open connectors page</PrimaryButton>
