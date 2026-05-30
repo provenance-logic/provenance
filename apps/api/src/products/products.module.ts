@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProductsController } from './products.controller.js';
+import { ProductByIdController } from './product-by-id.controller.js';
 import { ProductsService } from './products.service.js';
 import { DataProductEntity } from './entities/data-product.entity.js';
 import { PortDeclarationEntity } from './entities/port-declaration.entity.js';
@@ -50,7 +51,7 @@ export { ProductsService };
     AccessModule,
     NotificationsModule,
   ],
-  controllers: [ProductsController],
+  controllers: [ProductsController, ProductByIdController],
   providers: [ProductsService, TrustScoreService, ConnectionProbeService],
   exports: [ProductsService],
 })

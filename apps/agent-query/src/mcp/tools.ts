@@ -73,13 +73,16 @@ export function makeTools(client: ControlPlaneClient, session: SessionIdentity):
         properties: {
           org_id: { type: 'string', description: 'Organization ID (optional — uses default if omitted)' },
           product_id: { type: 'string', description: 'The product ID' },
-          domain_id: { type: 'string', description: 'The domain ID' },
+          // B-082: domain_id is no longer required. Kept as an ignored,
+          // optional property for backwards compatibility with agents that
+          // still send it; product_id is globally unique and sufficient.
+          domain_id: { type: 'string', description: 'Deprecated/ignored — product_id alone resolves the product' },
         },
-        required: ['product_id', 'domain_id'],
+        required: ['product_id'],
       },
       handler: async (args) => {
         const orgId = resolveOrgId(session, args);
-        const p = await client.getProduct(orgId, args.domain_id, args.product_id);
+        const p = await client.getProduct(orgId, args.product_id);
         const ports = (p.ports ?? []).map((port: { portType: string; name: string; interfaceType?: string }) =>
           `  - ${port.name} (${port.portType}${port.interfaceType ? `, ${port.interfaceType}` : ''})`,
         ).join('\n');
@@ -444,6 +447,28 @@ export function registerTools(
         await client.writeAuditEntry(auditEntry);
       } catch (err) {
         console.error('[Audit] Tool call audit failed (non-blocking):', err);
+      }
+
+      // B-082: enforce the tool's `required` inputSchema fields at the
+      // tools/call boundary. The MCP SDK does not validate `required`, so a
+      // missing arg previously flowed into the handler as `undefined` and
+      // surfaced downstream as an opaque HTTP 500 (e.g. `"undefined"` reaching
+      // a uuid column). Returning a structured `tool_args_missing` error here
+      // is the defensive belt for every tool, not just get_product. Runs after
+      // the audit (the attempt is recorded) and before the guard (which reads
+      // these args).
+      const missingArgs = tool.inputSchema.required.filter((key) => {
+        const value = args[key];
+        return value === undefined || value === null || value === '';
+      });
+      if (missingArgs.length > 0) {
+        return {
+          content: [{
+            type: 'text',
+            text: `tool_args_missing: ${tool.name} requires ${missingArgs.join(', ')}`,
+          }],
+          isError: true,
+        };
       }
 
       // Domain 12 enforcement (PR #5b). The guard runs after the

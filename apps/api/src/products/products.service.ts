@@ -146,7 +146,30 @@ export class ProductsService {
       relations: ['ports'],
     });
     if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    return this.buildProductDetail(product, ctx);
+  }
 
+  /**
+   * Resolve a product by id within the caller's org, WITHOUT requiring the
+   * domain id. `id` is a globally-unique PK, so the `domainId` filter on
+   * `getProduct` is redundant for correctness — but the domain-scoped route
+   * forces callers to supply it. The MCP `get_product` tool (B-082) and any
+   * caller that knows only the product id use this path; it stays org-scoped
+   * (same tenant boundary as `getProduct`).
+   */
+  async getProductById(orgId: string, productId: string, ctx?: RequestContext): Promise<DataProduct> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, orgId },
+      relations: ['ports'],
+    });
+    if (!product) throw new NotFoundException(`Data product ${productId} not found`);
+    return this.buildProductDetail(product, ctx);
+  }
+
+  private async buildProductDetail(
+    product: DataProductEntity,
+    ctx?: RequestContext,
+  ): Promise<DataProduct> {
     const enrichment = await this.enrichmentService.enrich(
       { id: product.id, orgId: product.orgId, domainId: product.domainId, ownerPrincipalId: product.ownerPrincipalId },
       ctx,

@@ -117,9 +117,14 @@ export class ControlPlaneClient {
     return products;
   }
 
-  async getProduct(orgId: string, domainId: string, productId: string) {
+  // B-082: resolve by product id alone (no domain id). Mirrors the id-only
+  // routes the other product-bound tools use (trust-score / lineage /
+  // slo-summary). The control plane resolves the product within the caller's
+  // org, so an omitted/unknown domain can no longer push "undefined" into a
+  // uuid column and 500.
+  async getProduct(orgId: string, productId: string) {
     const res = await this.http.get(
-      `/organizations/${orgId}/domains/${domainId}/products/${productId}`,
+      `/organizations/${orgId}/products/${productId}`,
     );
     return res.data;
   }
