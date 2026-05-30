@@ -202,16 +202,31 @@ describe('KeycloakAdminService', () => {
       );
     });
 
-    it('throws with "already exists" message when Keycloak returns 409', async () => {
+    it('idempotently replaces an existing client when Keycloak returns 409 (reseed path, B-085)', async () => {
+      // A prior seed's `agent-<slug>` client survives a hard reset (Postgres
+      // truncated, Keycloak not). createAgentClient must delete the stale
+      // client and recreate, returning a fresh secret — not throw.
       fetchSpy
-        .mockResolvedValueOnce(fakeTokenResponse())
-        .mockResolvedValueOnce(fakeConflictResponse());
+        .mockResolvedValueOnce(fakeTokenResponse())                                          // admin token (cached thereafter)
+        .mockResolvedValueOnce(fakeConflictResponse())                                       // create -> 409
+        .mockResolvedValueOnce(fakeClientListResponse([{ id: 'stale-id', clientId: agentId }])) // resolveInternalId
+        .mockResolvedValueOnce(fakeNoContentResponse())                                      // delete stale client
+        .mockResolvedValueOnce(fakeCreateClientResponse())                                   // recreate -> 201
+        .mockResolvedValueOnce(fakeSecretResponse('fresh-secret'));                          // get secret
 
-      await expect(service.createAgentClient(agentId, orgId)).rejects.toThrow(
-        /already exists/i,
+      const result = await service.createAgentClient(agentId, orgId);
+
+      expect(result.keycloak_client_secret).toBe('fresh-secret');
+      // The stale client was deleted (DELETE issued against its internal id).
+      const deleteCall = fetchSpy.mock.calls.find(
+        ([url, opts]) =>
+          (opts as RequestInit | undefined)?.method === 'DELETE' &&
+          String(url).endsWith('/clients/stale-id'),
       );
-      // Ensure fetch was actually called (not just a skeleton throw)
-      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(deleteCall).toBeTruthy();
+      // token, create(409), list, delete, create(201), secret — token is cached
+      // across the recursion, so no second token fetch.
+      expect(fetchSpy).toHaveBeenCalledTimes(6);
     });
 
     it('throws if admin token acquisition fails', async () => {

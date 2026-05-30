@@ -77,7 +77,26 @@ export class KeycloakAdminService {
 
     if (!createRes.ok) {
       if (createRes.status === 409) {
-        throw new Error(`Keycloak client for agent ${agentId} already exists`);
+        // Idempotent (re)provisioning — a client with this clientId already
+        // exists in Keycloak. This happens on a reseed: `seed:reset:hard`
+        // truncates Postgres (incl. identity.agent_identities) but NOT
+        // Keycloak, so the prior run's `agent-<slug>` client survives while the
+        // agent gets a fresh agentId. Delete the stale client and recreate so
+        // the hardcoded `agent_id` / `provenance_org_id` mappers bind to the
+        // CURRENT agentId, and a fresh secret is returned. See B-085.
+        const staleInternalId = await this.resolveInternalId(token, clientId);
+        const delRes = await fetch(
+          `${this.baseUrl}/admin/realms/${this.realm}/clients/${staleInternalId}`,
+          { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } },
+        );
+        if (!delRes.ok) {
+          throw new Error(
+            `Keycloak client ${clientId} already exists and could not be replaced (delete returned ${delRes.status})`,
+          );
+        }
+        // Recreate now that the stale client is gone. The delete guarantees the
+        // retry cannot 409, so recursion is bounded to one level.
+        return this.createAgentClient(agentId, orgId, clientId);
       }
       throw new Error(`Failed to create Keycloak client: ${createRes.status}`);
     }

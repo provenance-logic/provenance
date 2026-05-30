@@ -6,6 +6,44 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-085 — `seed:reset:hard` is not repeatable on a previously-seeded box: orphaned Keycloak agent clients 500 `/seed/agents`, and `consent`/`notifications` schemas are never truncated
+
+- **Resolved:** 2026-05-30, found while redeploying the demo box (the reseed aborted twice — once at `seed: agents`, once at `seed: access grants` downstream).
+- **Severity:** Medium — blocks `seed:reset:hard` / `demo-reset.sh --hard` on any environment that was already seeded (i.e. every long-lived demo/dev box). A fresh stand-up (`demo-bootstrap`) never hits it, which is why the #226 agent arc verified clean.
+- **Area:** `apps/api/src/auth/keycloak-admin.service.ts` (`createAgentClient`), `packages/seed/src/reset.ts` (truncate list).
+
+**What was wrong (two compounding gaps).**
+
+1. **Orphaned Keycloak clients.** A hard reset truncates Postgres (incl. `identity.agent_identities`) but **not Keycloak**, so the prior run's `agent-<slug>` client survives. The re-seed's `/seed/agents` → `createAgentClient` POSTed a client with the same `clientId`, Keycloak returned **409**, and the method **threw** → HTTP 500, aborting the seed at the `agents` step.
+2. **Cascading FK failure.** Because the agent step aborted before creating the agent's `identity.principals` row (and after a manual client-delete workaround, on a *stale* API process — see [[reference_bind_mount_restart_after_pull]]), the later `/seed/access-grants` for the agent grantee hit `access_grants_grantee_principal_id_fkey`.
+3. **`consent` + `notifications` never truncated.** `reset.ts`'s schema list omitted both, so connection references and notifications from a prior seed lingered across a `reset:hard`.
+
+**Fix.**
+- `createAgentClient` is now **idempotent**: on a 409 it resolves the existing client's internal id, deletes it, and recreates — so the hardcoded `agent_id` / `provenance_org_id` mappers re-bind to the *current* agentId and a fresh secret is returned. Bounded one-level recursion (the delete guarantees the retry can't 409). New unit test covers the delete-then-recreate path.
+- Added `consent` and `notifications` to the `reset.ts` truncate schema list.
+
+**Verified** by a clean `seed:reset:hard` on the demo box completing end-to-end (agents → grants → connection references → notifications) plus the full `demo-smoke-test.sh` passing, including the agent/MCP arc.
+
+- **Fix commit:** see PR for `fix/seed-hard-reset-idempotency`.
+
+---
+
+## B-078 — `seed:reset:hard` truncates `flyway_schema_history`, breaking the next stack restart (flyway re-applies V1 onto a populated schema)
+
+- **Resolved:** 2026-05-30 (filed 2026-05-25). Fixed alongside [B-085](#B-085) — same `reset.ts` `hardReset` function, same "make hard reset safe" theme.
+- **Severity:** **High** — after `seed:reset:hard` the schema + data are correct, but flyway's history table is emptied, so any subsequent container recreate that triggers `flyway-migrate` fails (`relation "orgs" already exists`) and the api won't boot.
+- **Area:** `packages/seed/src/reset.ts`.
+
+**What was wrong.** `hardReset` truncates every table in a fixed list of schemas, including `organizations` — which is flyway's `defaultSchema`, so `organizations.flyway_schema_history` got swept up. With no `baselineOnMigrate`, the next migrate saw `<< Empty Schema >>`, tried to apply `V1`, and failed because the objects already exist.
+
+**Fix.** The per-table truncate loop now **skips `flyway_schema_history`** — it is flyway bookkeeping, not seed data.
+
+**Demo-box remediation (2026-05-30).** A box already corrupted by a pre-fix hard reset self-heals with the documented workaround: `DROP TABLE organizations.flyway_schema_history;` → `flyway baseline -baselineVersion=<latest>` → next migrate is a clean no-op. Done on the demo box this session after its redeploy.
+
+- **Fix commit:** see PR for `fix/seed-hard-reset-idempotency`.
+
+---
+
 ## B-084 — Seed stores port connection details in the F10.5 display shape (no `kind` discriminator), so every "How to Consume" snippet returns `destination_not_yet_supported`
 
 - **Resolved:** 2026-05-30, same session surfaced (demo persona walkthrough — the connection-package reveal, the payoff of the whole access-request flow, errored on every interface type for every product).
