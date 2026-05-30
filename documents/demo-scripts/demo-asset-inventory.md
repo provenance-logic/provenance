@@ -6,9 +6,9 @@ This file does **not** prescribe a narrative or tone. That's the layer you'd tak
 
 **Source of truth for everything below:** `packages/seed/src/`. If the seed changes, this file is stale — regenerate from current main.
 
-**Demo URL:** https://demo.provenancelogic.com (live as of 2026-05-18, deployed on commit `01147d0`). Everyone below logs in with password `DemoPass123!`.
+**Demo URL:** https://demo.provenancelogic.com. Everyone below logs in with password `DemoPass123!`.
 
-> **✅ Rehearsal-bug cleanup complete (2026-05-18).** Every bug surfaced by the 2026-05-17 investor-demo rehearsal is closed: B-054 retracted, B-055/56/57/58/59 fixed. Section 11 ("Rough edges to avoid in live demo") still applies for older items (B-029 dev-box HMR, the "don't run the smoke test on stage" rule per B-060) — but the rehearsal-specific workarounds are no longer needed. The demo box is on current main with every fix from today deployed.
+> **Inventory currency note (2026-05-30).** Last substantive refresh against the seed: 2026-05-30. Sections 5 (agents grants+refs), 8 (counts), 9 (MCP tool×product matrix), and 11 (rough edges) reflect PR #226 which added the agent-grants + connection-references seed shape. Pre-2026-05-30 rehearsal-bug callouts (B-054/55/56/57/58, all ✅ fixed) have been removed; if you want the history of those, see `documents/bugs/resolved.md`.
 
 ---
 
@@ -24,7 +24,7 @@ A few things that are not bugs but bite the first time:
 
 **Have the demo box started before the demo.** Cold-start from `aws ec2 start-instances` takes ~2 min. Land the prep before audience joins.
 
-**Verify the state is pristine** before each new demo (the script in Section 10 relies on specific unread/pending signals being intact). Once the demo-reset workflow is verified (status board "Up next" item), run `bash infrastructure/scripts/demo-reset.sh --hard` between rehearsals.
+**Verify the state is pristine** before each new demo. The signals in Section 6 (unread notifications, pending requests) get *consumed* by walking the demo, so a clean state matters for the second rehearsal. **⚠️ Do not run `bash infrastructure/scripts/demo-reset.sh --hard` to reset.** B-078 (filed 2026-05-25): the hard reset truncates `flyway_schema_history`, which breaks the next `flyway-migrate` run — the api won't boot the next time anything triggers a container recreate. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the safe path; the root-cause fix for the hard variant is pending.
 
 ---
 
@@ -132,7 +132,7 @@ The Lineage Explorer shows this small but realistic DAG when you open any of the
 
 | Agent | Org | Trust classification | Oversight contact | Active grants + refs | Notable |
 |---|---|---|---|---|---|
-| Marketing Copilot | Acme Corp | `observed` | marketing-lead@acme.example.com | Customer 360 (discovery+observability, 180d), Daily Revenue Recognition (discovery+observability, 90d) | Recent classification change from `observed` → `supervised` (visible in governance@acme's notifications). Broad-scope refs let the full product-bound MCP tool surface work |
+| Marketing Copilot | Acme Corp | `observed` | marketing-lead@acme.example.com | Customer 360 (discovery+observability, 180d), Daily Revenue Recognition (discovery+observability, 90d) | A `classification_changed` notification is seeded against `governance@acme` (observed → supervised, with reason). **The agent's current classification is still `observed`** — the notification is a seeded *signal*, not a real history entry. Don't click through expecting to see a "Supervised" current classification or a multi-row Classification History; you'll see "Observed" and one initial entry. Use the notification as a "platform tells you when state has changed" beat; don't drill into the agent for narrative continuity. Broad-scope refs let the full product-bound MCP tool surface work — that's the real Marketing Copilot demo arc. |
 | Risk Assistant | Beta Industries | `observed` | compliance@beta.example.com | Credit Risk Decisions (**discovery ONLY**, 30d) | Held at Observed by `beta.risk-domain-observed-only` policy. **Discovery-only scope is deliberate** — drives the `CONNECTION_REFERENCE_SCOPE_VIOLATION` demo when `get_trust_score` (observability scope) is called on the same product |
 
 **Demo angle.** Open the agent registry. Both agents have JWT-based authentication (ADR-002). The Marketing Copilot has a classification-change audit trail you can show. The Risk Assistant's "stuck at Observed by policy" is the right hook for the federated governance story.
@@ -148,7 +148,7 @@ This is what makes the demo feel *alive* — open the right login and there's al
 ### As `governance@acme.example.com`
 - **Compliance drift detected** on Customer 360 — PII completeness at 93.2% vs 95% policy floor. Deep links to `/governance/compliance`.
 - **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Same signal `finance-lead` sees, fanned out to governance because material trust regressions are governance-relevant across all domains. Deep links to `/marketplace/revenue-daily/trust`.
-- **Classification changed** for Marketing Copilot (observed → supervised). Already read but in history. Deep links to `/agents/marketing-copilot`.
+- **Classification changed** for Marketing Copilot (observed → supervised). Already read but in history. Deep links to `/agents/marketing-copilot`. *Caveat: this is a seeded notification only — the agent's current classification is still `observed` and the Classification History tab shows only the initial Observed entry. The notification is a "platform surfaces state-changes" beat; don't deep-link into the agent expecting to see the change.*
 
 ### As `finance-lead@acme.example.com`
 - **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Reason: reconciliation match rate fell below 99.5% SLO floor twice this week. Deep links to `/marketplace/revenue-daily/trust`. **This is the strongest single moment in the demo for "the platform tells you something is wrong before you ask."**
@@ -187,12 +187,13 @@ Visible in the Policy Studio when logged in as `governance@acme.example.com` or 
 
 ---
 
-## 8. Access requests + grants (the workflow surface)
+## 8. Access requests + grants + connection references (the workflow surface)
 
-- **7 access grants** seeded across both orgs (3 active and healthy, 1 expiring on Acme, 3 on Beta with one expiring in 5 days)
-- **5 access requests** in various states — 3 pending (each one a "click this to approve" moment), 1 approved with history, 1 denied with rationale
+- **10 access grants** seeded across both orgs — 7 human grants (3 active and healthy, 1 expiring on Acme, 3 on Beta with one expiring in 5 days) plus 3 agent grants added by PR #226 (Marketing Copilot on customer-360 + revenue-daily, Risk Assistant on credit-risk-decisions).
+- **5 access requests** in various states — 3 pending (each one a "click this to approve" moment), 1 approved with history, 1 denied with rationale.
+- **3 active connection references** (Domain 12, added by PR #226) — paired with the 3 agent grants. Two broad-scope (Marketing Copilot, discovery+observability), one tight-scope (Risk Assistant, discovery only — drives the violation beat in Section 9).
 
-Best demo flow: log in as `marketing-lead@acme.example.com` → Notifications → click the pending request from Aiden Chen → walk through the approval UI → grant emits a *connection package* with curl / JDBC / Python snippets.
+Best human demo flow: log in as `marketing-lead@acme.example.com` → Notifications → click the pending request from Aiden Chen → walk through the approval UI → grant emits a *connection package* with curl / JDBC / Python snippets.
 
 ---
 
@@ -229,24 +230,20 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 
 ### Audience A: Investor / non-technical (10 min)
 
-> **🚨 Rehearsal blockers (2026-05-17, updated as fixes land):** Step 4's approval workflow ✅ **fixed** (B-055 landed; B-054 retracted as misdiagnosed — see resolved.md). Steps 6 and 7 ✅ **fixed** (B-057 landed — agent detail page at `/agents/:agentId` with Overview / Access Grants / Connection References / Classification History tabs). Step 8 ✅ **fixed** (B-058 landed — governance@acme now receives the trust-score-drop notification, no persona switch needed). Full bug details in `bugs/open.md`.
-
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
 1. **Open marketplace** as `analyst@acme.example.com` (a non-owner consumer). One screen: 10 products across two orgs, with trust scores, owners, lifecycle states, freshness SLAs. *"This is what data looks like when it's a *product*, not a table."*
 2. **Click Customer 360** → show schema + ownership + lineage tab + trust score breakdown. *"Every product has a contract, an owner, a service level."*
 3. **Click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."*
-4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Open **Access Requests** in the left nav (or click the notification — it deep-links to the same page). The pending request from Aiden is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."* (B-055 fix landed 2026-05-17 — replaced the prior workaround-via-notification path.)
+4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Open **Access Requests** in the left nav (or click the notification — it deep-links to the same page). The pending request from Aiden is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."*
 5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide. *"Approved means *usable*, not 'wait three days for IT.'"*
 6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
-7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The Classification History tab shows the observed → supervised transition with reason and approver. *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* (B-057 fix landed 2026-05-17.)
-8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score drop** on Daily Revenue Recognition (0.91 → 0.78, reconciliation match rate breached SLO twice this week). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."* (B-058 fix landed 2026-05-18 — same trust-score signal also reaches the owning domain at `finance-lead@acme.example.com`.)
+7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The **Connection References tab now shows two active references** (customer-360, revenue-daily — seeded by PR #226). *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* ⚠️ The Classification History tab shows only the initial Observed entry — don't promise a visible observed→supervised transition (the seeded notification is a synthetic signal; see Section 5 caveat).
+8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score drop** on Daily Revenue Recognition (0.91 → 0.78, reconciliation match rate breached SLO twice this week). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."*
 
-**What to avoid:** don't run the smoke test. Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
+**What to avoid:** Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
 
 ### Audience B: Technical colleague / data architect (15 min)
-
-> **Status (2026-05-18):** B-057 ✅ fixed — agent detail page now ships. B-056 ✅ fixed — logout from `/agents` redirects to login cleanly.
 
 The story is "**we made all the right architecture calls and there's evidence of each one in the running stack.**"
 
@@ -255,15 +252,13 @@ The story is "**we made all the right architecture calls and there's evidence of
 3. **Open the Policy Studio.** Show one of the seeded OPA policies — `beta.pci-scope-isolation` is a good one. *"Governance is computational, not procedural. This is real Rego, hot-reloadable, enforced at request time."*
 4. **Show the Compliance Monitor.** Drift detection on Customer 360 with the 93.2% vs 95% number. *"Drift detection runs continuously; products move through Compliant / Drift Detected / Grace Period / Non-Compliant automatically."*
 5. **Open the API docs at `/api/v1/docs`.** OpenAPI 3.1 rendered live, source-of-truth specs in `packages/openapi/`. *"Every API surface in the platform is spec-first."*
-6. **Live MCP demo.** From your terminal, hit the MCP server and call `list_products` then `get_trust_score`. *"Agents are first-class. Same JWTs, same row-level-security, same audit log."*
+6. **Live MCP demo.** From your terminal, hit the MCP server as Marketing Copilot and call `list_products` then `get_trust_score` with `product_id` for customer-360. *"Agents are first-class. Same JWTs, same row-level-security, same audit log."* **For the violation beat:** also exchange a Risk Assistant JWT and call `get_trust_score` against credit-risk-decisions — denied with a structured `CONNECTION_REFERENCE_SCOPE_VIOLATION` because the seeded reference is discovery-only. Both verified end-to-end on the demo box 2026-05-30. ⚠️ **Don't call `get_product` from the CLI** — B-082 (filed 2026-05-30): it requires `domain_id` and returns 500 if omitted. Stick to the three other product-bound tools (`get_trust_score`, `get_lineage`, `get_slo_summary`) which only need `product_id`.
 7. **Open the Agent Detail page** for Marketing Copilot. Show the trust classification, the oversight contact, the audit trail. *"Three trust tiers — Observed, Supervised, Autonomous. Autonomous can never be set programmatically; only a governance role can promote."*
 8. **The persistence story for connection references.** Mention Domain 12 (ADR-005 through ADR-008) — "every agent action requires both an active access grant AND an active connection reference with use-case scope." Don't deep-dive unless they ask.
 
 **What to lean into:** the five non-negotiables in `CLAUDE.md` (native graph, hot-reloadable policy engine, control-plane/data-plane separation, distinct agent query layer, native MCP). Each one is visible somewhere in the running stack. Show, point, move on.
 
 ### Audience C: Governance / compliance officer (12 min)
-
-> **Status (2026-05-17):** B-057 ✅ fixed — agent detail page lands the classification-history and connection-reference (Domain 12) beats with real UI surface, not narration.
 
 The story is "**we made your job a software problem.**"
 
@@ -280,26 +275,23 @@ The story is "**we made your job a software problem.**"
 
 ## 11. Rough edges to avoid in live demo
 
-### Known bugs from the 2026-05-17 rehearsal (must read before walking)
+### Active (open bugs that will bite if you don't know about them)
 
-- ✅ **B-054 (retracted) — misdiagnosed as silent grant; see [resolved.md](../bugs/resolved.md#B-054).** The "grant happened after clicking the notification" observation was the always-existing seeded grant on Customer 360, attributed to the click. No silent-grant mechanism exists in the code.
-- ✅ **B-055 (fixed 2026-05-17) — approval workflow has a proper home.** New page at `/access-requests` lists all pending requests the caller can approve, with inline Approve / Deny. Linked from the left nav as "Access Requests." Notification deep-links route here.
-- ✅ **B-056 (fixed 2026-05-18) — logout from `/agents` now redirects to login cleanly.** Root cause was a stale `/agent` entry in the Vite dev server proxy (prefix-matched `/agents`, forwarded post-logout reloads to NestJS, surfacing Express's `Cannot GET /agents` 404). Not a Keycloak or route-guard issue as originally hypothesized. See [resolved.md](../bugs/resolved.md#B-056).
-- ✅ **B-057 (fixed 2026-05-17) — agent detail page now lives at `/agents/:agentId`.** Four-tab surface (Overview / Access Grants / Connection References / Classification History) backed by existing endpoints. The Domain 12 connection-reference story now has a real visible surface — first one in the UI. Rows in the agent registry are clickable links.
-- ✅ **B-058 (fixed 2026-05-18) — trust-score-drop notification now fans out to `governance@acme` too.** Same signal `finance-lead@acme` sees, replicated under `seedKey: acme:governance:trust:revenue-daily` so re-seeding stays idempotent. Section 6 and Step 8 of the investor script now match. No live-demo workaround needed.
+- **[B-078](../bugs/open.md#B-078) — do not run `demo-reset.sh --hard`.** It truncates `flyway_schema_history` and the api won't boot the next time anything triggers a flyway-migrate. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the safe path between rehearsals.
+- **[B-082](../bugs/open.md#B-082) — MCP `get_product` 500 when `domain_id` omitted.** Only product-bound tool that requires `domain_id` (the other three take `product_id` alone). For the Audience B live MCP demo, use `get_trust_score`, `get_lineage`, or `get_slo_summary` — they're the verified working path. If you must show `get_product`, pass both `product_id` and `domain_id`.
 
-### Pre-existing rough edges (still apply)
+### Standing caveats
 
-- **B-050.** `demo-smoke-test.sh` layer 2 step 3 hits a non-existent `/organizations/me` route and returns 500. Don't run the smoke test in front of an audience. Walk the UI directly.
 - **Fictional warehouse endpoints.** The `connectionDetails.endpoint` strings on products point at `warehouse.acme.example.com` and similar. They're illustrative. If you click an example client command, it won't connect. Mention "these are illustrative — the *contract* is what's enforced, the *endpoint* points at the domain's own infrastructure."
+- **Synthetic classification-change notification.** Section 5 and Section 6 cover this in detail: the Marketing Copilot `classification_changed` notification is a seeded *signal*, not a real history entry. The agent's current classification is `observed`. Don't drill into the agent expecting to see the change.
 - **Demo URL ≠ persistent.** The demo box is stop/start lifecycle, not always-on. `demo.provenancelogic.com` resolves only when the instance is started; expect a 2-min warm-up.
 - **Agent Autonomous tier.** Don't try to promote any agent to Autonomous live — there's no UI workflow for it yet and it requires a governance role with a non-null reason. If asked, say "this is gated to manual intervention by design."
-- **Dev-mode UI affordances.** The frontend is currently served by Vite in dev mode. There may be subtle dev-mode banners or affordances visible. Production-mode demo image is a deferred follow-up (status board "Deferred to post-launch").
+- **Dev-mode UI affordances.** The frontend is currently served by Vite in dev mode. There may be subtle dev-mode banners or affordances visible. Production-mode demo image is a deferred follow-up.
 - **Lineage time-travel and PNG export.** Not yet shipped (ADR-003 follow-ups). If someone asks "can you show this graph at last Friday's snapshot?" — answer "F5.17, on the roadmap, not in this build."
 
-### When to update this section
+### Smoke test status
 
-Each of the B-054/55/56/57/58 entries above should move to a "Recently resolved" callout (and then disappear entirely) as the fixes land. The B-054 silence-on-fix would be especially worth noting: it's the strongest "show the platform is honest about its bugs" beat if asked by a governance-flavored audience.
+The `demo-smoke-test.sh` was rewritten in #214 (the B-076/B-077 fix) and now exercises all 6 layers including the MCP agent path. Verified green in 4s on 2026-05-30. **Safe to run pre-demo as a confidence check** (previous "don't run the smoke test" advice from B-050 is obsolete — B-050 was fixed). The smoke test only exercises `list_products` (exempt path) — it does NOT verify product-bound MCP tools, so green smoke ≠ guarantee against the B-082 class of regression. Followup tracked separately.
 
 ---
 
@@ -322,5 +314,6 @@ Each of the B-054/55/56/57/58 entries above should move to a "Recently resolved"
 | `packages/seed/src/lineage/index.ts` | All 8 lineage edges |
 | `packages/seed/src/slos/` | All 20 SLO declarations |
 | `packages/seed/src/policies/` | All 6 OPA Rego policies |
-| `packages/seed/src/access/` | All access requests and grants |
+| `packages/seed/src/access/` | All access requests + grants (human grants + agent grants) |
+| `packages/seed/src/consent/` | Connection references (Domain 12) — paired with the agent grants (added PR #226) |
 | `packages/seed/src/notifications/` | All seeded notifications (the "live signals" that make the demo feel inhabited) |
