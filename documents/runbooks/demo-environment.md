@@ -163,16 +163,16 @@ If any step fails, the script exits with a non-zero code and a message identifyi
 
 ### Updating a standing box (the deploy gotcha)
 
-> **`docker compose pull` does not refresh code on this box, and `git pull` alone does not either.** The compose stack **builds api / web / agent-query locally** (no registry), so `demo-sync.sh`'s `docker compose pull` is a no-op for them and `up -d` will **not** recreate a container whose (cached, unchanged) image ID didn't move. Worse, those three services **bind-mount** `/opt/provenance` and run the source directly — so after a `git pull`, the running Node process keeps executing the *old* code it loaded at its last start even though the new code is on disk.
->
-> To deploy a merged `main` to a standing box:
-> 1. `cd /opt/provenance && git pull --ff-only origin main`
-> 2. `docker compose -f docker-compose.ec2-dev.yml -f docker-compose.demo.yml --env-file .env.ec2 restart api agent-query web` (force the processes to reload the bind-mounted source — `restart`, not just `up -d`)
-> 3. `docker compose ... restart caddy` (Caddy caches upstream container IPs; restart it after the app containers move)
-> 4. `docker compose ... run --rm flyway-migrate` if the pull brought new migrations
-> 5. Re-run the smoke test
->
-> This cost ~30 min on 2026-05-30 (an agent-grant FK kept failing against api code that was already fixed on disk but not reloaded).
+**Just run `bash infrastructure/scripts/demo-sync.sh main`.** As of 2026-05-30 the script handles this correctly *and verifies it*: it force-recreates the bind-mounted app services (`api agent-query web`), restarts Caddy, and then runs a **deploy-integrity check** that fails loudly if any of those containers did not actually restart this run (`StartedAt` older than the deploy = stale code). So you no longer have to remember the steps below — but here's *why* they're needed, because the trap is non-obvious:
+
+> **`docker compose pull` does not refresh code on this box, and `git pull` alone does not either.** The compose stack **builds api / web / agent-query locally** (no registry), so `docker compose pull` is a no-op for them and `up -d` will **not** recreate a container whose (cached, unchanged) image ID didn't move. Those three services **bind-mount** `/opt/provenance` and run the source directly — so after a `git pull`, the running Node process keeps executing the *old* code it loaded at its last start even though the new code is on disk. (This cost ~30 min on 2026-05-30: an agent-grant FK kept failing against api code that was already fixed on disk but not reloaded. The integrity check now catches exactly this.)
+
+Manual equivalent / fallback if you're not using the script:
+1. `cd /opt/provenance && git pull --ff-only origin main`
+2. `docker compose -f docker-compose.ec2-dev.yml -f docker-compose.demo.yml --env-file .env.ec2 up -d --force-recreate --no-deps api agent-query web` (force the processes to reload the bind-mounted source — `--force-recreate`, not a plain `up -d` or `pull`)
+3. `docker compose ... restart caddy` (Caddy caches upstream container IPs; restart it after the app containers move)
+4. `docker compose ... run --rm flyway-migrate` if the pull brought new migrations
+5. Verify each app container restarted: `docker inspect -f '{{.State.StartedAt}}' $(docker compose ... ps -q api)` should be just now. Then re-run the smoke test.
 
 ---
 
