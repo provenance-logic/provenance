@@ -22,7 +22,7 @@ A few things that are not bugs but bite the first time:
 2. **Separate browsers.** Chrome + Firefox + Safari, one persona each. Works in a pinch.
 3. **Separate incognito / private windows.** Chrome incognito windows have isolated sessions per *window* (not per tab). Safari private windows share state across private windows — only one Safari private window at a time. Use Chrome incognito or Firefox private windows for this.
 
-**Have the demo box started before the demo.** Cold-start from `aws ec2 start-instances` takes ~2 min. Land the prep before audience joins.
+**Have the demo box started before the demo.** Cold-start from `aws ec2 start-instances` takes ~2 min. Land the prep before audience joins. *(As of 2026-05-30 the box is being kept standing for a self-paced walkthrough, so it's already up — no cold start needed for now. This caveat applies whenever it's been cycled down.)*
 
 **Verify the state is pristine** before each new demo. The signals in Section 6 (unread notifications, pending requests) get *consumed* by walking the demo, so a clean state matters for the second rehearsal. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the routine between-rehearsals path.
 
@@ -288,7 +288,7 @@ The story is "**we made your job a software problem.**"
 
 - **Fictional warehouse endpoints.** The seeded connection details point at `warehouse.acme.example.com` (SQL `host`), `api.acme.example.com` (REST `baseUrl`), and similar. They're illustrative — the generated snippets are real and copy-pasteable, but the hosts won't resolve. Mention "these are illustrative — the *contract* is what's enforced, the *host* points at the domain's own infrastructure." (Snippets also leave credentials as `<set via env>` placeholders by design — the platform never injects plaintext secrets.)
 - **Synthetic classification-change notification.** Section 5 and Section 6 cover this in detail: the Marketing Copilot `classification_changed` notification is a seeded *signal*, not a real history entry. The agent's current classification is `observed`. Don't drill into the agent expecting to see the change.
-- **Demo URL ≠ persistent.** The demo box is stop/start lifecycle, not always-on. `demo.provenancelogic.com` resolves only when the instance is started; expect a 2-min warm-up.
+- **Demo URL ≠ permanently persistent.** The demo box is stop/start lifecycle, not a guaranteed always-on endpoint. `demo.provenancelogic.com` resolves only when the instance is started; expect a ~2-min warm-up after a cold start. *(Currently standing as of 2026-05-30 — up now — but don't treat the URL as a durable link-out; teardown remains the end-state.)*
 - **Agent Autonomous tier.** Don't try to promote any agent to Autonomous live — there's no UI workflow for it yet and it requires a governance role with a non-null reason. If asked, say "this is gated to manual intervention by design."
 - **Dev-mode UI affordances.** The frontend is currently served by Vite in dev mode. There may be subtle dev-mode banners or affordances visible. Production-mode demo image is a deferred follow-up.
 - **Lineage time-travel and PNG export.** Not yet shipped (ADR-003 follow-ups). If someone asks "can you show this graph at last Friday's snapshot?" — answer "F5.17, on the roadmap, not in this build."
