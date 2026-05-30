@@ -20,6 +20,8 @@ This is the procedural document. Read it at T-24h before a demo. Follow the numb
 
 **Important:** Terraform state is local. Back up `terraform.tfstate` after provisioning. If the file is lost, you will need to manually destroy the EC2 instance from the AWS console.
 
+> **Current state (2026-05-30):** the demo box is **provisioned and kept running** for a self-paced walkthrough — *not* torn down after a single demo. Teardown (Step 5) remains the lifecycle end-state; it's just deferred while the box is in active use. The strategy is unchanged (on-demand, per ADR-004) — the box simply isn't always cycled down between sessions when someone is iterating on it. To bring a standing box up to a newer `main`, see "Updating a standing box" under Step 3.
+
 ---
 
 ## DNS and Elastic IP — one-time setup
@@ -159,6 +161,19 @@ If any step fails, the script exits with a non-zero code and a message identifyi
 > `demo-sync.sh` re-runs `npm run seed` every time it executes. Whether that is data-preserving depends entirely on whether the seed API endpoints are implemented as upserts (idempotent) or plain inserts (duplicating on each run). As of this runbook, that behavior has not been independently verified.
 > Before running `demo-sync.sh` against a demo that already has live demo state (users who have clicked around, agents that have emitted lineage, etc.), either: (a) verify the seed endpoints are upsert-based by inspecting `POST /seed/*` handlers and their tests, or (b) run `demo-reset.sh --hard` first so the sync starts from a truncated base. The safe rule: treat `demo-sync.sh` as a between-demos operation, not a during-demo operation.
 
+### Updating a standing box (the deploy gotcha)
+
+> **`docker compose pull` does not refresh code on this box, and `git pull` alone does not either.** The compose stack **builds api / web / agent-query locally** (no registry), so `demo-sync.sh`'s `docker compose pull` is a no-op for them and `up -d` will **not** recreate a container whose (cached, unchanged) image ID didn't move. Worse, those three services **bind-mount** `/opt/provenance` and run the source directly — so after a `git pull`, the running Node process keeps executing the *old* code it loaded at its last start even though the new code is on disk.
+>
+> To deploy a merged `main` to a standing box:
+> 1. `cd /opt/provenance && git pull --ff-only origin main`
+> 2. `docker compose -f docker-compose.ec2-dev.yml -f docker-compose.demo.yml --env-file .env.ec2 restart api agent-query web` (force the processes to reload the bind-mounted source — `restart`, not just `up -d`)
+> 3. `docker compose ... restart caddy` (Caddy caches upstream container IPs; restart it after the app containers move)
+> 4. `docker compose ... run --rm flyway-migrate` if the pull brought new migrations
+> 5. Re-run the smoke test
+>
+> This cost ~30 min on 2026-05-30 (an agent-grant FK kept failing against api code that was already fixed on disk but not reloaded).
+
 ---
 
 ## Step 4 - Run the Smoke Test
@@ -168,6 +183,17 @@ The smoke test runs automatically at the end of `demo-sync.sh`. You can also run
 ```bash
 bash infrastructure/scripts/demo-smoke-test.sh https://demo.provenancelogic.com
 ```
+
+> **Standalone runs need `SMOKE_AGENT_SECRET` for the agent layer.** `demo-sync.sh` resolves the Marketing Copilot client secret from Keycloak before calling the smoke test (its step 6); a bare `demo-smoke-test.sh` invocation does not, so the **agent** layer fails with `SMOKE_AGENT_SECRET not set` (the other five layers still run). To run the agent layer standalone, resolve it first:
+> ```bash
+> set -a; source infrastructure/docker/.env.ec2; set +a
+> TOK=$(curl -sS -X POST "https://${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}/realms/provenance/protocol/openid-connect/token" \
+>   -d grant_type=client_credentials -d client_id="${KEYCLOAK_ADMIN_CLIENT_ID:-provenance-admin}" \
+>   -d client_secret="$KEYCLOAK_ADMIN_CLIENT_SECRET" | jq -r .access_token)
+> CU=$(curl -sS -H "Authorization: Bearer $TOK" "https://${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}/admin/realms/provenance/clients?clientId=agent-acme-marketing-copilot" | jq -r '.[0].id')
+> export SMOKE_AGENT_SECRET=$(curl -sS -H "Authorization: Bearer $TOK" "https://${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}/admin/realms/provenance/clients/$CU/client-secret" | jq -r .value)
+> bash infrastructure/scripts/demo-smoke-test.sh https://demo.provenancelogic.com
+> ```
 
 The smoke test checks six layers:
 
@@ -217,13 +243,15 @@ bash infrastructure/scripts/demo-reset.sh --soft
 
 Run the smoke test after the soft reset before proceeding to the next demo.
 
-> **⚠️ Currently blocked by [B-060](../bugs/open.md#B-060) (filed 2026-05-18).** `softReset` references columns/tables that don't exist in the schema (`event_at` on `audit.audit_log`, `created_at` on `access.access_requests`, plus `observability_snapshots` and `lineage.emission_events` which aren't in any migration). The first DELETE throws and the transaction rolls back; the command exits non-zero every time. Working fallback: `bash infrastructure/scripts/demo-sync.sh main` re-runs the seed idempotently against current main and is what was used to refresh the demo box on 2026-05-18. Remove this callout when B-060 lands.
+> **⚠️ Soft reset currently blocked by [B-060](../bugs/open.md#B-060) (filed 2026-05-18).** `softReset` references columns/tables that don't exist in the schema (`event_at` on `audit.audit_log`, `created_at` on `access.access_requests`, plus `observability_snapshots` and `lineage.emission_events` which aren't in any migration). The first DELETE throws and the transaction rolls back; the command exits non-zero every time. Remove this callout when B-060 lands.
+>
+> **Working clean-slate path: `demo-reset.sh --hard`.** Hard reset is now **safe and repeatable on an already-seeded box** as of 2026-05-30 ([B-078](../bugs/resolved.md#B-078) + [B-085](../bugs/resolved.md#B-085) fixed in #234) — it no longer truncates `flyway_schema_history` (which used to break the next boot) and `createAgentClient` is idempotent (it used to 500 on the orphaned Keycloak agent client). It truncates **all** platform schemas (incl. `consent` + `notifications`) and reseeds from scratch — so use it when you want a pristine base, not to preserve mid-walkthrough state. `bash infrastructure/scripts/demo-sync.sh main` is the alternative (idempotent re-seed without truncation). **Both require the box to be on #234+ code** (see "Updating a standing box") for the hard-reset fixes to apply.
 
 ---
 
 ## Step 5 - Tear Down After Final Demo
 
-After the last demo on a provisioned instance, destroy it. Do not leave it running idle.
+After you're done with a provisioned instance, destroy it — don't leave it running idle indefinitely (cost + drift). **Exception:** while the box is in active use (a self-paced walkthrough or a multi-day iteration window, as on 2026-05-30), it's fine to keep it running between sessions; tear down when that window closes. Teardown is still the lifecycle end-state, just not after every single demo.
 
 ```bash
 cd infrastructure/terraform/demo

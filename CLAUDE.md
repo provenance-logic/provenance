@@ -251,7 +251,7 @@ Internal dev deployment (not continuously reachable, EC2 shut down when not in a
 
 ## Demo Environment
 
-The demo environment is an on-demand clone provisioned per demo from git, with curated seed data. It is not a persistent staging tier. It spins up at T-24h before a demo and tears down after.
+The demo environment is an on-demand clone provisioned per demo from git, with curated seed data. It is not a persistent staging tier — teardown is the lifecycle end-state (ADR-004). It typically spins up at T-24h before a demo and tears down after; while it's in active use (e.g. a self-paced walkthrough or a multi-day iteration window), it may be kept running between sessions rather than cycled down each time. To push merged `main` to a *standing* box you must `git pull` **and** `docker compose restart api agent-query web` — the stack builds images locally and those services bind-mount the source, so neither `docker compose pull` nor `up -d` reloads new code on its own (then restart Caddy). `seed:reset:hard` is safe + repeatable on an already-seeded box as of 2026-05-30 (B-078 + B-085).
 
 - Domain: https://demo.provenancelogic.com
 - Keycloak: https://auth-demo.provenancelogic.com
