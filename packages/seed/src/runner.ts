@@ -10,6 +10,7 @@ import { seedAgents } from './agents/index.js';
 import { seedLineageEdges } from './lineage/index.js';
 import { seedSlos } from './slos/index.js';
 import { seedAccessRequests, seedAccessGrants } from './access/index.js';
+import { seedConnectionReferences } from './consent/index.js';
 import { seedNotifications } from './notifications/index.js';
 
 interface RunContext {
@@ -198,6 +199,13 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   }
 
   logger.info('seed: agents');
+  // agent.agentId is the principal identifier throughout the platform — the
+  // /seed/agents endpoint creates the matching identity.principals row so the
+  // FK on access_grants.grantee_principal_id and
+  // consent.connection_references.agent_id is satisfiable. Map agentSlug →
+  // agentId so the grant + connection-reference walks below can resolve agent
+  // grantees the same way principalIdByEmail resolves human ones.
+  const agentIdByAgentSlug = new Map<string, string>();
   for (const agent of seedAgents) {
     const orgId = orgIdBySlug.get(agent.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${agent.orgSlug}`);
@@ -206,7 +214,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
     // This ensures the `agent_id` claim in the JWT equals the platform agentId
     // (which access grants reference), and that the token carries the correct
     // `provenance_principal_type` claim. See B-076.
-    await ctx.api.post('/seed/agents', {
+    const res = await ctx.api.post<{ id: string }>('/seed/agents', {
       orgId,
       agentSlug: agent.agentSlug,
       displayName: agent.displayName,
@@ -214,6 +222,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       trustClassification: agent.trustClassification,
       oversightContactEmail: agent.oversightContactEmail,
     });
+    agentIdByAgentSlug.set(agent.agentSlug, res.id);
   }
 
   logger.info('seed: lineage');
@@ -321,13 +330,23 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   for (const grant of seedAccessGrants) {
     const productId = productIdBySlug.get(grant.productSlug);
     const orgId = orgIdByProductSlug.get(grant.productSlug);
-    const granteeId = principalIdByEmail.get(grant.granteeEmail);
+    // XOR: exactly one of granteeEmail / granteeAgentSlug must be set.
+    if (!grant.granteeEmail === !grant.granteeAgentSlug) {
+      throw new Error(
+        `access grant must set exactly one of granteeEmail or granteeAgentSlug: ${grant.productSlug}`,
+      );
+    }
+    const granteeId = grant.granteeAgentSlug
+      ? agentIdByAgentSlug.get(grant.granteeAgentSlug)
+      : principalIdByEmail.get(grant.granteeEmail!);
     const grantedById = principalIdByEmail.get(grant.grantedByEmail);
     if (!productId || !orgId) {
       throw new Error(`access grant references unknown product: ${grant.productSlug}`);
     }
     if (!granteeId) {
-      throw new Error(`access grant references unknown grantee: ${grant.granteeEmail}`);
+      throw new Error(
+        `access grant references unknown grantee: ${grant.granteeAgentSlug ?? grant.granteeEmail}`,
+      );
     }
     if (!grantedById) {
       throw new Error(`access grant references unknown grantor: ${grant.grantedByEmail}`);
@@ -339,6 +358,77 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       grantedByPrincipalId: grantedById,
       grantedAt: daysAgoIso(grant.grantedDaysAgo),
       expiresAt: grant.expiresInDays !== undefined ? daysAgoIso(-grant.expiresInDays) : undefined,
+    });
+  }
+
+  logger.info('seed: connection references');
+  // Connection references are the per-use-case authorization on top of the
+  // grant (Domain 12 — both required for any product-bound MCP tool call).
+  // The seed walks references after grants so each ref can look up the grant
+  // it composes with via the /seed/connection-references endpoint's internal
+  // resolution.
+  //
+  // Inline content validation — the API endpoint enforces the same rules but
+  // this gives a developer-friendly error tied to the seed entry rather than
+  // an opaque HTTP 4xx during seed-time debugging.
+  const VALID_USE_CASES = new Set([
+    'Reporting and Analytics', 'Model Training', 'Pipeline Input',
+    'Audit and Compliance', 'Product Development', 'Operational Monitoring',
+    'Research', 'Integration',
+  ]);
+  for (const ref of seedConnectionReferences) {
+    if (ref.purposeElaboration.length < 50) {
+      throw new Error(
+        `connection reference ${ref.agentSlug}/${ref.productSlug}: purposeElaboration must be ≥ 50 chars (got ${ref.purposeElaboration.length})`,
+      );
+    }
+    if (!VALID_USE_CASES.has(ref.useCaseCategory)) {
+      throw new Error(
+        `connection reference ${ref.agentSlug}/${ref.productSlug}: invalid useCaseCategory '${ref.useCaseCategory}'`,
+      );
+    }
+    if (ref.approvedScope.ports.length === 0) {
+      throw new Error(
+        `connection reference ${ref.agentSlug}/${ref.productSlug}: approvedScope.ports must be non-empty`,
+      );
+    }
+    if (ref.requestedDurationDays <= 0 || ref.requestedDaysAgo < 1) {
+      throw new Error(
+        `connection reference ${ref.agentSlug}/${ref.productSlug}: requestedDurationDays must be > 0 and requestedDaysAgo must be >= 1`,
+      );
+    }
+  }
+  for (const ref of seedConnectionReferences) {
+    const productId = productIdBySlug.get(ref.productSlug);
+    const orgId = orgIdByProductSlug.get(ref.productSlug);
+    const agentId = agentIdByAgentSlug.get(ref.agentSlug);
+    const approverId = principalIdByEmail.get(ref.approverEmail);
+    if (!productId || !orgId) {
+      throw new Error(`connection reference references unknown product: ${ref.productSlug}`);
+    }
+    if (!agentId) {
+      throw new Error(`connection reference references unknown agent: ${ref.agentSlug}`);
+    }
+    if (!approverId) {
+      throw new Error(`connection reference references unknown approver: ${ref.approverEmail}`);
+    }
+    // Approval lands one day after request; activation = approval (no
+    // grace-period delay). Expiry is requestedDurationDays from the approval
+    // moment — produces a stable absolute timestamp so re-runs are idempotent.
+    const approvalDaysAgo = Math.max(0, ref.requestedDaysAgo - 1);
+    const expiresFromNowDays = ref.requestedDurationDays - approvalDaysAgo;
+    await ctx.api.post('/seed/connection-references', {
+      orgId,
+      agentPrincipalId: agentId,
+      productId,
+      approverPrincipalId: approverId,
+      useCaseCategory: ref.useCaseCategory,
+      purposeElaboration: ref.purposeElaboration,
+      approvedScope: ref.approvedScope,
+      requestedDurationDays: ref.requestedDurationDays,
+      requestedAt: daysAgoIso(ref.requestedDaysAgo),
+      approvedAt: daysAgoIso(approvalDaysAgo),
+      expiresAt: daysAgoIso(-expiresFromNowDays),
     });
   }
 

@@ -44,4 +44,16 @@ export const betaIndustriesAccessGrants: SeedAccessGrant[] = [
     grantedDaysAgo: 90,
     expiresInDays: 5,
   },
+  // Risk Assistant grant — paired with the tight-scoped connection reference
+  // in packages/seed/src/consent/beta-industries-consent.ts. The reference is
+  // scoped to discovery ports only, so get_trust_score and get_slo_summary on
+  // this product deny with CONNECTION_REFERENCE_SCOPE_VIOLATION (the
+  // demo-able scope-violation beat).
+  {
+    productSlug: 'credit-risk-decisions',
+    granteeAgentSlug: 'beta-risk-assistant',
+    grantedByEmail: 'risk-lead@beta.example.com',
+    grantedDaysAgo: 10,
+    expiresInDays: 30,
+  },
 ];

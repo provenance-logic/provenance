@@ -130,12 +130,14 @@ The Lineage Explorer shows this small but realistic DAG when you open any of the
 
 ## 5. Agents (2 seeded)
 
-| Agent | Org | Trust classification | Oversight contact | Notable |
-|---|---|---|---|---|
-| Marketing Copilot | Acme Corp | `observed` | marketing-lead@acme.example.com | Recent classification change from `observed` → `supervised` (visible in governance@acme's notifications) |
-| Risk Assistant | Beta Industries | `observed` | compliance@beta.example.com | Held at Observed by `beta.risk-domain-observed-only` policy — promoting it requires governance grant |
+| Agent | Org | Trust classification | Oversight contact | Active grants + refs | Notable |
+|---|---|---|---|---|---|
+| Marketing Copilot | Acme Corp | `observed` | marketing-lead@acme.example.com | Customer 360 (discovery+observability, 180d), Daily Revenue Recognition (discovery+observability, 90d) | Recent classification change from `observed` → `supervised` (visible in governance@acme's notifications). Broad-scope refs let the full product-bound MCP tool surface work |
+| Risk Assistant | Beta Industries | `observed` | compliance@beta.example.com | Credit Risk Decisions (**discovery ONLY**, 30d) | Held at Observed by `beta.risk-domain-observed-only` policy. **Discovery-only scope is deliberate** — drives the `CONNECTION_REFERENCE_SCOPE_VIOLATION` demo when `get_trust_score` (observability scope) is called on the same product |
 
 **Demo angle.** Open the agent registry. Both agents have JWT-based authentication (ADR-002). The Marketing Copilot has a classification-change audit trail you can show. The Risk Assistant's "stuck at Observed by policy" is the right hook for the federated governance story.
+
+**The agents have *meaningful* grants + connection references** (seeded 2026-05-30) — they are not skeleton identities. See Section 9 for the exact tool×product map.
 
 ---
 
@@ -198,7 +200,24 @@ Best demo flow: log in as `marketing-lead@acme.example.com` → Notifications �
 
 Phase 4 is live. From any agent-registered Keycloak client (the two seeded ones above), the MCP SSE endpoint at `https://demo.provenancelogic.com/mcp/sse` (or port 3002 direct on the dev box) exposes 9 tools: `list_products`, `get_product`, `get_trust_score`, `get_lineage`, `get_slo_summary`, `search_products`, `semantic_search`, `register_agent`, `get_agent_status`.
 
-**Demo angle.** If your audience is technical, do a live MCP tool call from Claude Code or a sample MCP CLI. The "human-discoverable AND agent-discoverable, governed identically" claim becomes tangible.
+**Five tools are exempt from the Domain 12 guard** (`tool-scope-map.ts`): `list_products`, `search_products`, `semantic_search`, `register_agent`, `get_agent_status`. They work for any authenticated agent with no per-product authorization. **Four tools are product-bound:** `get_product` + `get_lineage` (discovery scope), `get_trust_score` + `get_slo_summary` (observability scope). Each requires both an active access grant AND an active connection reference whose `approvedScope.ports` covers the tool's port.
+
+### Tool × product matrix for the seeded agents
+
+| Agent | Product | Tool | Expected outcome | Reason |
+|---|---|---|---|---|
+| Marketing Copilot | (any) | `list_products`, `search_products`, `semantic_search` | ✅ returns data | Exempt tools |
+| Marketing Copilot | customer-360 | `get_product`, `get_lineage`, `get_trust_score`, `get_slo_summary` | ✅ returns data | Active grant + active ref scoped to discovery + observability |
+| Marketing Copilot | revenue-daily | `get_product`, `get_lineage`, `get_trust_score`, `get_slo_summary` | ✅ returns data | Active grant + active ref scoped to discovery + observability |
+| Marketing Copilot | (other Acme products) | any product-bound tool | ❌ `ACCESS_GRANT_NOT_FOUND` | No grant for this product |
+| Risk Assistant | (any) | exempt tools | ✅ returns data | Exempt tools |
+| Risk Assistant | credit-risk-decisions | `get_product`, `get_lineage` | ✅ returns data | Discovery is in approved scope |
+| Risk Assistant | credit-risk-decisions | `get_trust_score`, `get_slo_summary` | ❌ **`CONNECTION_REFERENCE_SCOPE_VIOLATION`** | Observability is NOT in approved scope (deliberate, demo beat) |
+| Risk Assistant | (other Beta products) | any product-bound tool | ❌ `ACCESS_GRANT_NOT_FOUND` | No grant for this product |
+
+**The scope-violation row is the demo's "watch it actually enforce" moment.** Same agent, same product, different tool — and the platform denies because the per-use-case scope says so. Audit row written. Notification fans out to the approver (`compliance@beta.example.com`) plus every governance-role principal in the org.
+
+**Demo angle.** If your audience is technical, do a live MCP tool call from Claude Code or a sample MCP CLI. The "human-discoverable AND agent-discoverable, governed identically" claim becomes tangible — and for the governance-flavored audience, the scope-violation beat makes it visceral.
 
 **Caveat:** the connection-details `endpoint` strings on the products refer to *fictional* hosts (`warehouse.acme.example.com`, `api.beta.example.com`, etc.). Those are illustrative — don't actually click the example client commands expecting them to reach a backing store. The MCP tools themselves *are* real and return real data from the seeded product catalog.
 

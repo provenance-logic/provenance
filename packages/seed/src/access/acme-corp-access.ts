@@ -60,4 +60,23 @@ export const acmeCorpAccessGrants: SeedAccessGrant[] = [
     grantedDaysAgo: 5,
     expiresInDays: 7,
   },
+  // Agent grants — paired with connection references in
+  // packages/seed/src/consent/acme-corp-consent.ts. Without these the
+  // Marketing Copilot agent's product-bound MCP tools all deny with
+  // ACCESS_GRANT_NOT_FOUND. The grant is the prerequisite; the connection
+  // reference is the per-use-case authorization (Domain 12 — both required).
+  {
+    productSlug: 'customer-360',
+    granteeAgentSlug: 'acme-marketing-copilot',
+    grantedByEmail: 'marketing-lead@acme.example.com',
+    grantedDaysAgo: 25,
+    expiresInDays: 180,
+  },
+  {
+    productSlug: 'revenue-daily',
+    granteeAgentSlug: 'acme-marketing-copilot',
+    grantedByEmail: 'finance-lead@acme.example.com',
+    grantedDaysAgo: 18,
+    expiresInDays: 90,
+  },
 ];

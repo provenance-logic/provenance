@@ -136,13 +136,53 @@ export interface SeedAccessRequest {
 
 export interface SeedAccessGrant {
   productSlug: string;
-  granteeEmail: string;
+  // Exactly one of these two must be set — the runner enforces XOR and
+  // resolves human grantees via principalIdByEmail and agent grantees via
+  // agentIdByAgentSlug (agents use agent.agentId as the principal id).
+  granteeEmail?: string;
+  granteeAgentSlug?: string;
   grantedByEmail: string;
   // Days from "now" the grant was issued — populates granted_at.
   grantedDaysAgo: number;
   // Days from "now" the grant expires (positive = future). Omit for
   // open-ended grants.
   expiresInDays?: number;
+}
+
+// Per CLAUDE.md Domain 12 / PRD F12, the use-case taxonomy has 8 defaults.
+// Keep this in sync with the API enum and the governance studio dropdown.
+export type SeedUseCaseCategory =
+  | 'Reporting and Analytics'
+  | 'Model Training'
+  | 'Pipeline Input'
+  | 'Audit and Compliance'
+  | 'Product Development'
+  | 'Operational Monitoring'
+  | 'Research'
+  | 'Integration';
+
+export type SeedConnectionRefPortScope = 'discovery' | 'observability';
+
+export interface SeedConnectionReference {
+  agentSlug: string;
+  productSlug: string;
+  // One of the 8 governance-defined defaults.
+  useCaseCategory: SeedUseCaseCategory;
+  // Free-text purpose — runner asserts ≥ 50 chars to match the API guard
+  // (F12 minimum elaboration length).
+  purposeElaboration: string;
+  // The human who approved. Must be a seeded principal in the same org.
+  approverEmail: string;
+  // Port scope grants. Narrower scopes (e.g. ['discovery'] only) drive
+  // SCOPE_VIOLATION denial demos when the agent calls an out-of-scope tool.
+  approvedScope: { ports: SeedConnectionRefPortScope[] };
+  // Per F12 default max by classification — Observed/Internal default is 180,
+  // Observed/Restricted is 30. Keep entries within those bounds.
+  requestedDurationDays: number;
+  // Days from "now" the reference was requested — populates requested_at.
+  // approved_at + activated_at land one day later (always pre-approved in
+  // the seed).
+  requestedDaysAgo: number;
 }
 
 // Notification category strings duplicated here so the seed package
