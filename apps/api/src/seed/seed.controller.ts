@@ -34,6 +34,7 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { NotificationEntity } from '../notifications/entities/notification.entity.js';
+import { ConnectionReferenceEntity } from '../consent/entities/connection-reference.entity.js';
 import type { AccessRequestStatus, NotificationCategory } from '@provenance/types';
 import { TrustScoreService } from '../trust-score/trust-score.service.js';
 import { LineageService } from '../lineage/lineage.service.js';
@@ -177,6 +178,20 @@ interface SeedAccessGrantDto {
   expiresAt?: string;
 }
 
+interface SeedConnectionReferenceDto {
+  orgId: string;
+  agentPrincipalId: string;
+  productId: string;
+  approverPrincipalId: string;
+  useCaseCategory: string;
+  purposeElaboration: string;
+  approvedScope: { ports: Array<'discovery' | 'observability'> };
+  requestedDurationDays: number;
+  requestedAt: string;
+  approvedAt: string;
+  expiresAt: string;
+}
+
 interface SeedNotificationDto {
   orgId: string;
   recipientPrincipalId: string;
@@ -227,6 +242,8 @@ export class SeedController {
     private readonly accessRequestRepo: Repository<AccessRequestEntity>,
     @InjectRepository(NotificationEntity)
     private readonly notificationRepo: Repository<NotificationEntity>,
+    @InjectRepository(ConnectionReferenceEntity)
+    private readonly connectionRefRepo: Repository<ConnectionReferenceEntity>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly trustScoreService: TrustScoreService,
     private readonly lineageService: LineageService,
@@ -604,10 +621,32 @@ export class SeedController {
     // already provisioned on the first run, and re-running createAgentClient
     // would throw a 409. The agent identity row's keycloakClientProvisioned
     // flag is the authoritative record.
+    //
+    // Self-heal: pre-existing agents from older seed runs (before this
+    // commit) were created WITHOUT a matching identity.principals row.
+    // Without that row, any access_grant insert against this agent FK-fails.
+    // Ensure the principals row exists for every agent we return, new or old.
     const existing = await this.agentRepo.findOne({
       where: { orgId: dto.orgId, displayName: dto.displayName },
     });
-    if (existing) return { id: existing.agentId };
+    if (existing) {
+      const existingPrincipal = await this.principalRepo.findOne({
+        where: { id: existing.agentId },
+      });
+      if (!existingPrincipal) {
+        await this.principalRepo.save(
+          this.principalRepo.create({
+            id: existing.agentId,
+            orgId: dto.orgId,
+            principalType: 'ai_agent',
+            keycloakSubject: `agent:${existing.agentId}`,
+            email: null,
+            displayName: dto.displayName,
+          }),
+        );
+      }
+      return { id: existing.agentId };
+    }
 
     const oversightPrincipal = await this.principalRepo.findOne({
       where: { orgId: dto.orgId, email: dto.oversightContactEmail },
@@ -618,12 +657,20 @@ export class SeedController {
       );
     }
 
-    // 1. Write the agent identity + initial classification rows in a single
-    //    transaction. keycloakClientProvisioned starts false and is set to true
-    //    after the Keycloak call succeeds (step 2).
+    // 1. Write the agent identity + initial classification rows + the matching
+    //    identity.principals row in a single transaction. The principals row
+    //    is required so access_grants.grantee_principal_id and
+    //    consent.connection_references.agent_id (both FK to identity.principals)
+    //    are satisfiable when the agent receives a grant or a reference. The
+    //    application uses agent.agentId as the principal id throughout
+    //    (agents.service, consent.service:318, legacy-migration:153,
+    //    jwt-auth.guard:61), so we save the principal with id=agent.agentId.
+    //    keycloakClientProvisioned starts false and is set to true after the
+    //    Keycloak call succeeds (step 2).
     const agent = await this.dataSource.transaction(async (em) => {
       const agentRepo = em.getRepository(AgentIdentityEntity);
       const classRepo = em.getRepository(AgentTrustClassificationEntity);
+      const principalRepo = em.getRepository(PrincipalEntity);
 
       const saved = await agentRepo.save(
         agentRepo.create({
@@ -649,6 +696,25 @@ export class SeedController {
           reason: 'Seeded from @provenance/seed',
         }),
       );
+
+      // Idempotent on (id) — re-seeding the same agent finds the row and
+      // skips the insert. keycloak_subject uses an `agent:<id>` sentinel so it
+      // is unique without colliding with any human user's Keycloak subject.
+      const existingPrincipal = await principalRepo.findOne({
+        where: { id: saved.agentId },
+      });
+      if (!existingPrincipal) {
+        await principalRepo.save(
+          principalRepo.create({
+            id: saved.agentId,
+            orgId: dto.orgId,
+            principalType: 'ai_agent',
+            keycloakSubject: `agent:${saved.agentId}`,
+            email: null,
+            displayName: dto.displayName,
+          }),
+        );
+      }
 
       return saved;
     });
@@ -901,6 +967,105 @@ export class SeedController {
     );
     // grantedAt is on a CreateDateColumn — same pattern as access requests.
     await this.accessGrantRepo.update(saved.id, { grantedAt });
+    return { id: saved.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 10b. Connection references (Domain 12)
+  // ---------------------------------------------------------------------------
+  //
+  // Seeds an active connection reference for an agent on a product. The
+  // reference composes with the prior access grant — both required for any
+  // product-bound MCP tool call (CLAUDE.md: enforcement is AND, never OR).
+  // Writes the row directly, bypassing the request/approve state machine in
+  // consent.service. This mirrors how /seed/access-grants bypasses the
+  // request/approve flow for grants. No outbox row is written; the AQL cache
+  // cold-loads from the API on first agent request — same path used at AQL
+  // startup, so refs become enforceable without a Redpanda fanout.
+  // Idempotent on (orgId, agentId, productId, state IN ('pending','active')).
+
+  @Public()
+  @Post('connection-references')
+  @HttpCode(HttpStatus.OK)
+  async connectionReference(
+    @Body() dto: SeedConnectionReferenceDto,
+  ): Promise<{ id: string }> {
+    if (dto.purposeElaboration.length < 50) {
+      throw new NotFoundException(
+        `Connection reference purposeElaboration must be at least 50 characters (got ${dto.purposeElaboration.length})`,
+      );
+    }
+    if (dto.approvedScope.ports.length === 0) {
+      throw new NotFoundException(
+        'Connection reference approvedScope.ports must be non-empty',
+      );
+    }
+
+    // Resolve the active grant — refs require an active grant per Domain 12.
+    const grant = await this.accessGrantRepo.findOne({
+      where: {
+        orgId: dto.orgId,
+        productId: dto.productId,
+        granteePrincipalId: dto.agentPrincipalId,
+        revokedAt: IsNull(),
+      },
+    });
+    if (!grant) {
+      throw new NotFoundException(
+        `Cannot seed connection reference: no active access grant for agent ${dto.agentPrincipalId} on product ${dto.productId}. Seed the grant first.`,
+      );
+    }
+
+    // Idempotency: re-seeding finds the existing pending-or-active row.
+    const existing = await this.connectionRefRepo
+      .createQueryBuilder('ref')
+      .where('ref.orgId = :orgId', { orgId: dto.orgId })
+      .andWhere('ref.agentId = :agentId', { agentId: dto.agentPrincipalId })
+      .andWhere('ref.productId = :productId', { productId: dto.productId })
+      .andWhere('ref.state IN (:...states)', { states: ['pending', 'active'] })
+      .getOne();
+    if (existing) return { id: existing.id };
+
+    // Resolve the product owner — owningPrincipalId on the reference per F12.
+    const product = await this.productRepo.findOne({
+      where: { id: dto.productId, orgId: dto.orgId },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product ${dto.productId} not found in org ${dto.orgId}`);
+    }
+
+    const saved = await this.connectionRefRepo.save(
+      this.connectionRefRepo.create({
+        orgId: dto.orgId,
+        agentId: dto.agentPrincipalId,
+        productId: dto.productId,
+        productVersionId: null,
+        accessGrantId: grant.id,
+        owningPrincipalId: product.ownerPrincipalId,
+        state: 'active',
+        causedBy: null,
+        requestedAt: new Date(dto.requestedAt),
+        approvedAt: new Date(dto.approvedAt),
+        activatedAt: new Date(dto.approvedAt),
+        suspendedAt: null,
+        expiresAt: new Date(dto.expiresAt),
+        terminatedAt: null,
+        approvedByPrincipalId: dto.approverPrincipalId,
+        governancePolicyVersion: null,
+        useCaseCategory: dto.useCaseCategory,
+        purposeElaboration: dto.purposeElaboration,
+        intendedScope: dto.approvedScope,
+        dataCategoryConstraints: null,
+        requestedDurationDays: dto.requestedDurationDays,
+        approvedScope: dto.approvedScope,
+        approvedDataCategoryConstraints: null,
+        approvedDurationDays: dto.requestedDurationDays,
+        modifiedByApprover: false,
+        denialReason: null,
+        deniedByPrincipalId: null,
+        connectionPackage: null,
+      }),
+    );
     return { id: saved.id };
   }
 

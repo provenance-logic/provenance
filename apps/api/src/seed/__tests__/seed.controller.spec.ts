@@ -18,6 +18,7 @@ import { SloEvaluationEntity } from '../../observability/entities/slo-evaluation
 import { AccessGrantEntity } from '../../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../../access/entities/access-request.entity.js';
 import { NotificationEntity } from '../../notifications/entities/notification.entity.js';
+import { ConnectionReferenceEntity } from '../../consent/entities/connection-reference.entity.js';
 import { TrustScoreService } from '../../trust-score/trust-score.service.js';
 import { LineageService } from '../../lineage/lineage.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
@@ -108,6 +109,7 @@ describe('SeedController — POST /seed/principals (B-048 Keycloak attribute wri
         { provide: getRepositoryToken(AccessGrantEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(AccessRequestEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(NotificationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(ConnectionReferenceEntity), useValue: noopRepo() },
         { provide: TrustScoreService, useValue: noopService() },
         { provide: LineageService, useValue: noopService() },
         { provide: SearchIndexingService, useValue: noopService() },
@@ -272,6 +274,7 @@ describe('SeedController — POST /seed/agents (B-076 KC client provisioning)', 
         { provide: getRepositoryToken(AccessGrantEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(AccessRequestEntity), useValue: noopRepo() },
         { provide: getRepositoryToken(NotificationEntity), useValue: noopRepo() },
+        { provide: getRepositoryToken(ConnectionReferenceEntity), useValue: noopRepo() },
         { provide: TrustScoreService, useValue: noopService() },
         { provide: LineageService, useValue: noopService() },
         { provide: SearchIndexingService, useValue: noopService() },

@@ -15,6 +15,7 @@ import { SloEvaluationEntity } from '../observability/entities/slo-evaluation.en
 import { AccessGrantEntity } from '../access/entities/access-grant.entity.js';
 import { AccessRequestEntity } from '../access/entities/access-request.entity.js';
 import { NotificationEntity } from '../notifications/entities/notification.entity.js';
+import { ConnectionReferenceEntity } from '../consent/entities/connection-reference.entity.js';
 import { GovernanceModule } from '../governance/governance.module.js';
 import { LineageModule } from '../lineage/lineage.module.js';
 import { TrustScoreModule } from '../trust-score/trust-score.module.js';
@@ -41,6 +42,7 @@ import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
       AccessGrantEntity,
       AccessRequestEntity,
       NotificationEntity,
+      ConnectionReferenceEntity,
     ]),
     GovernanceModule,
     LineageModule,
