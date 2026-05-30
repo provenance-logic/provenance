@@ -47,9 +47,15 @@ export async function hardReset(ctx: HardResetContext): Promise<void> {
   await withDb(config, async (db: Client) => {
     await db.query('BEGIN');
     try {
+      // Every platform schema that the seed writes to. Omitting one leaves
+      // stale rows behind a hard reset (B-085): `consent` and `notifications`
+      // were previously missing, so connection references and notifications
+      // from a prior seed lingered across a `reset:hard`.
       const schemas = [
         'audit',
         'observability',
+        'notifications',
+        'consent',
         'access',
         'lineage',
         'governance',
