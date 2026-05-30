@@ -6,6 +6,25 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-082 — MCP `get_product` returned HTTP 500 (not a structured tool error) when `domain_id` was omitted; `"undefined"` reached a `uuid` column
+
+- **Resolved:** 2026-05-30 (filed 2026-05-30 during the #226 seed-extension verification).
+- **Severity:** **High** — broke the headline agent-discovery beat. `get_product` is the canonical "tell me about this product" tool and the most natural product-bound call after `list_products`; a 500 (vs a structured MCP error) also misdirected operators toward the connection-reference guard, which actually *passes* before this fired.
+- **Area:** `apps/agent-query/src/mcp/tools.ts` (tool def + dispatch), `apps/agent-query/src/control-plane/control-plane.client.ts` (URL build), `apps/api/src/products/` (new id-only route + service).
+
+**What was wrong (three layers).** `get_product` was the *only* product-bound MCP tool that required `domain_id` (the other three take `product_id` alone). The MCP server didn't enforce `required` from the inputSchema, so a call omitting `domain_id` reached the handler with `args.domain_id === undefined`; `control-plane.client.getProduct` template-strung that into `/organizations/:orgId/domains/undefined/products/:productId`; the control plane accepted the literal `"undefined"` as `:domainId` and fed it to `findOne({ where: { domainId } })` → Postgres `invalid input syntax for type uuid: "undefined"` → 500.
+
+**Fix (A + B + C).**
+- **A — `domain_id` is no longer required.** Added `ProductsService.getProductById(orgId, productId)` (resolves by `(id, orgId)` — `id` is a unique PK, so domain is redundant; stays org-scoped, same tenant boundary) and a new id-only route `GET /organizations/:orgId/products/:productId` (`ProductByIdController`). The AQL `get_product` tool now requires only `product_id` and calls the id-only client method, matching `get_trust_score` / `get_lineage` / `get_slo_summary`.
+- **B — required-arg enforcement at the MCP `tools/call` boundary.** Missing `required` inputSchema fields now return a structured `tool_args_missing` error (`isError: true`) for *every* tool, instead of letting `undefined` flow downstream.
+- **C — `ParseUUIDPipe` on the new route's `:productId`** rejects a non-UUID with 400 rather than letting it hit the database.
+
+**Tests.** AQL: `get_product` requires only `product_id`; handler calls `getProduct(orgId, product_id)`; omitting `product_id` returns `tool_args_missing` and does not dispatch. API: `getProductById` resolves by `(id, orgId)` with no `domainId` filter; 404 when missing.
+
+- **Fix commit:** see PR for `fix/b082-get-product-domain-optional`.
+
+---
+
 ## B-085 — `seed:reset:hard` is not repeatable on a previously-seeded box: orphaned Keycloak agent clients 500 `/seed/agents`, and `consent`/`notifications` schemas are never truncated
 
 - **Resolved:** 2026-05-30, found while redeploying the demo box (the reseed aborted twice — once at `seed: agents`, once at `seed: access grants` downstream).

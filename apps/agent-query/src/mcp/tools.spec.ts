@@ -17,7 +17,8 @@ process.env['KEYCLOAK_URL'] = 'http://localhost:8080';
 process.env['KEYCLOAK_REALM'] = 'provenance';
 process.env['AQL_INTERNAL_TOKEN'] = 'test-internal-token-at-least-16-chars';
 
-import { makeTools, SessionIdentity } from './tools.js';
+import { makeTools, registerTools, SessionIdentity } from './tools.js';
+import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 // ---------------------------------------------------------------------------
 // Mock ControlPlaneClient
@@ -124,5 +125,68 @@ describe('register_agent — session orgId (Phase 5b-6)', () => {
       SESSION.orgId,
       expect.any(Object),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-082: get_product no longer requires domain_id; missing required args
+// return a structured tool error instead of a downstream 500.
+// ---------------------------------------------------------------------------
+
+/** Capture the CallToolRequestSchema handler registered by registerTools. */
+function captureCallToolHandler(client: ReturnType<typeof mockClient>) {
+  let callHandler:
+    | ((req: { params: { name: string; arguments?: Record<string, string> } }) => Promise<{
+        content: { type: string; text: string }[];
+        isError?: boolean;
+      }>)
+    | undefined;
+  const mockServer = {
+    server: {
+      setRequestHandler: (schema: unknown, handler: unknown) => {
+        if (schema === CallToolRequestSchema) {
+          callHandler = handler as typeof callHandler;
+        }
+      },
+    },
+  };
+  // No guard — exercise the dispatch path directly.
+  registerTools(mockServer as never, client as never, SESSION, {});
+  if (!callHandler) throw new Error('CallTool handler was not registered');
+  return callHandler;
+}
+
+describe('B-082 — get_product domain_id optional + required-arg enforcement', () => {
+  it('get_product requires only product_id (domain_id is no longer required)', () => {
+    const tools = makeTools(mockClient() as never, SESSION);
+    const tool = tools.find((t) => t.name === 'get_product');
+    expect(tool!.inputSchema.required).toEqual(['product_id']);
+  });
+
+  it('get_product handler calls client.getProduct with (orgId, product_id) — no domain_id', async () => {
+    const client = mockClient();
+    const tools = makeTools(client as never, SESSION);
+    const tool = tools.find((t) => t.name === 'get_product')!;
+    await tool.handler({ product_id: 'prod-123' });
+    expect(client.getProduct).toHaveBeenCalledWith(SESSION.orgId, 'prod-123');
+  });
+
+  it('returns a structured tool_args_missing error (not a 500) when product_id is omitted', async () => {
+    const client = mockClient();
+    const handler = captureCallToolHandler(client);
+    const res = await handler({ params: { name: 'get_product', arguments: {} } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('tool_args_missing');
+    expect(res.content[0].text).toContain('product_id');
+    // The handler must NOT have been dispatched (no downstream call).
+    expect(client.getProduct).not.toHaveBeenCalled();
+  });
+
+  it('dispatches get_product when product_id is present', async () => {
+    const client = mockClient();
+    const handler = captureCallToolHandler(client);
+    const res = await handler({ params: { name: 'get_product', arguments: { product_id: 'prod-123' } } });
+    expect(res.isError).toBeFalsy();
+    expect(client.getProduct).toHaveBeenCalledWith(SESSION.orgId, 'prod-123');
   });
 });

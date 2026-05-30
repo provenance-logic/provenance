@@ -366,6 +366,32 @@ describe('ProductsService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // getProductById() — B-082: resolve by product id alone, no domain id
+  // ---------------------------------------------------------------------------
+
+  describe('getProductById()', () => {
+    it('resolves by (id, orgId) WITHOUT a domainId filter', async () => {
+      const entity = makeProductEntity({ ports: [makeOutputPortEntity()] });
+      productRepo.findOne.mockResolvedValue(entity);
+
+      const result = await service.getProductById('org-1', 'product-1');
+
+      expect(result.id).toBe('product-1');
+      expect(result.ports).toHaveLength(1);
+      // The where clause must be org-scoped but must NOT carry a domainId —
+      // that's the whole point of the id-only path (B-082).
+      const where = productRepo.findOne.mock.calls.at(-1)![0].where;
+      expect(where).toEqual({ id: 'product-1', orgId: 'org-1' });
+      expect(where).not.toHaveProperty('domainId');
+    });
+
+    it('throws NotFoundException when product does not exist', async () => {
+      productRepo.findOne.mockResolvedValue(null);
+      await expect(service.getProductById('org-1', 'missing')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // updateProduct()
   // ---------------------------------------------------------------------------
 
