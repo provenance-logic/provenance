@@ -53,7 +53,14 @@ export type PortInterfaceType =
 
 export interface SeedPortContract {
   fields: SeedPortField[];
-  connectionDetails: SeedConnectionDetails;
+  // The discriminated `ConnectionDetails` shape the platform actually stores
+  // and consumes (snippet builder, connection package, publishing view). Null
+  // for semantic_query_endpoint ports — they carry no user-supplied connection
+  // details (the snippet builder special-cases them). See B-084: the old
+  // display-shape (`{ interfaceType, endpoint, protocol, exampleClient }`) had
+  // no `kind` discriminator, so every snippet returned
+  // `destination_not_yet_supported`.
+  connectionDetails: SeedConnectionDetails | null;
   howToUse?: string;
 }
 
@@ -65,13 +72,49 @@ export interface SeedPortField {
   pii?: boolean;
 }
 
-export interface SeedConnectionDetails {
-  interfaceType: PortInterfaceType;
-  endpoint: string;
-  protocol: string;
-  authMethod: 'keycloak_oidc' | 'api_key' | 'iam' | 'none';
-  exampleClient: string;
+// Discriminated union mirroring `@provenance/types` `ConnectionDetails` (one
+// member per output port interface type). The seed deliberately does not depend
+// on @provenance/types (see note below), so these are kept in sync by hand.
+// Credential fields are intentionally omitted — seed values are dev/demo
+// placeholders and the snippet builders emit env-var placeholders for secrets.
+export interface SeedSqlJdbcConnectionDetails {
+  kind: 'sql_jdbc';
+  host: string;
+  port: number;
+  database: string;
+  schema: string;
+  authMethod: 'username_password' | 'iam' | 'certificate';
+  sslMode: 'disable' | 'require' | 'verify-ca' | 'verify-full';
+  jdbcUrlTemplate?: string;
 }
+
+export interface SeedRestApiConnectionDetails {
+  kind: 'rest_api';
+  baseUrl: string;
+  authMethod: 'api_key' | 'oauth2' | 'bearer_token' | 'none';
+  apiVersion?: string;
+}
+
+export interface SeedGraphQlConnectionDetails {
+  kind: 'graphql';
+  endpointUrl: string;
+  authMethod: 'api_key' | 'oauth2' | 'bearer_token' | 'none';
+  introspectionEndpoint?: string;
+}
+
+export interface SeedKafkaConnectionDetails {
+  kind: 'streaming_topic';
+  bootstrapServers: string;
+  topic: string;
+  authMethod: 'sasl_plain' | 'sasl_scram' | 'mtls' | 'none';
+  schemaRegistryUrl?: string;
+}
+
+export type SeedConnectionDetails =
+  | SeedSqlJdbcConnectionDetails
+  | SeedRestApiConnectionDetails
+  | SeedGraphQlConnectionDetails
+  | SeedKafkaConnectionDetails;
 
 export interface SeedPort {
   slug: string;

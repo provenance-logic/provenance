@@ -6,6 +6,24 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-084 — Seed stores port connection details in the F10.5 display shape (no `kind` discriminator), so every "How to Consume" snippet returns `destination_not_yet_supported`
+
+- **Resolved:** 2026-05-30, same session surfaced (demo persona walkthrough — the connection-package reveal, the payoff of the whole access-request flow, errored on every interface type for every product).
+- **Severity:** **High** — the per-port snippet (JDBC URL / Python / dbt / Power BI / Tableau) is the consumer-facing payoff of access. Broken for every seeded product and every destination.
+- **Area:** `packages/seed/src/types.ts` (`SeedConnectionDetails`), `packages/seed/src/products/*.ts` (every port), consumed by `apps/api/src/access/connection-package.service.ts` (`buildSnippet`).
+
+**What was wrong.** The seed authored each port's `connectionDetails` in the **F10.5 display shape** — `{ interfaceType, endpoint, protocol, authMethod: 'keycloak_oidc', exampleClient }` — and the `/seed/products` endpoint stored it verbatim as plaintext (`connectionDetailsEncrypted: false`). But the platform's `ConnectionDetails` type (what `declarePort` stores in production and what every consumer reads) is a **discriminated union keyed on `kind`** (`sql_jdbc` | `rest_api` | `graphql` | `streaming_topic` | `file_object_export`), with fields like `host` / `port` / `database` / `schema` / `sslMode`. The display shape has **no `kind`**. So in `buildSnippet`, `switch (details.kind)` saw `undefined` and hit `default: return null` for every destination → `generateSnippetForPort` returned `{ available: false, reason: 'destination_not_yet_supported' }`, rendered as *"A snippet for this tool / interface is not yet generated. Pick another destination."*
+
+`decryptPortDetails` returns the unencrypted object as-is (it isn't an envelope), so the wrong shape passed straight through to the builder. Semantic ports were unaffected (special-cased before the builder).
+
+**Fix.** Redefined `SeedConnectionDetails` as a discriminated union mirroring `@provenance/types` `ConnectionDetails` (the seed deliberately does not import that package — kept in sync by hand), and reshaped all 10 non-semantic seed ports to `{ kind, host/port/database/schema/sslMode | baseUrl | endpointUrl | bootstrapServers/topic, authMethod }`. Semantic ports now carry `connectionDetails: null`. Credential fields are omitted on purpose — the builders emit env-var placeholders for secrets (per ADR-013 / B-081). The union makes `tsc` reject a malformed port, so this class of bug now fails typecheck. `keycloak_oidc` (not a valid platform auth method) mapped to `iam` for SQL and `bearer_token` for REST/GraphQL.
+
+**Same lesson as the deep-link bug ([B-083](#B-083)) found in the same walkthrough:** seed fixtures were authored against an *imagined* shape rather than the type the platform actually consumes, and nothing typechecked the boundary because the seed endpoint accepts `Record<string, unknown>`.
+
+- **Fix commit:** see PR for `fix/seed-port-connection-details`.
+
+---
+
 ## B-083 — Seed notification deep links point at routes that don't exist; the trust-score link feeds a non-UUID to the get-product API → HTTP 500
 
 - **Resolved:** 2026-05-30, same session surfaced (during the on-demand demo persona walkthrough).
