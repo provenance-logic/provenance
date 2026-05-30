@@ -24,7 +24,9 @@ A few things that are not bugs but bite the first time:
 
 **Have the demo box started before the demo.** Cold-start from `aws ec2 start-instances` takes ~2 min. Land the prep before audience joins.
 
-**Verify the state is pristine** before each new demo. The signals in Section 6 (unread notifications, pending requests) get *consumed* by walking the demo, so a clean state matters for the second rehearsal. **⚠️ Do not run `bash infrastructure/scripts/demo-reset.sh --hard` to reset.** B-078 (filed 2026-05-25): the hard reset truncates `flyway_schema_history`, which breaks the next `flyway-migrate` run — the api won't boot the next time anything triggers a container recreate. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the safe path; the root-cause fix for the hard variant is pending.
+**Verify the state is pristine** before each new demo. The signals in Section 6 (unread notifications, pending requests) get *consumed* by walking the demo, so a clean state matters for the second rehearsal. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the routine between-rehearsals path.
+
+**Hard reset is now safe** once PR #234 (B-078 + B-085) is deployed to the box. Before that fix `--hard` (a) truncated `flyway_schema_history` so the api wouldn't boot on the next container recreate (B-078) and (b) wasn't repeatable on an already-seeded box — orphaned Keycloak agent clients 500'd `/seed/agents` (B-085). Both are fixed in #234 (`createAgentClient` deletes-then-recreates; `flyway_schema_history` no longer truncated; `consent`/`notifications` schemas now cleared). The box was hard-reset + reseeded clean on 2026-05-30 (flyway history repaired). If you hard-reset a box still on pre-#234 code, recovery is `DROP TABLE organizations.flyway_schema_history;` → `flyway baseline -baselineVersion=<latest>` → restart api, plus deleting the `agent-acme-marketing-copilot` / `agent-beta-risk-assistant` Keycloak clients before reseeding.
 
 ---
 
@@ -145,6 +147,8 @@ The Lineage Explorer shows this small but realistic DAG when you open any of the
 
 This is what makes the demo feel *alive* — open the right login and there's already an interesting signal demanding attention.
 
+> **All notification deep-links now resolve to real routes** (B-083, fixed 2026-05-30). The deep-link paths quoted below are the *authored* slug forms; at runtime the seed rewrites them to concrete UUID routes, so clicking any notification lands correctly. In particular the finance-lead trust-score notification — previously an **Internal Server Error** — now lands on the Daily Revenue Recognition product page.
+
 ### As `governance@acme.example.com`
 - **Compliance drift detected** on Customer 360 — PII completeness at 93.2% vs 95% policy floor. Deep links to `/governance/compliance`.
 - **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Same signal `finance-lead` sees, fanned out to governance because material trust regressions are governance-relevant across all domains. Deep links to `/marketplace/revenue-daily/trust`.
@@ -156,7 +160,7 @@ This is what makes the demo feel *alive* — open the right login and there's al
 
 ### As `marketing-lead@acme.example.com`
 - **SLO violation** on Campaign Attribution — p95 latency 742ms vs 500ms threshold. Deep links to `/publishing/campaign-attribution/observability`.
-- **Pending access request** from Aiden Chen (analyst) wanting Customer 360 for a Q3 cohort retention dashboard.
+- A **read** `access_request_submitted` notification from Aiden Chen (Customer 360, 30 days ago) sits in history. ⚠️ This is *not* a live pending request — analyst already holds an approved Customer 360 grant. The owner's live approval beat is driven by submitting a fresh request during the demo (see Section 8 / Audience A): analyst requests **Campaign Attribution** (the one Acme product analyst has no grant on, owned by marketing-lead), and marketing-lead approves it live.
 
 ### As `supply-lead@acme.example.com`
 - **SLO violation** on Daily Inventory Snapshot — freshness lag 11.4 hours vs 8 hour threshold. Deep links to `/publishing/inventory-daily/observability`.
@@ -193,7 +197,7 @@ Visible in the Policy Studio when logged in as `governance@acme.example.com` or 
 - **5 access requests** in various states — 3 pending (each one a "click this to approve" moment), 1 approved with history, 1 denied with rationale.
 - **3 active connection references** (Domain 12, added by PR #226) — paired with the 3 agent grants. Two broad-scope (Marketing Copilot, discovery+observability), one tight-scope (Risk Assistant, discovery only — drives the violation beat in Section 9).
 
-Best human demo flow: log in as `marketing-lead@acme.example.com` → Notifications → click the pending request from Aiden Chen → walk through the approval UI → grant emits a *connection package* with curl / JDBC / Python snippets.
+Best human demo flow (the **live request→approve loop**): as `analyst@acme.example.com`, open **Campaign Attribution** → **Request Access** → submit (analyst has no grant on this product, so the button is present; the three products analyst *does* hold grants on — Customer 360, Revenue Daily, Supplier Performance — won't show a Request Access button). Then switch to the owner `marketing-lead@acme.example.com` → **Access Requests** (or the notification) → Approve. Switch back to analyst → the **connection package** is now visible with real curl / JDBC / Python snippets (B-084, fixed 2026-05-30 — snippets render for every interface type now). One coherent flow across both personas; the approver's queue fills *during* the demo rather than relying on a pre-seeded request.
 
 ---
 
@@ -233,10 +237,10 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
 1. **Open marketplace** as `analyst@acme.example.com` (a non-owner consumer). One screen: 10 products across two orgs, with trust scores, owners, lifecycle states, freshness SLAs. *"This is what data looks like when it's a *product*, not a table."*
-2. **Click Customer 360** → show schema + ownership + lineage tab + trust score breakdown. *"Every product has a contract, an owner, a service level."*
-3. **Click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."*
-4. **Switch login to `marketing-lead@acme.example.com`** (the owner). Open **Access Requests** in the left nav (or click the notification — it deep-links to the same page). The pending request from Aiden is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."*
-5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide. *"Approved means *usable*, not 'wait three days for IT.'"*
+2. **Click Customer 360** → show schema + ownership + lineage tab + trust score breakdown. *"Every product has a contract, an owner, a service level."* (Analyst already has a grant here, so its Ports tab shows live connection snippets — good for the contract story, but use a different product for the *request* beat below.)
+3. **Open Campaign Attribution → click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."* (Campaign Attribution is the one Acme product analyst has no grant on — so the Request Access button is present. Customer 360 / Revenue Daily / Supplier Performance already have grants and won't show it.)
+4. **Switch login to `marketing-lead@acme.example.com`** (the owner of Campaign Attribution). Open **Access Requests** in the left nav (or click the notification — deep-links resolve correctly now). The request you just submitted is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."*
+5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide (snippets render for every interface type, B-084 fixed). *"Approved means *usable*, not 'wait three days for IT.'"*
 6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
 7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The **Connection References tab now shows two active references** (customer-360, revenue-daily — seeded by PR #226). *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* ⚠️ The Classification History tab shows only the initial Observed entry — don't promise a visible observed→supervised transition (the seeded notification is a synthetic signal; see Section 5 caveat).
 8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score drop** on Daily Revenue Recognition (0.91 → 0.78, reconciliation match rate breached SLO twice this week). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."*
@@ -277,12 +281,12 @@ The story is "**we made your job a software problem.**"
 
 ### Active (open bugs that will bite if you don't know about them)
 
-- **[B-078](../bugs/open.md#B-078) — do not run `demo-reset.sh --hard`.** It truncates `flyway_schema_history` and the api won't boot the next time anything triggers a flyway-migrate. Soft reset (`bash infrastructure/scripts/demo-reset.sh` without `--hard`) is the safe path between rehearsals.
+- **[B-078](../bugs/resolved.md#B-078) + [B-085](../bugs/resolved.md#B-085) — hard reset is now safe (PR #234).** Previously `demo-reset.sh --hard` truncated `flyway_schema_history` (api wouldn't boot on next recreate) and wasn't repeatable on a seeded box (orphaned KC clients 500'd `/seed/agents`). Fixed in #234. Until that PR is deployed to the target box, prefer soft reset and see the Section 0 recovery note.
 - **[B-082](../bugs/open.md#B-082) — MCP `get_product` 500 when `domain_id` omitted.** Only product-bound tool that requires `domain_id` (the other three take `product_id` alone). For the Audience B live MCP demo, use `get_trust_score`, `get_lineage`, or `get_slo_summary` — they're the verified working path. If you must show `get_product`, pass both `product_id` and `domain_id`.
 
 ### Standing caveats
 
-- **Fictional warehouse endpoints.** The `connectionDetails.endpoint` strings on products point at `warehouse.acme.example.com` and similar. They're illustrative. If you click an example client command, it won't connect. Mention "these are illustrative — the *contract* is what's enforced, the *endpoint* points at the domain's own infrastructure."
+- **Fictional warehouse endpoints.** The seeded connection details point at `warehouse.acme.example.com` (SQL `host`), `api.acme.example.com` (REST `baseUrl`), and similar. They're illustrative — the generated snippets are real and copy-pasteable, but the hosts won't resolve. Mention "these are illustrative — the *contract* is what's enforced, the *host* points at the domain's own infrastructure." (Snippets also leave credentials as `<set via env>` placeholders by design — the platform never injects plaintext secrets.)
 - **Synthetic classification-change notification.** Section 5 and Section 6 cover this in detail: the Marketing Copilot `classification_changed` notification is a seeded *signal*, not a real history entry. The agent's current classification is `observed`. Don't drill into the agent expecting to see the change.
 - **Demo URL ≠ persistent.** The demo box is stop/start lifecycle, not always-on. `demo.provenancelogic.com` resolves only when the instance is started; expect a 2-min warm-up.
 - **Agent Autonomous tier.** Don't try to promote any agent to Autonomous live — there's no UI workflow for it yet and it requires a governance role with a non-null reason. If asked, say "this is gated to manual intervention by design."
