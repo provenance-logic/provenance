@@ -89,11 +89,15 @@ function mockRepo() {
 function mockDataSource() {
   const managerAgentRepo = { create: jest.fn((d: unknown) => d), save: jest.fn() };
   const managerClassRepo = { create: jest.fn((d: unknown) => d), save: jest.fn() };
+  // PrincipalEntity is also written inside the transaction (the identity.principals
+  // row the FK on access_grants and connection_references depends on).
+  const managerPrincipalRepo = { create: jest.fn((d: unknown) => d), save: jest.fn() };
 
   const manager = {
     getRepository: jest.fn((entity: unknown) => {
       if (entity === AgentIdentityEntity) return managerAgentRepo;
       if (entity === AgentTrustClassificationEntity) return managerClassRepo;
+      if (entity === PrincipalEntity) return managerPrincipalRepo;
       throw new Error(`Unexpected entity: ${String(entity)}`);
     }),
   };
@@ -103,7 +107,7 @@ function mockDataSource() {
     query: jest.fn(),
   };
 
-  return { ds, manager, managerAgentRepo, managerClassRepo };
+  return { ds, manager, managerAgentRepo, managerClassRepo, managerPrincipalRepo };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,15 +189,44 @@ describe('AgentsService — registerAgent (Phase 5a-3)', () => {
     // dataSource.transaction was called
     expect(dsCtx.ds.transaction).toHaveBeenCalledTimes(1);
 
-    // Both saves went through the transaction manager, not the injected repos
+    // All three saves went through the transaction manager, not the injected repos
     expect(dsCtx.manager.getRepository).toHaveBeenCalledWith(AgentIdentityEntity);
     expect(dsCtx.manager.getRepository).toHaveBeenCalledWith(AgentTrustClassificationEntity);
+    expect(dsCtx.manager.getRepository).toHaveBeenCalledWith(PrincipalEntity);
     expect(dsCtx.managerAgentRepo.save).toHaveBeenCalledTimes(1);
     expect(dsCtx.managerClassRepo.save).toHaveBeenCalledTimes(1);
+    expect(dsCtx.managerPrincipalRepo.save).toHaveBeenCalledTimes(1);
 
     // Injected repos were NOT used for saves
     expect(agentRepo.save).not.toHaveBeenCalled();
     expect(classificationRepo.save).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // identity.principals row creation (FK satisfier for access_grants and
+  // connection_references — both reference identity.principals(id))
+  // -------------------------------------------------------------------------
+
+  it('creates a matching identity.principals row with id=agent.agentId so access_grant inserts can FK-satisfy', async () => {
+    principalRepo.findOne.mockResolvedValue(oversightPrincipal);
+    dsCtx.managerAgentRepo.save.mockResolvedValue(makeSavedAgent());
+    dsCtx.managerClassRepo.save.mockResolvedValue(makeSavedClassification());
+    keycloakAdmin.createAgentClient.mockResolvedValue({
+      keycloak_client_id: AGENT_ID,
+      keycloak_client_secret: 'secret',
+    });
+
+    await service.registerAgent(dto, ctx);
+
+    expect(dsCtx.managerPrincipalRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: AGENT_ID,
+        orgId: ORG_ID,
+        principalType: 'ai_agent',
+        keycloakSubject: `agent:${AGENT_ID}`,
+      }),
+    );
+    expect(dsCtx.managerPrincipalRepo.save).toHaveBeenCalledTimes(1);
   });
 
   // -------------------------------------------------------------------------

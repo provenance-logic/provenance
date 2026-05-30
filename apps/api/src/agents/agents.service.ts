@@ -106,10 +106,19 @@ export class AgentsService {
 
     // ADR-002 Phase 5a-3: wrap DB writes + Keycloak provisioning in a single
     // transaction so a Keycloak failure rolls back the DB records.
+    //
+    // The transaction also creates the matching identity.principals row with
+    // id = agent.agentId. The application uses agent.agentId as the principal
+    // identifier throughout (consent.service:318, legacy-migration:153,
+    // jwt-auth.guard:61), and access_grants.grantee_principal_id +
+    // connection_references.agent_id both FK to identity.principals(id). Without
+    // this row, any subsequent access_grant insert against this agent FK-fails.
+    // The seed path got the same fix in PR #226; this is the prod-path mirror.
     const { savedAgent, savedClassification, credentials } =
       await this.dataSource.transaction(async (manager) => {
         const txAgentRepo = manager.getRepository(AgentIdentityEntity);
         const txClassRepo = manager.getRepository(AgentTrustClassificationEntity);
+        const txPrincipalRepo = manager.getRepository(PrincipalEntity);
 
         const agent = txAgentRepo.create({
           orgId: dto.org_id,
@@ -133,6 +142,19 @@ export class AgentsService {
           reason: 'Initial registration',
         });
         const sc = await txClassRepo.save(classification);
+
+        // keycloak_subject uses an `agent:<id>` sentinel so it is unique
+        // without colliding with any human user's Keycloak subject.
+        await txPrincipalRepo.save(
+          txPrincipalRepo.create({
+            id: sa.agentId,
+            orgId: dto.org_id,
+            principalType: 'ai_agent',
+            keycloakSubject: `agent:${sa.agentId}`,
+            email: null,
+            displayName: dto.display_name,
+          }),
+        );
 
         const creds = await this.keycloakAdmin.createAgentClient(sa.agentId, dto.org_id);
 
