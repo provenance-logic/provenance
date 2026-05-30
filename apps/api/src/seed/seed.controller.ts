@@ -621,10 +621,32 @@ export class SeedController {
     // already provisioned on the first run, and re-running createAgentClient
     // would throw a 409. The agent identity row's keycloakClientProvisioned
     // flag is the authoritative record.
+    //
+    // Self-heal: pre-existing agents from older seed runs (before this
+    // commit) were created WITHOUT a matching identity.principals row.
+    // Without that row, any access_grant insert against this agent FK-fails.
+    // Ensure the principals row exists for every agent we return, new or old.
     const existing = await this.agentRepo.findOne({
       where: { orgId: dto.orgId, displayName: dto.displayName },
     });
-    if (existing) return { id: existing.agentId };
+    if (existing) {
+      const existingPrincipal = await this.principalRepo.findOne({
+        where: { id: existing.agentId },
+      });
+      if (!existingPrincipal) {
+        await this.principalRepo.save(
+          this.principalRepo.create({
+            id: existing.agentId,
+            orgId: dto.orgId,
+            principalType: 'ai_agent',
+            keycloakSubject: `agent:${existing.agentId}`,
+            email: null,
+            displayName: dto.displayName,
+          }),
+        );
+      }
+      return { id: existing.agentId };
+    }
 
     const oversightPrincipal = await this.principalRepo.findOne({
       where: { orgId: dto.orgId, email: dto.oversightContactEmail },
