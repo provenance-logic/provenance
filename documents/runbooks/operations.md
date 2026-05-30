@@ -162,6 +162,8 @@ sudo docker compose -f docker-compose.ec2-dev.yml \
 
 The three services in the default list are the ones that volume-mount source code or carry frequently-updated env config. Other services (postgres, keycloak, opa, neo4j, opensearch, redpanda, temporal, embedding) rarely need a recreate after a `git pull`; recreate them only if a compose-file change names them explicitly.
 
+> **`refresh-ec2-dev.sh` is THE dev deploy — use it, not a bare `git pull` + `up -d`.** That bare form is exactly the recurring "deployed but running stale code" trap: the app images build locally and bind-mount source, so `up -d` won't recreate an unchanged image and the process keeps running old code. `refresh-ec2-dev.sh` force-recreates, which is what actually reloads it. The **demo** box has its own script, `demo-sync.sh`, which is similar but additionally reseeds + re-imports Keycloak (the seed is authoritative on demo) — **do not run `demo-sync.sh` on dev**, it would wipe dev's ad-hoc state. (There is no `dev-sync.sh`; one was briefly added in 2026-05-30 and removed as a duplicate of this script.)
+
 ---
 
 ## Disk Cleanup
