@@ -9,10 +9,10 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-081 — Consumer-side onboarding is the mirror of B-080: human-consumer access is genuinely self-service; agent-consumer access is API-only with footguns; both raise the same unresolved credential-brokerage question
+## B-081 — Consumer-side onboarding: human-consumer access is genuinely self-service; agent-consumer access is API-only with no write UI (credential model already settled by ADR-011 + ADR-013)
 
-- **Severity:** **High** — companion to [B-080](#B-080). Together B-080 (register a connector) + B-081 (consume a product, human + agent) cover the three onboarding paths that *are* the platform's whole promise. Matt's framing 2026-05-26: "these three things are among the most important."
-- **Status:** Open — **diagnostic / strategy, not a single fix.** Traced statically through the code 2026-05-26 (both the human-consumer UI flow and the agent connection-reference flow). **Not yet live-walked** — see "Next action" below; the human persona walkthrough is the explicit next step, to come *before* any agent-side work.
+- **Severity:** **Medium** — *downgraded from High on 2026-05-30 correction.* Companion to [B-080](#B-080). Together B-080 (register a connector) + B-081 (consume a product, human + agent) cover the three onboarding paths that *are* the platform's whole promise. Matt's framing 2026-05-26: "these three things are among the most important." After the 2026-05-30 correction (see below), B-081's remaining scope is UI/UX-shaped, not architectural — hence the downgrade.
+- **Status:** Open — **2026-05-30 correction applied: the earlier "unresolved credential-brokerage question" framing was wrong, the question is already settled (ADR-011 outbound + ADR-013 inbound).** Originally filed 2026-05-26 from a static code trace; the trace misread `EncryptionService.decrypt` in `connection-package.service.ts` as decrypting credentials when it in fact decrypts the configuration envelope. Pillar 2 (human consumer) and pillar 3 (agent consumer) still **not live-walked** — see "Next action."
 - **Area:** `apps/web/src/features/discovery/` (consumer UI), `apps/api/src/access/` (grants + connection package), `apps/api/src/consent/` (Domain 12 connection references), `apps/agent-query/` (agent path), `apps/web/src/shared/api/consent.ts` + `apps/web/src/features/agents/AgentDetailPage.tsx` (agent UI surface).
 
 ### The three onboarding pillars and their honest state
@@ -42,19 +42,32 @@ The platform's *headline* differentiator ("agents as first-class consumers") is 
 - **A human approves** (API).
 - Then the runtime guard (`apps/agent-query/src/auth/connection-reference.guard.ts`) is solid: 5 denial codes, audit trail, scope match. *Once approved* the agent path is rock-solid; *getting* approved is the clunk.
 
-### The unifying thread — credential brokerage (this is the real decision)
+### Correction (2026-05-30): the credential model is settled by ADR-011 + ADR-013, not open
 
-The producer-side concern from B-080 — *who holds the credential, at what access level* — has a **mirror image on the consumer side.** On approval, the platform **decrypts the stored source credentials and hands them to the consumer** inside the connection package (`connection-package.service.ts` `generateForProduct` → per-port `build*Artifacts`, fed by `EncryptionService` decrypt). That is the platform brokering credentials *outbound*, the same act B-080 wrestles with *inbound*. Tellingly, the **counter-model already exists in the code**: **Situation A** ports tell the consumer "connect with your existing source-system credentials" and skip the request entirely (`F10.15` layer 1). So both models — *platform holds & hands out credentials* vs. *each party authorizes with their own identity* — live in the codebase today.
+The 2026-05-26 version of this entry concluded that B-081 and B-080 jointly raised an **unresolved architectural question** — does Provenance broker credentials or configuration — and that the answer was open across all three pillars. **That was a misread of the code.** The question is already answered by two accepted ADRs:
 
-**This is one strategic question with three surfaces, not three separate problems.** It is the same question deferred on Snowflake in B-080, and it should be decided once for all three pillars: does Provenance broker **credentials** or **configuration**? (See the [configuration-brokerage framing decision](../prd/) — 2026-05-22 — that Provenance brokers configuration, not credentials, and the user keeps their own source-system identity. That decision points toward OAuth on the producer side and Situation-A / bring-your-own on the consumer side, and away from the platform-holds-the-credential path that the current connection package implements.)
+- **[ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md) (2026-05-23, accepted):** Outbound / consumer side = **configuration brokerage.** The connection package "contains no credentials" (Decision 3). The consumer authenticates to the source with their own identity (Snowflake account, Postgres role, AWS principal); the platform brokers host/port/database/catalog-name + per-tool snippet, never a secret.
+- **[ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md) (2026-05-25, accepted):** Inbound / producer side = **vaulted credentials by reference.** The platform must authenticate to source for unattended crawl, so it vaults — encrypted at rest (AES-256-GCM), never plaintext in a column / log / response, never returned to a client. ADR-013 line 37 explicitly names this as "consistent with ADR-011, not a reversal: outbound stays credential-free; inbound vaults what it must."
+
+**The code reflects ADR-011.** `apps/api/src/access/connection-package.service.ts:619-620, 639-640` emit `user='<set via env>'`, `password='<set via env>'` in the Python snippet. The dbt profile at lines 884-885, 908-909 emits `{{ env_var('DBT_USER') }}` / `{{ env_var('DBT_PASSWORD') }}`. Lines 955-956 and 1014-1015 cite ADR-011 in code comments: *"the consumer enters their own credentials per ADR-011 (the platform never holds the consumer's source-system credentials)."* What `EncryptionService.decrypt` resolves in `decryptPortDetails` (line 469) is the **configuration envelope** (host, port, database, sslMode) — *not* credentials. The earlier reading "the platform decrypts and hands the consumer the source credentials in the connection package" was wrong.
+
+**What remains in B-081 after the correction (all UI/UX, none architectural):**
+
+- **Pillar 2 (human consumer):** the four product-shaped friction points named above — "intended use" guidance, async-approval SLA visibility, cross-org block (named in ADR-011 Decision 5 as "contact the owner" until source supports native shares — *as designed*), and the snippet scaffold's `<set via env>` / `<table>` fill-ins (the env-var placeholders are *correct per ADR-011*; the `<table>` placeholder is a port-binding gap that B-070 / B-075 already track).
+- **Pillar 3 (agent consumer):** the agent-consumer UX gaps — no UI to request/approve/deny/revoke a connection reference (`apps/web/src/shared/api/consent.ts` is read-only; `AgentDetailPage.tsx` displays-only); the secret-shown-once friction at registration; Observed agents can't self-request (Domain 12 design decision — re-examine if it's a real OSR friction).
+- **Producer-side credential provenance (B-080 tail):** *separate* from the brokerage question. B-080's open follow-up is "who is allowed to mint the inbound credential, at what access level" — the service-account-vs-OAuth call for Snowflake. ADR-012 method A (OAuth) is the eventual answer; PAT is the bridge today. Not architectural-shaped; a strategic call.
+
+### Methodology note (why this drifted)
+
+The 2026-05-26 diagnostic was a **static code trace that didn't reconcile against the relevant ADRs.** ADR-011 was 3 days old when B-081 was filed; ADR-013 was 1 day old. Neither was cited. The wrong reading then propagated: into the status board headline, then into the 2026-05-30 status report. Each subsequent session amplified prior prose without re-reading the code. The lesson: **a static code trace that doesn't cross-check the named ADRs in the area is not a diagnostic — it's a hypothesis.** Captured as a process change to prevent recurrence.
 
 ### Next action (Matt's stated priority order)
 
-1. **Live persona walkthrough of the human consumer path** — actually click through discover → request → approve → paste-and-run as a real consumer would, on dev. Confirms empirically how clunky the snippet really is (the `<set via env>` / `<table>` placeholders above) and whether the cross-org block bites a realistic mesh scenario. This comes **first** — before any agent-side work.
-2. *Then* the agent-consumer path.
-3. The credential-vs-configuration brokerage decision spans all three pillars (B-080 + B-081) and should be made once.
+1. **Live persona walkthrough of the human consumer path** — actually click through discover → request → approve → paste-and-run as a real consumer would, on dev. Confirms empirically how clunky the snippet really is and whether the cross-org block bites a realistic mesh scenario. **Highest priority** — *would have caught the 2026-05-30 correction the first time* if it had run before B-081 was filed.
+2. *Then* the agent-consumer path — both the live walkthrough and the missing request/approve UI build.
+3. ~~Credential-vs-configuration brokerage decision~~ — **settled.** ADR-011 + ADR-013 are accepted and code-aligned. Any future revisit would be a deliberate amendment, not a fresh decision.
 
-**Related:** [B-080](#B-080) (producer/connector side of the same question), [ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md), [ADR-012](../architecture/adr/ADR-012-connector-auth-and-guided-registration.md), [ADR-005–008](../architecture/adr/) (connection references / Domain 12). Recurring "✅ Complete ≠ a real user can do it unaided" pattern.
+**Related:** [B-080](#B-080) (producer/connector side, separate credential-provenance follow-up), [ADR-011](../architecture/adr/ADR-011-configuration-brokerage.md), [ADR-013](../architecture/adr/ADR-013-connector-credential-self-service-vault.md), [ADR-012](../architecture/adr/ADR-012-connector-auth-and-guided-registration.md), [ADR-005–008](../architecture/adr/) (connection references / Domain 12). Recurring "✅ Complete ≠ a real user can do it unaided" pattern.
 
 ---
 
