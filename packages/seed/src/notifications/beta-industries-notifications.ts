@@ -67,7 +67,7 @@ export const betaIndustriesNotifications: SeedNotification[] = [
       useCase: 'Operational Monitoring',
       requestedBy: 'Anya Volkov',
     },
-    deepLink: '/agents/risk-assistant/connection-references',
+    deepLink: '/agents/beta-risk-assistant/connection-references',
     seedKey: 'beta:risk:conn-ref:risk-assistant-tx-signals',
     createdDaysAgo: 1,
   },
