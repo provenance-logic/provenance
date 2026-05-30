@@ -28,6 +28,22 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-078 — `seed:reset:hard` truncates `flyway_schema_history`, breaking the next stack restart (flyway re-applies V1 onto a populated schema)
+
+- **Resolved:** 2026-05-30 (filed 2026-05-25). Fixed alongside [B-085](#B-085) — same `reset.ts` `hardReset` function, same "make hard reset safe" theme.
+- **Severity:** **High** — after `seed:reset:hard` the schema + data are correct, but flyway's history table is emptied, so any subsequent container recreate that triggers `flyway-migrate` fails (`relation "orgs" already exists`) and the api won't boot.
+- **Area:** `packages/seed/src/reset.ts`.
+
+**What was wrong.** `hardReset` truncates every table in a fixed list of schemas, including `organizations` — which is flyway's `defaultSchema`, so `organizations.flyway_schema_history` got swept up. With no `baselineOnMigrate`, the next migrate saw `<< Empty Schema >>`, tried to apply `V1`, and failed because the objects already exist.
+
+**Fix.** The per-table truncate loop now **skips `flyway_schema_history`** — it is flyway bookkeeping, not seed data.
+
+**Demo-box remediation (2026-05-30).** A box already corrupted by a pre-fix hard reset self-heals with the documented workaround: `DROP TABLE organizations.flyway_schema_history;` → `flyway baseline -baselineVersion=<latest>` → next migrate is a clean no-op. Done on the demo box this session after its redeploy.
+
+- **Fix commit:** see PR for `fix/seed-hard-reset-idempotency`.
+
+---
+
 ## B-084 — Seed stores port connection details in the F10.5 display shape (no `kind` discriminator), so every "How to Consume" snippet returns `destination_not_yet_supported`
 
 - **Resolved:** 2026-05-30, same session surfaced (demo persona walkthrough — the connection-package reveal, the payoff of the whole access-request flow, errored on every interface type for every product).

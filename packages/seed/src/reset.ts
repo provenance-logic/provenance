@@ -70,6 +70,13 @@ export async function hardReset(ctx: HardResetContext): Promise<void> {
           [schema]
         );
         for (const { tablename } of rows) {
+          // B-078: never truncate flyway's history table. It lives in the
+          // `organizations` schema (flyway's defaultSchema), so it gets caught
+          // by this sweep. Emptying it makes the next `flyway-migrate` see an
+          // empty history, re-apply V1 onto the populated schema, fail with
+          // "relation orgs already exists", and block the api from booting on
+          // the next container recreate. It is flyway bookkeeping, not seed data.
+          if (tablename === 'flyway_schema_history') continue;
           await db.query(`TRUNCATE TABLE "${schema}"."${tablename}" RESTART IDENTITY CASCADE`);
         }
       }
