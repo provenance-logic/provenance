@@ -256,7 +256,7 @@ The story is "**we made all the right architecture calls and there's evidence of
 3. **Open the Policy Studio.** Show one of the seeded OPA policies — `beta.pci-scope-isolation` is a good one. *"Governance is computational, not procedural. This is real Rego, hot-reloadable, enforced at request time."*
 4. **Show the Compliance Monitor.** Drift detection on Customer 360 with the 93.2% vs 95% number. *"Drift detection runs continuously; products move through Compliant / Drift Detected / Grace Period / Non-Compliant automatically."*
 5. **Open the API docs at `/api/v1/docs`.** OpenAPI 3.1 rendered live, source-of-truth specs in `packages/openapi/`. *"Every API surface in the platform is spec-first."*
-6. **Live MCP demo.** From your terminal, hit the MCP server as Marketing Copilot and call `list_products` then `get_trust_score` with `product_id` for customer-360. *"Agents are first-class. Same JWTs, same row-level-security, same audit log."* **For the violation beat:** also exchange a Risk Assistant JWT and call `get_trust_score` against credit-risk-decisions — denied with a structured `CONNECTION_REFERENCE_SCOPE_VIOLATION` because the seeded reference is discovery-only. Both verified end-to-end on the demo box 2026-05-30. ⚠️ **Don't call `get_product` from the CLI** — B-082 (filed 2026-05-30): it requires `domain_id` and returns 500 if omitted. Stick to the three other product-bound tools (`get_trust_score`, `get_lineage`, `get_slo_summary`) which only need `product_id`.
+6. **Live MCP demo.** From your terminal, hit the MCP server as Marketing Copilot and call `list_products` then `get_trust_score` with `product_id` for customer-360. *"Agents are first-class. Same JWTs, same row-level-security, same audit log."* **For the violation beat:** also exchange a Risk Assistant JWT and call `get_trust_score` against credit-risk-decisions — denied with a structured `CONNECTION_REFERENCE_SCOPE_VIOLATION` because the seeded reference is discovery-only. Both verified end-to-end on the demo box 2026-05-30. `get_product` is also safe to demo from the CLI now — it takes `product_id` alone (B-082 fixed in #236, verified end-to-end via MCP on the box 2026-05-30), matching the other three product-bound tools.
 7. **Open the Agent Detail page** for Marketing Copilot. Show the trust classification, the oversight contact, the audit trail. *"Three trust tiers — Observed, Supervised, Autonomous. Autonomous can never be set programmatically; only a governance role can promote."*
 8. **The persistence story for connection references.** Mention Domain 12 (ADR-005 through ADR-008) — "every agent action requires both an active access grant AND an active connection reference with use-case scope." Don't deep-dive unless they ask.
 
@@ -282,7 +282,7 @@ The story is "**we made your job a software problem.**"
 ### Active (open bugs that will bite if you don't know about them)
 
 - **[B-078](../bugs/resolved.md#B-078) + [B-085](../bugs/resolved.md#B-085) — hard reset is now safe (PR #234).** Previously `demo-reset.sh --hard` truncated `flyway_schema_history` (api wouldn't boot on next recreate) and wasn't repeatable on a seeded box (orphaned KC clients 500'd `/seed/agents`). Fixed in #234. Until that PR is deployed to the target box, prefer soft reset and see the Section 0 recovery note.
-- **[B-082](../bugs/open.md#B-082) — MCP `get_product` 500 when `domain_id` omitted.** Only product-bound tool that requires `domain_id` (the other three take `product_id` alone). For the Audience B live MCP demo, use `get_trust_score`, `get_lineage`, or `get_slo_summary` — they're the verified working path. If you must show `get_product`, pass both `product_id` and `domain_id`.
+- **[B-082](../bugs/resolved.md#B-082) — fixed (PR #236, deployed 2026-05-30).** `get_product` now takes `product_id` alone like the other product-bound tools, and a missing required arg returns a structured `tool_args_missing` error instead of a 500. Verified end-to-end via MCP on the box. No longer a rough edge.
 
 ### Standing caveats
 
@@ -295,7 +295,7 @@ The story is "**we made your job a software problem.**"
 
 ### Smoke test status
 
-The `demo-smoke-test.sh` was rewritten in #214 (the B-076/B-077 fix) and now exercises all 6 layers including the MCP agent path. Verified green in 4s on 2026-05-30. **Safe to run pre-demo as a confidence check** (previous "don't run the smoke test" advice from B-050 is obsolete — B-050 was fixed). The smoke test only exercises `list_products` (exempt path) — it does NOT verify product-bound MCP tools, so green smoke ≠ guarantee against the B-082 class of regression. Followup tracked separately.
+The `demo-smoke-test.sh` was rewritten in #214 (the B-076/B-077 fix) and now exercises all 6 layers including the MCP agent path. Verified green in 4s on 2026-05-30. **Safe to run pre-demo as a confidence check** (previous "don't run the smoke test" advice from B-050 is obsolete — B-050 was fixed). The smoke test only exercises `list_products` (exempt path) — it does NOT verify product-bound MCP tools, so green smoke ≠ guarantee against a product-bound-tool regression. (B-082 — the `get_product` 500 — is fixed in #236 and was verified end-to-end via MCP on the box, but the smoke test itself still doesn't exercise that path.) Followup tracked separately.
 
 ---
 
