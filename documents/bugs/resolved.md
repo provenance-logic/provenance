@@ -6,6 +6,28 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-083 — Seed notification deep links point at routes that don't exist; the trust-score link feeds a non-UUID to the get-product API → HTTP 500
+
+- **Resolved:** 2026-05-30, same session surfaced (during the on-demand demo persona walkthrough).
+- **Severity:** **High** — broke the strongest single demo beat (finance-lead clicks the "trust score dropped 0.91 → 0.78" notification → **Internal Server Error**), and silently mis-routed most other notification clicks.
+- **Area:** `packages/seed/src/runner.ts` (notification post block), `packages/seed/src/notifications/*.ts` (authored links), new `packages/seed/src/notifications/resolve-deep-link.ts`.
+
+**What was wrong.** Seed notifications were authored with human-friendly, slug-based deep links (`/marketplace/revenue-daily/trust`, `/marketplace/customer-360`, `/agents/marketing-copilot`, `/publishing/<slug>/access-requests`) and posted **verbatim**. But the actual frontend routes are UUID-based: product detail is `/marketplace/:orgId/:productId`, agent detail is `/agents/:agentId`. Consequences:
+
+- `/marketplace/revenue-daily/trust` → the router bound `orgId="revenue-daily"`, `productId="trust"`; the get-product API fed `"revenue-daily"` to a TypeORM `uuid` column → `invalid input syntax for type uuid` → **500** (the finance-lead ISE). Same root class as [B-082](./open.md#B-082) (a non-UUID reaching a uuid column).
+- `/marketplace/customer-360` (one segment) and `/agents/<slug>/connection-references` → NotFound / broken fetch.
+- The two `/agents/...` links also used the wrong slug (`marketing-copilot` / `risk-assistant`) vs the seeded agent slugs (`acme-marketing-copilot` / `beta-risk-assistant`).
+
+A frontend `resolveNotificationDestination` safety net exists and already handled the live-API link shapes (`/products/:id/*`, `/access/requests/:id`, `/publishing/<slug>/access-requests`), but the seed's marketplace/agents slug links slipped through its passthrough into broken routes.
+
+**Fix.** Added `resolveSeedDeepLink` (pure, unit-tested with `node:test`) and called it in the runner's notification loop. The runner builds `productRouteBySlug` (`slug → /marketplace/<orgId>/<productId>`) and `agentRouteBySlug` (`slug → /agents/<agentId>`) from the products/agents it just created — the UUIDs are known by the time notifications are posted — and rewrites each authored slug link to a concrete route. Tab segments like `/trust` are dropped (the product detail page selects tabs via component state, not the URL). Unknown slugs degrade to the relevant list page with a warning rather than emitting a 500-able link. Authored agent links corrected to the seeded slugs.
+
+**Follow-up (not bundled).** The API still returns 500 (not 400/404) when a non-UUID reaches a `:uuid` route param — the broader belt-and-suspenders is [B-082](./open.md#B-082) option C. Fixing the data removed the demo break; the controller-boundary hardening remains open.
+
+- **Fix commit:** see PR for `fix/seed-notification-deeplinks`.
+
+---
+
 ## B-079 — `ConnectorSecretEntity` registered in `forFeature` but missing from the root `entities[]` → 500 (`EntityMetadataNotFoundError`) on every self-service credential save
 
 - **Resolved:** 2026-05-25, same session it was surfaced (caught on dev minutes after deploying #220, by Matt entering a real PAT in the new credential field).

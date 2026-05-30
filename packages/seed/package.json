@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "clean": "rm -rf dist",
     "seed": "tsx src/cli.ts seed",
     "seed:reset:soft": "tsx src/cli.ts reset --soft",

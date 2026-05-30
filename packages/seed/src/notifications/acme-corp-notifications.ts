@@ -141,7 +141,7 @@ export const acmeCorpNotifications: SeedNotification[] = [
       changedBy: 'Gita Schreiber',
       reason: 'Marketing requested supervised access for the Q3 segmentation experiment.',
     },
-    deepLink: '/agents/marketing-copilot',
+    deepLink: '/agents/acme-marketing-copilot',
     seedKey: 'acme:governance:classification:marketing-copilot',
     createdDaysAgo: 7,
     readDaysAgo: 6,

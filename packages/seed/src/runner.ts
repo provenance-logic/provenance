@@ -12,6 +12,7 @@ import { seedSlos } from './slos/index.js';
 import { seedAccessRequests, seedAccessGrants } from './access/index.js';
 import { seedConnectionReferences } from './consent/index.js';
 import { seedNotifications } from './notifications/index.js';
+import { resolveSeedDeepLink } from './notifications/resolve-deep-link.js';
 
 interface RunContext {
   config: SeedConfig;
@@ -179,6 +180,10 @@ export async function runSeed(ctx: RunContext): Promise<void> {
 
   logger.info('seed: products');
   const productIdBySlug = new Map<string, string>();
+  // product slug -> concrete /marketplace/:orgId/:productId route, used to
+  // resolve authored notification deep links to real UUID routes (see
+  // resolve-deep-link.ts — the fix for the slug-link 500s).
+  const productRouteBySlug = new Map<string, string>();
   for (const product of seedProducts) {
     const orgId = orgIdBySlug.get(product.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${product.orgSlug}`);
@@ -196,6 +201,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       ports: product.ports,
     });
     productIdBySlug.set(product.slug, res.id);
+    productRouteBySlug.set(product.slug, `/marketplace/${orgId}/${res.id}`);
   }
 
   logger.info('seed: agents');
@@ -206,6 +212,9 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   // agentId so the grant + connection-reference walks below can resolve agent
   // grantees the same way principalIdByEmail resolves human ones.
   const agentIdByAgentSlug = new Map<string, string>();
+  // agent slug -> concrete /agents/:agentId route, for notification deep-link
+  // resolution (see resolve-deep-link.ts).
+  const agentRouteBySlug = new Map<string, string>();
   for (const agent of seedAgents) {
     const orgId = orgIdBySlug.get(agent.orgSlug);
     if (!orgId) throw new Error(`unknown org slug: ${agent.orgSlug}`);
@@ -223,6 +232,7 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       oversightContactEmail: agent.oversightContactEmail,
     });
     agentIdByAgentSlug.set(agent.agentSlug, res.id);
+    agentRouteBySlug.set(agent.agentSlug, `/agents/${res.id}`);
   }
 
   logger.info('seed: lineage');
@@ -447,12 +457,21 @@ export async function runSeed(ctx: RunContext): Promise<void> {
     if (!recipientId || !orgId) {
       throw new Error(`notification references unknown recipient: ${notif.recipientEmail}`);
     }
+    // Authored deep links are slug-based for readability; rewrite them to
+    // concrete UUID routes now that products + agents exist. Without this the
+    // router binds slugs to :orgId/:productId and the get-product API 500s on
+    // the non-UUID value (the finance-lead "trust score" notification ISE).
+    const deepLink = resolveSeedDeepLink(
+      notif.deepLink,
+      { productRouteBySlug, agentRouteBySlug },
+      (msg) => logger.warn(msg),
+    );
     await ctx.api.post('/seed/notifications', {
       orgId,
       recipientPrincipalId: recipientId,
       category: notif.category,
       payload: notif.payload,
-      deepLink: notif.deepLink,
+      deepLink,
       dedupKey: `seed:notif:${notif.seedKey}`,
       createdAt: daysAgoIso(notif.createdDaysAgo),
       readAt: notif.readDaysAgo !== undefined ? daysAgoIso(notif.readDaysAgo) : undefined,
