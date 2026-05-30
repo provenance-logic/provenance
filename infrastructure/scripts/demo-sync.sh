@@ -21,6 +21,18 @@ COMPOSE_OVERRIDE="${REPO_ROOT}/infrastructure/docker/docker-compose.demo.yml"
 ENV_FILE="${REPO_ROOT}/infrastructure/docker/.env.ec2"
 DEMO_DOMAIN="${DEMO_DOMAIN:-demo.provenancelogic.com}"
 
+# Wall-clock at deploy start. The integrity check (step 2b) asserts the
+# bind-mounted app containers restarted *after* this — a container with an
+# older StartedAt kept running stale code (the recurring "deployed but not
+# reloaded" trap; see documents/runbooks/demo-environment.md).
+DEPLOY_START_EPOCH="$(date +%s)"
+
+# App services that bind-mount /opt/provenance and run the source directly.
+# These MUST be force-recreated to pick up newly-checked-out code — a plain
+# `up -d` won't recreate a locally-built image whose layers didn't change, and
+# `docker compose pull` is a no-op for them (no registry; built locally).
+BIND_MOUNT_APP_SERVICES="api agent-query web"
+
 # Demo override redirects Caddy's caddy_data volume to /var/lib/caddy-data
 # (persistent EBS). Every compose invocation passes both files.
 
@@ -43,12 +55,56 @@ git checkout "$TARGET_SHA" || fail "git-checkout" "could not check out $TARGET_S
 log "on commit $(git rev-parse --short HEAD)"
 
 # ---------------------------------------------------------------------------
-# 2. Pull images and restart stack
+# 2. Refresh images and (re)start the stack
+#
+# `pull` refreshes the REGISTRY-based infra images (postgres, keycloak,
+# flyway, redpanda, opensearch, neo4j, temporal). It is a no-op for the app
+# images, which are built locally — so it does NOT deploy app code. The
+# force-recreate below is what actually loads the checked-out source.
 # ---------------------------------------------------------------------------
-log "pulling images"
+log "pulling infra images (no-op for locally-built app images)"
 docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" pull || fail "compose-pull" "docker compose pull failed"
-log "restarting services"
+log "starting / refreshing the stack"
 docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" up -d --remove-orphans || fail "compose-up" "docker compose up failed"
+
+# CRITICAL — the trap this script exists to avoid. api/web/agent-query
+# bind-mount /opt/provenance and run the source directly, so the running Node
+# process keeps executing whatever code it loaded at its last start. A plain
+# `up -d` will NOT recreate them (their locally-built image ID didn't move),
+# so the freshly-checked-out code would silently NOT deploy. Force-recreate
+# them so the processes reload the bind-mounted source.
+log "force-recreating bind-mounted app services to load the checked-out source: ${BIND_MOUNT_APP_SERVICES}"
+# shellcheck disable=SC2086
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" \
+  up -d --force-recreate --no-deps ${BIND_MOUNT_APP_SERVICES} \
+  || fail "compose-recreate" "force-recreate of app services failed"
+
+# Caddy caches upstream container IPs; once the app containers move, the proxy
+# points at stale IPs until Caddy restarts (symptom: 502 / ERR_SSL_PROTOCOL_ERROR).
+log "restarting Caddy (it caches upstream container IPs)"
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" restart caddy \
+  || fail "caddy-restart" "caddy restart failed"
+
+# ---------------------------------------------------------------------------
+# 2b. Deploy integrity check — fail loudly if app code did NOT actually reload
+#
+# Catches the recurring "deployed but running stale code" bug at the source:
+# the working tree must be at the target commit, AND each bind-mounted app
+# container must have (re)started during THIS run. A container whose StartedAt
+# predates DEPLOY_START_EPOCH never reloaded — it's serving old code.
+# ---------------------------------------------------------------------------
+log "verifying deploy integrity (checkout + app containers reloaded)"
+TARGET_FULL_SHA="$(git rev-parse HEAD)"
+for svc in ${BIND_MOUNT_APP_SERVICES}; do
+  cid="$(docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" --env-file "$ENV_FILE" ps -q "$svc")"
+  [ -n "$cid" ] || fail "deploy-verify" "service '$svc' has no running container after recreate"
+  started_at="$(docker inspect -f '{{.State.StartedAt}}' "$cid")"
+  started_epoch="$(date -d "$started_at" +%s 2>/dev/null || echo 0)"
+  if [ "$started_epoch" -lt "$DEPLOY_START_EPOCH" ]; then
+    fail "deploy-verify" "'$svc' did not restart this deploy (StartedAt=$started_at predates deploy start) — it is running STALE code. Re-run: docker compose -f $COMPOSE_FILE -f $COMPOSE_OVERRIDE --env-file $ENV_FILE up -d --force-recreate --no-deps $svc"
+  fi
+done
+log "deploy integrity OK — checkout at ${TARGET_FULL_SHA}; api/web/agent-query reloaded"
 
 # ---------------------------------------------------------------------------
 # 3. Migrations
