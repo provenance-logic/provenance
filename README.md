@@ -237,7 +237,7 @@ Provenance is a coordination platform with a multi-service stack (Postgres, Neo4
 | Profile | RAM floor | Disk | What you can run | Use it when |
 | --- | --- | --- | --- | --- |
 | **Lite** (`docker-compose.dev.yml`) | 8 GB | ~10 GB free | Postgres + Keycloak + OPA + API + web. Lineage, search, semantic queries, agent integration, access workflows, and notifications are explicitly disabled. | You want to sign up, click around, and see the UI. Good for a 30-minute first impression. |
-| **Full** (`docker-compose.ec2-dev.yml`) | 16 GB | ~30 GB free | Everything: lineage graph, search, semantic queries, agent MCP layer, access approval workflows, notifications, HTTPS via Caddy. | You want to actually evaluate Provenance or contribute to it. The recommended development configuration. |
+| **Full** (`docker-compose.yml`) | 16 GB | ~30 GB free | Everything: lineage graph, search, semantic queries, agent MCP layer, access approval workflows, and notifications. | You want to actually evaluate Provenance or contribute to it. The recommended development configuration. (`docker-compose.ec2-dev.yml` is the same stack plus Caddy/HTTPS for hosted EC2 deployments.) | 
 
 **32 GB+** is comfortable when you're running the stack alongside an IDE, a browser with several tabs, and the test suite at the same time.
 
@@ -266,7 +266,7 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    cd infrastructure/docker
    docker compose up -d
    ```
-   Starts PostgreSQL, Neo4j, Redpanda, OpenSearch, OPA, Keycloak, Temporal, the embedding service, and Kong.
+   Starts PostgreSQL, Neo4j, Redpanda, OpenSearch, OPA, Keycloak, Temporal, the embedding service, the agent query layer (MCP server on port 3002), and Kong, plus the API and web app.
 
    For the **lite stack** (8 GB laptops, basic UI exploration only):
    ```bash
@@ -281,6 +281,7 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    - **API reference (rendered OpenAPI):** `http://localhost:3001/api/v1/docs`
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
+   - Agent MCP server (SSE): `http://localhost:3002/mcp/sse` (health at `http://localhost:3002/health`)
 
    The Compose stack already runs the API and frontend in dev mode with hot-reload. Source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate "install dependencies and run dev server" step on the host.
 

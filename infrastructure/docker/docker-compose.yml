@@ -482,6 +482,10 @@ services:
       # Temporal
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
+      # Embedding service (semantic indexing). Inside the compose network the
+      # api must reach the embedding container by service name — its Zod
+      # default of localhost:8001 would resolve to the api container itself.
+      EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding:8001}
       # Port connection-details encryption (Domain 10 Workstream B — F10.6).
       # Prod reads a 32-byte AES key from Secrets Manager via the ARN; dev
       # stacks fall back to CONNECTION_DETAILS_DEV_KEY. The default is a
@@ -538,95 +542,86 @@ services:
 
   # ---------------------------------------------------------------------------
   # Agent Query Layer — separate NestJS process (non-negotiable constraint #4)
-  # Built from apps/agent-query. Separate process from the control plane monolith.
-  # PHASE 4 — commented out until apps/agent-query exists. Restore to enable.
+  # MCP server (SSE, :3002) for AI agents. Talks to the control plane over HTTP.
   # ---------------------------------------------------------------------------
-  # agent-query:
-  #   build:
-  #     context: ../../apps/agent-query
-  #     dockerfile: Dockerfile
-  #     target: development
-  #   container_name: provenance-agent-query
-  #   restart: unless-stopped
-  #   environment:
-  #     NODE_ENV: development
-  #     PORT: 3002
-  #     # Control plane API (for authorization context)
-  #     API_BASE_URL: http://api:3001
-  #     # Neo4j (direct read for lineage traversal)
-  #     NEO4J_URI: bolt://neo4j:7687
-  #     NEO4J_USER: neo4j
-  #     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-provenance_dev_password}
-  #     # OpenSearch (semantic search)
-  #     OPENSEARCH_NODE: http://opensearch:9200
-  #     # OPA (per-query policy evaluation)
-  #     OPA_BASE_URL: http://opa:8181
-  #     # Keycloak
-  #     KEYCLOAK_REALM: provenance
-  #     KEYCLOAK_URL: http://keycloak:8080
-  #     # Public Keycloak URL for JWT issuer validation (B-076 issuer split).
-  #     KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080/realms/provenance}
-  #     KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
-  #     KEYCLOAK_CLIENT_ID: provenance-agent-query
-  #     KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_AGENT_CLIENT_SECRET:-}
-  #     # Redpanda (agent activity events)
-  #     KAFKA_BROKERS: redpanda:9092
-  #     # Claude API (NL query translation)
-  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  #     ANTHROPIC_MODEL: claude-sonnet-4-20250514
-  #   volumes:
-  #     - ../../apps/agent-query:/app:cached
-  #     - /app/node_modules
-  #   ports:
-  #     - "3002:3002"   # REST / GraphQL
-  #     - "3003:3003"   # MCP WebSocket
-  #   networks:
-  #     - provenance
-  #   depends_on:
-  #     api:
-  #       condition: service_healthy
-  #     neo4j:
-  #       condition: service_healthy
-  #     opensearch:
-  #       condition: service_healthy
-  #     opa:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
-  #     interval: 15s
-  #     timeout: 5s
-  #     retries: 10
-  #     start_period: 60s
+  agent-query:
+    build:
+      context: ../../
+      dockerfile: apps/agent-query/Dockerfile
+      target: development
+    container_name: provenance-agent-query
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      CONTROL_PLANE_URL: http://api:3001
+      # MCP_API_KEY and DEFAULT_ORG_ID are required (non-empty) by the AQL Zod
+      # config — these dev defaults let the stack boot out of the box. Override
+      # in any shared environment.
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-key-change-me}
+      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000000}
+      # Claude API for NL query translation. Optional — the service falls back
+      # to keyword-only search when this is empty (graceful degradation).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      # Keycloak — JWT validation for agent tokens (ADR-002).
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: provenance
+      # On localhost the internal and public Keycloak URLs are the same, so the
+      # issuer is localhost:8080. In deployed envs this splits from KEYCLOAK_URL
+      # (which fetches JWKS over the Docker network) — see B-076.
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080/realms/provenance}
+      # Domain 12: consume connection_reference.state from the api outbox.
+      KAFKA_BROKERS: redpanda:9092
+      # Must byte-for-byte match the api's AQL_INTERNAL_TOKEN (same default var).
+      AQL_INTERNAL_TOKEN: ${AQL_INTERNAL_TOKEN:-dev-aql-internal-token-change-me}
+      CONNECTION_REFERENCE_ENFORCEMENT_ENABLED: ${CONNECTION_REFERENCE_ENFORCEMENT_ENABLED:-true}
+    volumes:
+      - ../../apps/agent-query:/app/apps/agent-query:cached
+      # @provenance/types is a workspace dep; without this mount the container
+      # only has packages/types/package.json (from the Dockerfile COPY) and tsc
+      # can't resolve `from '@provenance/types'`, crash-looping the container.
+      - ../../packages/types:/app/packages/types:cached
+      - /app/apps/agent-query/node_modules
+    ports:
+      - "3002:3002"
+    networks:
+      - provenance
+    depends_on:
+      api:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+    healthcheck:
+      # node:22-alpine ships busybox wget.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # Embedding Service — Python FastAPI (sentence-transformers)
-  # PHASE 4 — commented out until apps/embedding exists. Restore to enable.
+  # Embedding Service — Python FastAPI (sentence-transformers, :8001)
+  # Generates query/document vectors for semantic (kNN) search.
   # ---------------------------------------------------------------------------
-  # embedding:
-  #   build:
-  #     context: ../../apps/embedding
-  #     dockerfile: Dockerfile
-  #   container_name: provenance-embedding
-  #   restart: unless-stopped
-  #   environment:
-  #     PORT: 8000
-  #     OPENSEARCH_NODE: http://opensearch:9200
-  #     MODEL_NAME: all-MiniLM-L6-v2
-  #   volumes:
-  #     - ../../apps/embedding:/app:cached
-  #   ports:
-  #     - "8002:8000"
-  #   networks:
-  #     - provenance
-  #   depends_on:
-  #     opensearch:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-  #     interval: 15s
-  #     timeout: 10s
-  #     retries: 10
-  #     start_period: 120s   # sentence-transformers model download on first start
+  embedding:
+    build:
+      context: ../../apps/embedding
+      dockerfile: Dockerfile
+    container_name: provenance-embedding
+    restart: unless-stopped
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+    ports:
+      - "8001:8001"
+    networks:
+      - provenance
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # React Frontend (served via Vite dev server in development)
