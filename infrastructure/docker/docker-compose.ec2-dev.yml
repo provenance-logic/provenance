@@ -685,8 +685,12 @@ services:
     environment:
       PORT: 3002
       CONTROL_PLANE_URL: http://api:3001
-      MCP_API_KEY: ${MCP_API_KEY:-}
-      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-}
+      # MCP_API_KEY and DEFAULT_ORG_ID are required (non-empty) by the AQL Zod
+      # config. Empty defaults crash-loop agent-query on every boot where the
+      # env file doesn't set them (seen live-breaking dev 2026-05-31). Provide
+      # safe non-empty fallbacks; a shared environment should still override.
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-key-change-me}
+      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000000}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your-key-here}
       NODE_ENV: development
       KEYCLOAK_URL: http://keycloak:8080
