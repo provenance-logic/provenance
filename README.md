@@ -128,7 +128,7 @@ Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 
 **Governance Engine**
 - OPA-backed policy enforcement with hot-reloadable Rego policies
 - Policy Authoring Studio with 8 independently configurable policy domains
-- Governance Command Center dashboard with real-time compliance overview
+- Governance Command Center dashboard with a compliance overview (distribution, domain health, recent events)
 - Compliance Monitor with drift detection and exception management
 - Four compliance states: Compliant, Drift Detected, Grace Period, Non-Compliant
 
@@ -138,7 +138,7 @@ Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 
 - Access request workflow with approval tracking
 
 **Lineage & Observability**
-- Neo4j lineage graph with emission API and async Redpanda pipeline
+- Neo4j lineage graph with an emission API, a durable PostgreSQL emission log, and asynchronous projection into Neo4j
 - TypeScript SDK for lineage emission from external pipelines
 - SLO declarations and evaluation engine
 - Trust score engine with 5-component weighted formula (governance compliance, SLO pass rate, lineage completeness, usage activity, exception history)
@@ -169,7 +169,7 @@ Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 
 - New in PRD v1.5. Universal per-use-case consent + runtime scope enforcement for all agent access. Connection references compose with (do not replace) access grants: **both must be active for any agent action against any product**, no exceptions.
 - **Runtime enforcement default-on as of 2026-05-13** (`CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true`). The `ConnectionReferenceGuard` runs on every product-bound MCP tool call: it verifies the agent has an active access grant, an active connection reference, and a scope match. Five distinct denial codes plus an `UNKNOWN_TOOL` safety belt. Audit row on every denial; scope-violation denials additionally notify the owning principal and every governance member.
 - **Architecture:** outbox publisher drains `consent.connection_reference_outbox` to Redpanda topic `connection_reference.state`; AQL holds an in-memory cache aligned by the consumer + cold-load on boot + control-plane fallback on cache miss. See [ADR-005](./documents/architecture/adr/ADR-005-connection-reference-composition.md) (composition), [ADR-006](./documents/architecture/adr/ADR-006-runtime-scope-enforcement.md) (runtime enforcement), [ADR-007](./documents/architecture/adr/ADR-007-connection-reference-state-propagation.md) (state propagation), [ADR-008](./documents/architecture/adr/ADR-008-connection-reference-and-package-relationship.md) (package relationship), and the [implementation plan](./documents/architecture/plans/domain-12-runtime-enforcement.md).
-- **Upgrade path for existing installations:** run `POST /api/v1/internal/consent/legacy-agent-migration` before deploying. This provisions a 30-day non-renewable legacy-compatibility reference for every existing agent-product grant so existing agents don't lose access on the flip. Idempotent.
+- **Upgrade path for existing installations:** run `POST /api/v1/internal/consent/connection-references/legacy-agent-migration` before deploying. This provisions a 30-day non-renewable legacy-compatibility reference for every existing agent-product grant so existing agents don't lose access on the flip. Idempotent.
 - **Deferred (not OSR blockers):** automatic expiration via Temporal (F12.22), MAJOR-version suspension (F12.15), governance override (F12.14 / F12.20), Supervised oversight-hold sub-state, remaining F12.21 cascade triggers, and the visually-distinct legacy-ref UI. See [implementation-status.md](./documents/prd/implementation-status.md) Domain 12 section for the per-requirement breakdown.
 
 ---
@@ -183,6 +183,7 @@ provenance/
 │   │   └── src/
 │   │       ├── organizations/    # Org and domain management
 │   │       ├── products/         # Data product lifecycle
+│   │       ├── connectors/       # Connector framework + discovery engine
 │   │       ├── governance/       # OPA policy engine integration
 │   │       ├── lineage/          # Neo4j lineage graph service
 │   │       ├── observability/    # SLOs, trust score computation
@@ -207,7 +208,8 @@ provenance/
 ├── packages/
 │   ├── types/                # Shared TypeScript types
 │   ├── openapi/              # OpenAPI specifications
-│   └── sdk-ts/               # TypeScript lineage emission SDK
+│   ├── sdk-ts/               # TypeScript lineage emission SDK
+│   └── seed/                 # Idempotent seed CLI (sample orgs, products, agents)
 ├── infrastructure/
 │   ├── docker/               # Docker Compose (MVP deployment)
 │   └── terraform/            # AWS EC2 provisioning
