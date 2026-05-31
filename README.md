@@ -2,7 +2,7 @@
 
 **The Data 3.0 Self-Service Data Mesh Platform**
 
-Provenance is an open-source, cloud-native platform that makes data mesh real — not as a philosophy, but as working software. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
+Provenance is an open-source, cloud-native platform that makes data mesh real: not as a philosophy, but as working software. It is the first platform purpose-built to treat AI agents as first-class participants alongside human domain teams, consumers, and governance boards in a federated data mesh architecture.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/provenance-logic/provenance/actions/workflows/ci.yml/badge.svg)](https://github.com/provenance-logic/provenance/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ Provenance is an open-source, cloud-native platform that makes data mesh real �
 
 ## What Is Provenance?
 
-Provenance is a **coordination and contract platform** for organizational data. It does not store your data, run your pipelines, or replace your data warehouse. It does something more fundamental: it makes data trustworthy enough to depend on — for humans and AI agents alike.
+Provenance is a **coordination and contract platform** for organizational data. It does not store your data, run your pipelines, or replace your data warehouse. It does something more fundamental: it makes data trustworthy enough to depend on, for humans and AI agents alike.
 
 Built on the data mesh principles articulated by [Zhamak Dehghani](https://www.oreilly.com/library/view/data-mesh/9781492092384/) and extended for the agentic AI era, Provenance gives every domain team the infrastructure to publish data as a product, every consumer the confidence to know what they are depending on, and every governance team the computational tools to enforce policy without becoming a bottleneck.
 
@@ -29,13 +29,13 @@ Most organizations attempting data mesh hit the same wall: the philosophy is cle
 Provenance is different in four ways:
 
 **1. Data products are first-class entities, not catalog entries.**
-A Provenance data product has an owner, a contract, a lifecycle, ports, SLOs, lineage, and a governance compliance state. It is not a metadata record — it is a governed, versioned, observable artifact with real enforcement behind it.
+A Provenance data product has an owner, a contract, a lifecycle, ports, SLOs, lineage, and a governance compliance state. It is not a metadata record; it is a governed, versioned, observable artifact with real enforcement behind it.
 
 **2. Governance is computational, not a process.**
 The federated governance team configures policy through a declarative UI. Provenance enforces it automatically at publication time and continuously thereafter. No tickets. No approval queues. No governance bottleneck.
 
 **3. AI agents are first-class participants.**
-Provenance exposes the data mesh as a semantic, policy-aware query surface for AI agents via a fully compliant [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server. Agents discover data products, query across them, and produce new ones — all under the same governance model as human consumers.
+Provenance exposes the data mesh as a semantic, policy-aware query surface for AI agents via a fully compliant [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server. Agents discover data products, query across them, and produce new ones, all under the same governance model as human consumers.
 
 **4. The data stays where it lives.**
 Provenance holds metadata, contracts, lineage, and governance records. Your data never transits the platform. Domain teams own their infrastructure. Provenance owns the contracts between them.
@@ -44,7 +44,7 @@ Provenance holds metadata, contracts, lineage, and governance records. Your data
 
 ## Architecture Overview
 
-> **Current infrastructure is a pre-revenue development environment, not the target production state.** Provenance is currently deployed as a NestJS modular monolith and React frontend running on two EC2 instances via Docker Compose. This setup is deliberately lean — it is the MVP build, not the shape the platform will take at scale. The target production architecture (Kubernetes on EKS, managed AWS services, SOC 2 hardening) is scoped as Phase 6 and is documented in [documents/architecture/Provenance_Architecture_v1.5.md](./documents/architecture/Provenance_Architecture_v1.5.md). Phase 6 is planned but not funded and will be triggered by enterprise customer engagement or funding, not by a calendar date.
+> **Current infrastructure is a pre-revenue development environment, not the target production state.** Provenance is currently deployed as a NestJS modular monolith and React frontend running on two EC2 instances via Docker Compose. This setup is deliberately lean: it is the MVP build, not the shape the platform will take at scale. The target production architecture (Kubernetes on EKS, managed AWS services, SOC 2 hardening) is scoped as Phase 6 and is documented in [documents/architecture/Provenance_Architecture_v1.5.md](./documents/architecture/Provenance_Architecture_v1.5.md). Phase 6 is planned but not funded and will be triggered by enterprise customer engagement or funding, not by a calendar date.
 
 The control plane (metadata, contracts, governance) is architecturally separated from the data plane (domain infrastructure) from day one, and that boundary holds in both the current MVP and the target production architecture.
 
@@ -88,34 +88,34 @@ The control plane (metadata, contracts, governance) is architecturally separated
 | Backend API | TypeScript / NestJS | Modular monolith with domain-driven modules |
 | Frontend | TypeScript / React + TailwindCSS | Single app, persona-adaptive UI |
 | Graph Database | Neo4j Community | Lineage graph with arbitrary-depth traversal |
-| Relational Database | PostgreSQL 16 | Control plane state; tenant isolation enforced at the service layer via explicit `orgId` filtering (RLS policies exist as a Phase 6 backstop, not the load-bearing layer — see [ADR-010](./documents/architecture/adr/ADR-010-rls-by-default.md)) |
+| Relational Database | PostgreSQL 16 | Control plane state; tenant isolation enforced at the service layer via explicit `orgId` filtering (RLS policies exist as a Phase 6 backstop, not the load-bearing layer; see [ADR-010](./documents/architecture/adr/ADR-010-rls-by-default.md)) |
 | Message Broker | Redpanda (Kafka-compatible) | Lineage and observability event streaming |
 | Policy Engine | Open Policy Agent (OPA) | Hot-reloadable governance policy enforcement |
 | Search | OpenSearch | Product discovery and semantic vector search |
 | Identity | Keycloak | OIDC authentication and authorization |
-| API Gateway | Kong OSS | Shipped in the stack; **not on the user-traffic path today** — user-facing TLS terminates at Caddy (Let's Encrypt) on hosted deployments. Kong-as-gateway is the Phase 6 / production target |
+| API Gateway | Kong OSS | Shipped in the stack but **not on the user-traffic path today**. User-facing TLS terminates at Caddy (Let's Encrypt) on hosted deployments; Kong-as-gateway is the Phase 6 / production target |
 | Visualization | React Flow + Dagre | Interactive lineage graph explorer with deterministic DAG layout (see ADR-003) |
 
 ---
 
 ## Project Status
 
-Provenance is in active development. Phases 1–4 are complete and **`v0.1.0-osr` was tagged on 2026-05-24** — the first tagged release, with all four first-class connectors — **PostgreSQL, Amazon S3, Databricks, and Snowflake** — functioning end to end (probe, schema inference, discovery crawl, lineage).
+Provenance is in active development. Phases 1 through 4 are complete and **`v0.1.0-osr` was tagged on 2026-05-24**, the first tagged release. All four first-class connectors (**PostgreSQL, Amazon S3, Databricks, and Snowflake**) function end to end: probe, schema inference, discovery crawl, and lineage.
 
-> **Honest status correction (late May 2026):** post-tag verification found the "Open Source Ready" bar was overstated. We hold OSR to mean *a real user can complete the core flows unaided*, and on that bar the **onboarding paths are not there yet**: connector self-service is not smooth (Snowflake authentication requires expert network-policy / service-account setup — tracked as [B-080](./documents/bugs/open.md)), the agent-consumer access flow is API-only with no UI for requesting/approving connection references ([B-081](./documents/bugs/open.md)), and two agent-path regressions (MCP agent auth and semantic search) were live-broken *on the tagged commit itself* before being fixed shortly after. The **human-consumer** access path (discover → request → approve → connect) *is* genuinely self-service. We track this openly rather than claim completeness; see the [status board](./documents/status-board.md) and [open bugs](./documents/bugs/open.md) for the current truth.
+> **Known limitations (honest status).** Provenance is young and we track its gaps openly. Registering a **Snowflake** connector uses a pasted Programmatic Access Token (no key generation); the Snowflake account needs a one-time network policy, which the in-product guidance explains, and a "sign in with Snowflake" OAuth flow is planned but demand-gated (see [ADR-012](./documents/architecture/adr/ADR-012-connector-auth-and-guided-registration.md)). Agents can be **registered** from the UI, and their grants, connection references, and trust classification are all visible in the agent console; the connection-reference **request and approval** steps are still API-only (no form yet). The human-consumer access path (discover, request, approve, connect) is fully self-service. See the [status board](./documents/status-board.md) for the live picture.
 
-Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 Workstream B (port connection details and connection packages, mostly shipped), **Domain 11 Notifications** (in-platform, email, and webhook channels with all 27 trigger requirements wired or explicitly deferred), **F5.15 Lineage Visualization** (React Flow + Dagre per ADR-003), **Domain 12 Connection References and Per-Use-Case Consent** (runtime scope enforcement default-on; five distinct denial codes; outbox → Redpanda for cache invalidation; legacy-agent migration endpoint for existing-installation upgrades), **F7.7 Role Assignment UI** (org-level role management with audit + Keycloak sync), **F7.22 / F10.4 Domain Team Management** (domain-scoped membership with per-(principal, domain, role) revoke), and **F7.46 Onboarding Experience** (inline first-run wizard with per-principal progress persistence; all five guided steps wire to real destinations including the connector registration UI, agent registration UI, and a "Populate sample data" affordance — no skip-only placeholders remaining). Phase 5.6 (developer experience) is substantially shipped — OpenSearch BM25 reliability, in-product `/api/v1/docs` OpenAPI reference, working `pnpm seed` CLI, the 2026-05-07/08 fresh-laptop onboarding arc (13 first-run blockers fixed), the Node-22 container bump, and a CI compose-env-validator pre-flight (B-028 fix 3) that catches `docker-compose.ec2-dev.yml` env drift against API and AQL source at PR time. Phase 5.5 (anomaly detection) and 5.7 (SOC 2 foundations) remain post-OSR. **F7.29 SLA escalation and F7.42 Human Review Queue are explicitly deferred post-launch** per the roadmap's "with no shame" deferral list. See [implementation-status.md](./documents/prd/implementation-status.md) for the authoritative per-feature status and [osr-roadmap.md](./documents/prd/osr-roadmap.md) for the Stage 5 polish plan.
+Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 Workstream B (port connection details and connection packages, mostly shipped), **Domain 11 Notifications** (in-platform, email, and webhook channels with all 27 trigger requirements wired or explicitly deferred), **F5.15 Lineage Visualization** (React Flow + Dagre per ADR-003), **Domain 12 Connection References and Per-Use-Case Consent** (runtime scope enforcement default-on; five distinct denial codes; outbox to Redpanda for cache invalidation; legacy-agent migration endpoint for existing-installation upgrades), **F7.7 Role Assignment UI** (org-level role management with audit and Keycloak sync), **F7.22 / F10.4 Domain Team Management** (domain-scoped membership with per-(principal, domain, role) revoke), and **F7.46 Onboarding Experience** (inline first-run wizard with per-principal progress persistence; all five guided steps wire to real destinations including the connector registration UI, agent registration UI, and a "Populate sample data" affordance, with no skip-only placeholders remaining). Phase 5.6 (developer experience) is substantially shipped: OpenSearch BM25 reliability, in-product `/api/v1/docs` OpenAPI reference, working `pnpm seed` CLI, the 2026-05-07/08 fresh-laptop onboarding arc (13 first-run blockers fixed), the Node-22 container bump, and a CI compose-env-validator pre-flight (B-028 fix 3) that catches `docker-compose.ec2-dev.yml` env drift against API and AQL source at PR time. Phase 5.5 (anomaly detection) and 5.7 (SOC 2 foundations) remain post-OSR. **F7.29 SLA escalation and F7.42 Human Review Queue are explicitly deferred post-launch** per the roadmap's "with no shame" deferral list. See [implementation-status.md](./documents/prd/implementation-status.md) for the authoritative per-feature status and [osr-roadmap.md](./documents/prd/osr-roadmap.md) for the Stage 5 polish plan.
 
-**Development environment:** An internal development deployment is served via Caddy with automatic HTTPS at a `*.provenancelogic.com` hostname for hands-on work by the core team. It is not a persistent public endpoint — the underlying EC2 instance is shut down most of the time, so the URL is not suitable for inclusion in user-facing documentation, blog posts, or link-outs, and no uptime is implied. To try Provenance, follow the [Getting Started](#getting-started) steps below to run the stack locally via Docker Compose. A reproducible demo environment (provisioned per demo from git with curated seed data) is documented in [documents/runbooks/demo-environment.md](./documents/runbooks/demo-environment.md).
+**Development environment:** An internal development deployment is served via Caddy with automatic HTTPS at a `*.provenancelogic.com` hostname for hands-on work by the core team. It is not a persistent public endpoint: the underlying EC2 instance is shut down most of the time, so the URL is not suitable for inclusion in user-facing documentation, blog posts, or link-outs, and no uptime is implied. To try Provenance, follow the [Getting Started](#getting-started) steps below to run the stack locally via Docker Compose. A reproducible demo environment (provisioned per demo from git with curated seed data) is documented in [documents/runbooks/demo-environment.md](./documents/runbooks/demo-environment.md).
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 1 — Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | ✅ Complete |
-| **Phase 2 — Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
-| **Phase 3 — Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
-| **Phase 4 — Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
-| **Phase 5 — Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, Domain 11 notifications, Domain 12 connection references, developer experience, lineage visualization, role + team management UIs, first-run onboarding wizard | 🔄 Active — 5.1–5.4 complete; Domain 10 Workstreams A & B mostly complete; Domain 11 complete; F5.15 lineage viz complete; Domain 12 runtime enforcement complete (#77–#86); F7.7 Role Assignment UI, F7.22 / F10.4 Domain Team Management, and F7.46 Onboarding Experience all shipped 2026-05-14; F7.46 follow-ons (agents UI #97, connectors UI #98, sample-data button #100) closed 2026-05-15 — wizard has zero skip-only steps; 5.6 substantially shipped (B-009 search fix, /api/v1/docs, working seed CLI, fresh-laptop onboarding arc, Node 22 container bump, compose env-validator CI #99); 5.5 anomaly detection and 5.7 SOC 2 foundations deferred post-OSR |
-| **Phase 6 — Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
+| **Phase 1: Foundation** | Organization model, domain management, data product authoring, identity (Keycloak) | ✅ Complete |
+| **Phase 2: Governance & Publishing** | OPA governance engine, marketplace, access control, Policy Authoring Studio, Compliance Monitor | ✅ Complete |
+| **Phase 3: Lineage & Observability** | Lineage graph (Neo4j), emission API, TypeScript SDK, SLOs, trust score engine, Lineage Explorer UI, Observability Dashboard | ✅ Complete |
+| **Phase 4: Agent Integration** | MCP server (9 tools, SSE), agent query layer, agent identity, semantic search, trust classification | ✅ Complete |
+| **Phase 5: Open Source Ready** | JWT agent auth, stability, security essentials, data product completeness, Domain 10 self-serve infrastructure, Domain 11 notifications, Domain 12 connection references, developer experience, lineage visualization, role + team management UIs, first-run onboarding wizard | 🔄 Active. 5.1 through 5.4 complete; Domain 10 Workstreams A & B mostly complete; Domain 11 complete; F5.15 lineage viz complete; Domain 12 runtime enforcement complete (#77–#86); F7.7 Role Assignment UI, F7.22 / F10.4 Domain Team Management, and F7.46 Onboarding Experience all shipped 2026-05-14; F7.46 follow-ons (agents UI #97, connectors UI #98, sample-data button #100) closed 2026-05-15 with zero skip-only steps; 5.6 substantially shipped (B-009 search fix, /api/v1/docs, working seed CLI, fresh-laptop onboarding arc, Node 22 container bump, compose env-validator CI #99); 5.5 anomaly detection and 5.7 SOC 2 foundations deferred post-OSR |
+| **Phase 6: Production Scale** | Kubernetes, managed AWS services, security hardening, SOC 2 Type II audit | 🔲 When Funded |
 
 ### What's Live Today
 
@@ -151,25 +151,25 @@ Shipped in Phase 5: Domain 10 Workstream A (self-serve registration), Domain 10 
 - Semantic search with hybrid kNN + BM25 scoring via OpenSearch
 - NL query translation via Claude API with graceful fallback
 - Agent identity model with three trust tiers (Observed, Supervised, Autonomous) and governance-controlled transitions
-- JWT-based agent authentication via Keycloak `client_credentials` grant (ADR-002) — agents receive dedicated Keycloak clients at registration, JWTs validated on every MCP request
+- JWT-based agent authentication via Keycloak `client_credentials` grant (ADR-002): agents receive dedicated Keycloak clients at registration, and JWTs are validated on every MCP request
 - Complete audit trail of all agent activity with verified identity context
 
-**Self-Serve Infrastructure (Domain 10 — Phase 5)**
-- **Workstream A — complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. With the stack running locally (see [Getting Started](#getting-started)) a new user can sign up, create their org, and be authoring products in under 30 minutes with no platform operator involvement.
-- **Workstream B — mostly shipped (2026-04-28):** every output port carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export). Disclosure is gated by active access grant — owners and grantees see the full payload, authenticated non-grantees see a host/endpoint preview, and unauthenticated callers see nothing. Every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Connection packages auto-refresh when port details are edited. Connectivity validation runs real probes for REST, GraphQL, and Kafka with a typed `unsupported` response for SQL/JDBC and file export pending per-driver/per-storage probes. Schema authoring items (F10.11–F10.13) remain open.
+**Self-Serve Infrastructure (Domain 10, Phase 5)**
+- **Workstream A, complete:** self-serve user registration via Keycloak signup, first-org creation (`POST /organizations/self-serve` binds the registering user as the first platform admin and seeds the default governance layer), invitation flow with time-limited acceptance links, and the email service backing both onboarding and invitations. With the stack running locally (see [Getting Started](#getting-started)) a new user can sign up, create their org, and be authoring products in under 30 minutes with no platform operator involvement.
+- **Workstream B, mostly shipped (2026-04-28):** every output port carries an encrypted-at-rest connection-details payload keyed by interface type (SQL/JDBC, REST, GraphQL, Kafka, file export). Disclosure is gated by active access grant: owners and grantees see the full payload, authenticated non-grantees see a host/endpoint preview, and unauthenticated callers see nothing. Every access grant emits a ready-to-use connection package (JDBC URLs, curl + Postman, Python snippets, data dictionaries, MCP agent integration guide). Connection packages auto-refresh when port details are edited. Connectivity validation runs real probes for REST, GraphQL, and Kafka with a typed `unsupported` response for SQL/JDBC and file export pending per-driver/per-storage probes. Schema authoring items (F10.11–F10.13) remain open.
 
-**Notifications (Domain 11 — Phase 5)**
-- **All 27 PRD trigger requirements wired or explicitly deferred** (deferrals tied to features that don't yet exist — subscription model, schema-drift detection, classification post-publish mutability, agent auto-suspension, human review queue, frozen-state machine).
+**Notifications (Domain 11, Phase 5)**
+- **All 27 PRD trigger requirements wired or explicitly deferred** (deferrals tied to features that don't yet exist: subscription model, schema-drift detection, classification post-publish mutability, agent auto-suspension, human review queue, frozen-state machine).
 - **Three delivery channels live:** in-platform inbox (the row itself), email (platform-wide `EmailService`, dev stack uses Mailhog), webhook (https-only, 10s timeout, stable `NotificationWebhookPayload` envelope). One outbox + cron worker drains all out-of-band channels with retries on a 1m / 5m / 25m schedule.
 - **Per-(principal, category) preferences** with `enabled` opt-in/out and `channels[]` override; governance-mandatory categories keep the in-platform channel even when a user opts out.
 - **Notification center frontend:** bell icon with unread badge in the sidebar, popover drawer with read/dismiss controls and deep links, full inbox at `/notifications` with category and read-state filters, per-category preferences page at `/notifications/preferences`. Polls every 30s to match the worker drain cadence.
 - **Architecture decisions** captured in [ADR-009](./documents/architecture/adr/ADR-009-notification-architecture.md).
 
-**Connection References and Per-Use-Case Consent (Domain 12 — runtime enforcement live)**
-- New in PRD v1.5. Universal per-use-case consent + runtime scope enforcement for all agent access. Connection references compose with (do not replace) access grants — **both must be active for any agent action against any product**, no exceptions.
+**Connection References and Per-Use-Case Consent (Domain 12, runtime enforcement live)**
+- New in PRD v1.5. Universal per-use-case consent + runtime scope enforcement for all agent access. Connection references compose with (do not replace) access grants: **both must be active for any agent action against any product**, no exceptions.
 - **Runtime enforcement default-on as of 2026-05-13** (`CONNECTION_REFERENCE_ENFORCEMENT_ENABLED=true`). The `ConnectionReferenceGuard` runs on every product-bound MCP tool call: it verifies the agent has an active access grant, an active connection reference, and a scope match. Five distinct denial codes plus an `UNKNOWN_TOOL` safety belt. Audit row on every denial; scope-violation denials additionally notify the owning principal and every governance member.
 - **Architecture:** outbox publisher drains `consent.connection_reference_outbox` to Redpanda topic `connection_reference.state`; AQL holds an in-memory cache aligned by the consumer + cold-load on boot + control-plane fallback on cache miss. See [ADR-005](./documents/architecture/adr/ADR-005-connection-reference-composition.md) (composition), [ADR-006](./documents/architecture/adr/ADR-006-runtime-scope-enforcement.md) (runtime enforcement), [ADR-007](./documents/architecture/adr/ADR-007-connection-reference-state-propagation.md) (state propagation), [ADR-008](./documents/architecture/adr/ADR-008-connection-reference-and-package-relationship.md) (package relationship), and the [implementation plan](./documents/architecture/plans/domain-12-runtime-enforcement.md).
-- **Upgrade path for existing installations:** run `POST /api/v1/internal/consent/legacy-agent-migration` before deploying — this provisions a 30-day non-renewable legacy-compatibility reference for every existing agent-product grant so existing agents don't lose access on the flip. Idempotent.
+- **Upgrade path for existing installations:** run `POST /api/v1/internal/consent/legacy-agent-migration` before deploying. This provisions a 30-day non-renewable legacy-compatibility reference for every existing agent-product grant so existing agents don't lose access on the flip. Idempotent.
 - **Deferred (not OSR blockers):** automatic expiration via Temporal (F12.22), MAJOR-version suspension (F12.15), governance override (F12.14 / F12.20), Supervised oversight-hold sub-state, remaining F12.21 cascade triggers, and the visually-distinct legacy-ref UI. See [implementation-status.md](./documents/prd/implementation-status.md) Domain 12 section for the per-requirement breakdown.
 
 ---
@@ -225,7 +225,7 @@ provenance/
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- Node.js 22.13+ and pnpm 9+ (the version of `pnpm` shipped by current Homebrew requires Node 22.13 or later — installing pnpm via `brew` on Node 20 will fail at first invocation)
+- Node.js 22.13+ and pnpm 9+ (the version of `pnpm` shipped by current Homebrew requires Node 22.13 or later; installing pnpm via `brew` on Node 20 will fail at first invocation)
 - Git
 
 ### Hardware Requirements
@@ -239,7 +239,7 @@ Provenance is a coordination platform with a multi-service stack (Postgres, Neo4
 
 **32 GB+** is comfortable when you're running the stack alongside an IDE, a browser with several tabs, and the test suite at the same time.
 
-8 GB machines (older MacBook Airs, base-model laptops) can run the lite profile and edit code, but should not attempt the full stack — the JVM-based services (OpenSearch, Keycloak, Neo4j) thrash heavily under that ceiling.
+8 GB machines (older MacBook Airs, base-model laptops) can run the lite profile and edit code, but should not attempt the full stack: the JVM-based services (OpenSearch, Keycloak, Neo4j) thrash heavily under that ceiling.
 
 Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack runs on macOS, Linux, and Windows with WSL2.
 
@@ -280,13 +280,13 @@ Architecture is x86_64 or ARM64 (Apple Silicon, modern Linux). The Compose stack
    - Keycloak admin: `http://localhost:8080`
    - Neo4j browser: `http://localhost:7474`
 
-   The Compose stack already runs the API and frontend in dev mode with hot-reload — source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate "install dependencies and run dev server" step on the host.
+   The Compose stack already runs the API and frontend in dev mode with hot-reload. Source files in `apps/api/` and `apps/web/` are volume-mounted, so edits trigger an in-container rebuild without restarting anything. There is no separate "install dependencies and run dev server" step on the host.
 
 5. **(Optional) Seed sample data:**
 
-   The seed CLI populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, lineage, SLOs, and access grants. Idempotent — safe to re-run.
+   The seed CLI populates two example orgs (Acme Corp, Beta Industries) with domains, principals, policies, products, agents, lineage, SLOs, and access grants. Idempotent and safe to re-run.
 
-   It reads three required env vars from the shell — `SEED_API_KEY`, `DATABASE_URL`, and `KEYCLOAK_ADMIN_CLIENT_SECRET` — plus several with sensible defaults. Working dev values for all of them live in `infrastructure/docker/.env.example`. Copy it to `.env`, source it, then run the seed:
+   It reads three required env vars from the shell (`SEED_API_KEY`, `DATABASE_URL`, and `KEYCLOAK_ADMIN_CLIENT_SECRET`) plus several with sensible defaults. Working dev values for all of them live in `infrastructure/docker/.env.example`. Copy it to `.env`, source it, then run the seed:
 
    ```bash
    cp infrastructure/docker/.env.example infrastructure/docker/.env
@@ -308,17 +308,17 @@ For EC2 deployment, see the environment-specific compose files and start scripts
 |---|---|
 | **Domain** | A bounded business context with a team that owns its data. Domains are the unit of ownership. |
 | **Data Product** | A dataset published as a product with an explicit contract, SLOs, schema, lineage, and governance compliance. |
-| **Port** | The typed interface of a data product — input, output, discovery, observability, and control ports. |
+| **Port** | The typed interface of a data product: input, output, discovery, observability, and control ports. |
 | **Governance Floor** | The minimum policy set defined by the federated governance team. Every domain must meet the floor. Domains may extend it. Nobody may weaken it. |
-| **Trust Score** | A composite signal computed from lineage completeness, SLO compliance, governance compliance, schema conformance, and freshness consistency. |
-| **Compliance State** | One of four states — Compliant, Drift Detected, Grace Period, Non-Compliant — continuously evaluated by the OPA governance engine. |
+| **Trust Score** | A composite signal computed from a 5-component weighted formula: governance compliance, SLO pass rate, lineage completeness, usage activity, and exception history. |
+| **Compliance State** | One of four states (Compliant, Drift Detected, Grace Period, Non-Compliant) continuously evaluated by the OPA governance engine. |
 
 ---
 
 ## Design Philosophy
 
 **The right thing is the easy thing.**
-For every persona — domain teams, consumers, governance teams, AI agents — the compliant, correct path through Provenance is the path of least resistance. If governance policy requires effort to comply with, the platform has failed, not the user.
+For every persona (domain teams, consumers, governance teams, AI agents), the compliant, correct path through Provenance is the path of least resistance. If governance policy requires effort to comply with, the platform has failed, not the user.
 
 **Governance is computation, not process.**
 Policy rules configured through the declarative UI are compiled to machine-enforceable Rego artifacts and evaluated automatically. No approval queues. No human checkpoints. Compliance is automatic for compliant products. Non-compliance is visible, specific, and remediable.
@@ -335,8 +335,8 @@ AI agents in Provenance are first-class principals with their own identity model
 | [Product Requirements Document](./documents/prd/Provenance_PRD_v1.5.md) | Complete requirements across all twelve platform domains |
 | [Implementation Status](./documents/prd/implementation-status.md) | Per-requirement implementation status vs. PRD v1.5 and remaining Open Source Readiness blockers |
 | [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) | MVP and production architecture, technology decisions, build sequence |
-| [Architecture Decision Records](./documents/architecture/adr/) | Nine ADRs covering MVP and JWT agent authentication, lineage visualization, demo strategy, connection reference composition / runtime scope enforcement / state propagation / package relationship, and notification architecture |
-| [OpenAPI Specifications](./packages/openapi/) | OpenAPI 3.1 specs (source of truth) for all platform APIs — also rendered live by the API at `/api/v1/docs` once the stack is running |
+| [Architecture Decision Records](./documents/architecture/adr/) | Thirteen ADRs covering MVP and JWT agent authentication, lineage visualization, demo strategy, the four connection-reference decisions (composition, runtime scope enforcement, state propagation, package relationship), notification architecture, RLS-by-default, configuration brokerage, and connector credential self-service |
+| [OpenAPI Specifications](./packages/openapi/) | OpenAPI 3.1 specs (source of truth) for all platform APIs, also rendered live by the API at `/api/v1/docs` once the stack is running |
 | [TypeScript Lineage SDK](./packages/sdk-ts/) | TypeScript SDK for pipeline lineage emission |
 
 ---
@@ -345,9 +345,9 @@ AI agents in Provenance are first-class principals with their own identity model
 
 Provenance is Apache 2.0 licensed and welcomes contributions. Before contributing, please read:
 
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines and development setup
-- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) — community standards
-- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) — understand the system before contributing
+- [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution guidelines and development setup
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for community standards
+- [Architecture Document](./documents/architecture/Provenance_Architecture_v1.5.md) to understand the system before contributing
 
 High-value contributions at this stage:
 - Additional connector implementations
@@ -361,10 +361,10 @@ High-value contributions at this stage:
 
 Provenance is a technical implementation of the data mesh principles described by Zhamak Dehghani in [*Data Mesh: Delivering Data-Driven Value at Scale*](https://www.oreilly.com/library/view/data-mesh/9781492092384/) (O'Reilly, 2022). It implements all four principles:
 
-- **Domain ownership** — domains are first-class entities; every data product has an owner
-- **Data as a product** — the port model, SLOs, versioning, and trust score make product thinking operational
-- **Self-serve data infrastructure** — the platform enables domain teams to publish without central team involvement
-- **Federated computational governance** — the governance engine enforces policy automatically; the floor/extension model implements true federation
+- **Domain ownership:** domains are first-class entities; every data product has an owner
+- **Data as a product:** the port model, SLOs, versioning, and trust score make product thinking operational
+- **Self-serve data infrastructure:** the platform enables domain teams to publish without central team involvement
+- **Federated computational governance:** the governance engine enforces policy automatically; the floor/extension model implements true federation
 
 Provenance extends the framework in one significant direction: **AI agents as first-class mesh participants**. We believe this extension is consistent with the framework's intent and necessary for the Data 3.0 era.
 
