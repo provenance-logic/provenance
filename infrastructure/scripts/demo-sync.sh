@@ -162,9 +162,16 @@ log "running seed package"
 # here via the Keycloak Admin API so the smoke test's agent layer is
 # self-sufficient and does not require a manual SMOKE_AGENT_SECRET export.
 #
-# ENV_FILE was sourced in step 5; KEYCLOAK_ADMIN_CLIENT_ID / _SECRET and
-# KEYCLOAK_ADMIN_CLIENT_SECRET are available from it.
+# Step 5 sourced ENV_FILE only inside its seed subshell, so those vars did NOT
+# survive to here — under `set -u` the first reference to the unset
+# KEYCLOAK_ADMIN_CLIENT_SECRET aborted the whole sync (deploy + seed had already
+# succeeded, but the smoke test never ran). Source ENV_FILE at top level so the
+# admin/agent credentials are available for the secret resolution below.
 # ---------------------------------------------------------------------------
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
 AUTH_DEMO_DOMAIN="${AUTH_DEMO_DOMAIN:-auth-demo.provenancelogic.com}"
 KEYCLOAK_ADMIN_CLIENT_ID="${KEYCLOAK_ADMIN_CLIENT_ID:-provenance-admin}"

@@ -6,6 +6,40 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-093 — `demo-sync.sh` smoke-test step aborts on unbound `KEYCLOAK_ADMIN_CLIENT_SECRET` (deploy + seed succeed, smoke never runs)
+
+- **Resolved:** 2026-05-31, hit while redeploying the demo box for the round-2 walkthrough fixes.
+- **Severity:** Low — the deploy, migrations, Keycloak import, and seed all complete; only the final smoke test is skipped and the script exits non-zero (misleadingly looking like a failed deploy).
+- **Area:** `infrastructure/scripts/demo-sync.sh` (step 6 — agent client-secret resolution).
+
+**What was wrong.** Step 5 sources `ENV_FILE` only *inside* its seed subshell (`( … source "$ENV_FILE" … )`), so the admin credentials never reach the top-level shell. Step 6 then references `KEYCLOAK_ADMIN_CLIENT_SECRET` (which, unlike its siblings, has no `:-default`) under `set -u` → `unbound variable` → the whole sync aborts with `EXIT=1` after deploy + seed had already succeeded. The comment even claimed "ENV_FILE was sourced in step 5" — true, but in a subshell that didn't survive.
+
+**Fix.** Source `ENV_FILE` at top level (`set -a; source; set +a`) immediately before the step-6 secret resolution, so the admin/agent credentials are available and the smoke test runs.
+
+- **Fix commit:** see PR for `fix/trust-score-real-drop` (bundled; called out as separate scope).
+
+---
+
+## B-092 — seeded "trust score drop" was a synthetic number the live trust engine overwrote (revises B-090)
+
+- **Resolved:** 2026-05-31, found verifying B-090 on the demo box: revenue-daily's "current" score showed ~0.83, not the seeded 0.78, with junk history rows.
+- **Severity:** Medium — the demo's trust-degradation story (a product owner / governance member watching trust fall) was visibly wrong: the chart didn't decline and the current band was healthy.
+- **Area:** `packages/seed/src/runner.ts` (SLO + trust steps), `apps/api/src/seed/seed.controller.ts` + `apps/api/src/governance/governance.service.ts` (new compliance-state seed path).
+
+**What was wrong.** B-090 (#245) seeded an explicit `trust_score_history` trajectory (0.91→0.78) and *skipped* the recompute for those products, assuming the latest seeded point would remain "current." But the trust engine recomputes from real data both on material events (the seed's own SLO/lineage/grant inserts) and on a `@Cron(EVERY_5_MINUTES)` for any product with activity in the last 10 minutes. revenue-daily's actual seeded data computes ≈0.83, so the engine wrote a fresh 0.83 row that out-dated the synthetic 0.78 — and would keep doing so. Seeding a number the engine disagrees with is structurally unwinnable.
+
+**Fix — degrade the DATA, not the number.** Stage revenue-daily as genuinely untrustworthy so the engine *itself* computes a critical/red score (and the cron keeps it there because the data agrees):
+- **Breaching SLOs** — its 7 daily evals are seeded so only the oldest passes (`pass_rate_7d ≈ 14%`), collapsing the slo component (weight 0.30).
+- **Non-compliant governance** — a new `POST /seed/compliance-state/:productId` (→ `GovernanceService.seedComplianceState` → `upsertComplianceState`) forces `non_compliant`, collapsing the governance component (weight 0.35, the heaviest) to 0.0.
+- Together these land the engine-computed score in the **critical** band (~0.32, red `#ef4444` — note "poor" is orange, only "critical" <0.40 is red).
+- A back-dated declining history (0.91→0.82→0.64→0.45) is still seeded for the trend chart's lead-in, and **every** product (including trajectory ones) is now recomputed so "current" is always the genuine engine value.
+
+**Tests.** `governance.service.spec`: `seedComplianceState` persists the forced state + violations without consulting OPA. `seed.controller.spec`: new `GovernanceService` dependency wired into both test modules.
+
+- **Fix commit:** see PR for `fix/trust-score-real-drop`.
+
+---
+
 ## B-082 — MCP `get_product` returned HTTP 500 (not a structured tool error) when `domain_id` was omitted; `"undefined"` reached a `uuid` column
 
 - **Resolved:** 2026-05-30 (filed 2026-05-30 during the #226 seed-extension verification).

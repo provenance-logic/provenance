@@ -314,6 +314,34 @@ describe('GovernanceService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // seedComplianceState() — demo seed staging of a non-compliant product
+  // ---------------------------------------------------------------------------
+
+  describe('seedComplianceState()', () => {
+    it('persists the forced state and supplied violations (no OPA evaluation)', async () => {
+      complianceStateRepo.findOne.mockResolvedValue(null);
+      complianceStateRepo.create.mockImplementation((data: any) => data);
+      complianceStateRepo.save.mockResolvedValue({});
+
+      const violations = [
+        { policyDomain: 'slo' as const, ruleId: 'slo.freshness.breaching', detail: 'breaching 6 days' },
+      ];
+      await service.seedComplianceState('org-1', 'product-1', 'non_compliant', violations);
+
+      // Does not consult OPA — it forces the state directly.
+      expect(opaClient.evaluate).not.toHaveBeenCalled();
+      expect(complianceStateRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          productId: 'product-1',
+          state: 'non_compliant',
+          violations,
+        }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // F11.20 — compliance_drift_detected notification
   // ---------------------------------------------------------------------------
 
