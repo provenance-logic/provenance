@@ -25,7 +25,9 @@ SMOKE_AGENT_CLIENT_ID="${SMOKE_AGENT_CLIENT_ID:-agent-acme-marketing-copilot}"
 SMOKE_AGENT_SECRET="${SMOKE_AGENT_SECRET:-}"
 
 REALM="${REALM:-provenance}"
-MIN_PRODUCTS="${MIN_PRODUCTS:-8}"
+# Caller-org product count, not the all-orgs total — the marketplace is
+# org-scoped (B-086). The default smoke user is admin@acme; Acme seeds 6.
+MIN_PRODUCTS="${MIN_PRODUCTS:-6}"
 STARTED_AT=$(date +%s)
 
 ok()   { echo "  ok: $*"; }
@@ -107,9 +109,11 @@ org_slug=$(jq -r '.slug // empty' /tmp/smoke-org.json)
 [ -n "$org_slug" ] || fail "control-plane" "GET /organizations/${ORG_ID} returned no slug"
 ok "seeded org present: ${org_slug}"
 
-# The global marketplace is the right surface for "how many products has this
-# deployment got across all orgs?" — it pages over OpenSearch `provenance-products`
-# (BM25 index), so a non-empty response also proves the keyword index is queryable.
+# The marketplace is org-scoped (B-086 closed the cross-org leak), so this
+# counts products visible to the smoke user's OWN org — not "across all orgs."
+# It still pages over OpenSearch `provenance-products` (BM25 index), so a
+# non-empty response also proves the keyword index is queryable. MIN_PRODUCTS
+# is therefore the caller-org seed count (Acme = 6), not the all-orgs total.
 PRODUCTS_JSON=$(curl -sS -H "Authorization: Bearer ${USER_TOKEN}" \
   "${BASE_URL}/api/v1/marketplace/products?limit=50")
 count=$(echo "$PRODUCTS_JSON" | jq -r '.items | length // 0')
