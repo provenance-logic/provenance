@@ -178,6 +178,44 @@ export class TrustScoreService {
     };
   }
 
+  /**
+   * Seed/demo helper: insert a trust_score_history row with an explicit score
+   * and (typically back-dated) computedAt, so a demo can present a real score
+   * trajectory — e.g. a 0.91 → 0.78 drop — rather than only a flat recompute.
+   * Synthesizes a plausible component breakdown whose weighted parts sum to the
+   * score. Not used in production flows; only the seed endpoint calls it.
+   */
+  async recordHistoricalScore(
+    orgId: string,
+    productId: string,
+    score: number,
+    computedAt: Date,
+  ): Promise<void> {
+    const mk = (weight: number) => ({
+      raw_value: score,
+      component_score: score,
+      weight,
+      weighted_score: Math.round(score * weight * 10000) / 10000,
+    });
+    const components: TrustScoreComponentsDto = {
+      governance_compliance: mk(WEIGHTS.governance),
+      slo_pass_rate:         mk(WEIGHTS.slo),
+      lineage_completeness:  mk(WEIGHTS.lineage),
+      usage_activity:        mk(WEIGHTS.usage),
+      exception_history:     mk(WEIGHTS.exception),
+    };
+    await this.historyRepo.save(
+      this.historyRepo.create({
+        orgId,
+        productId,
+        score,
+        band: scoreToBand(score),
+        components: components as unknown as Record<string, unknown>,
+        computedAt,
+      }),
+    );
+  }
+
   async getHistory(
     orgId: string,
     productId: string,

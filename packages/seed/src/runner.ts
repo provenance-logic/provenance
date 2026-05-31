@@ -478,9 +478,30 @@ export async function runSeed(ctx: RunContext): Promise<void> {
     });
   }
 
-  logger.info('seed: trust score kickoff');
-  for (const slug of productIdBySlug.keys()) {
-    await ctx.api.post(`/seed/trust-score-recompute/${productIdBySlug.get(slug)}`, {});
+  logger.info('seed: trust score');
+  // Demo trust-trajectory: the finance/governance "trust dropped 0.91 → 0.78"
+  // notifications need the trust VIEW to actually show that drop. A plain
+  // recompute produces a single flat current score, so for these products we
+  // seed an explicit downward history instead and SKIP the recompute (the
+  // latest seeded point must stay the current score). All other products get
+  // the normal recompute.
+  const TRUST_HISTORY: Record<string, { score: number; daysAgo: number }[]> = {
+    'revenue-daily': [
+      { score: 0.91, daysAgo: 14 },
+      { score: 0.91, daysAgo: 9 },
+      { score: 0.84, daysAgo: 4 },
+      { score: 0.78, daysAgo: 2 },
+    ],
+  };
+  for (const [slug, id] of productIdBySlug.entries()) {
+    const trajectory = TRUST_HISTORY[slug];
+    if (trajectory) {
+      for (const point of trajectory) {
+        await ctx.api.post(`/seed/trust-score-history/${id}`, point);
+      }
+    } else {
+      await ctx.api.post(`/seed/trust-score-recompute/${id}`, {});
+    }
   }
 
   logger.info('seed complete');

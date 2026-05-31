@@ -1127,6 +1127,25 @@ export class SeedController {
     return { score: result.score };
   }
 
+  // Insert an explicit (typically back-dated) trust-score history point so a
+  // demo can show a real trajectory (e.g. the 0.91 → 0.78 drop the finance
+  // notification narrates). `daysAgo` back-dates computed_at.
+  @Public()
+  @Post('trust-score-history/:productId')
+  @HttpCode(HttpStatus.OK)
+  async trustScoreHistory(
+    @Param('productId') productId: string,
+    @Body() dto: { score: number; daysAgo: number },
+  ): Promise<{ ok: true }> {
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    const computedAt = new Date(Date.now() - dto.daysAgo * 24 * 60 * 60 * 1000);
+    await this.trustScoreService.recordHistoricalScore(product.orgId, productId, dto.score, computedAt);
+    return { ok: true };
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
