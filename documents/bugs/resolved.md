@@ -6,6 +6,20 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-094 — `demo-smoke-test.sh` product-count assertion was stale after the marketplace org-scoping (B-086)
+
+- **Resolved:** 2026-05-31, surfaced the first time the smoke test actually ran post-deploy (it had been silently skipped — see B-093).
+- **Severity:** Low — false failure only; the deployment was healthy. But `demo-sync.sh` exits non-zero on a smoke-test fail, so it blocked the "safe to demo" signal.
+- **Area:** `infrastructure/scripts/demo-smoke-test.sh`.
+
+**What was wrong.** The control-plane layer counted `/api/v1/marketplace/products` and asserted `>= 8`, with a comment calling the marketplace the surface for *"how many products across all orgs."* That assumption WAS the cross-org leak B-086 (#242) closed. Once the marketplace became correctly org-scoped, the default smoke user (`admin@acme`) sees only Acme's **6** products → `product count 6 < minimum 8` → fail.
+
+**Fix.** `MIN_PRODUCTS` default 8 → 6 (the caller-org seed count), and the comment now states the marketplace is org-scoped and this counts the caller's own org. The agent-layer `list_products` check already asserted only `> 0`, so it was unaffected.
+
+- **Fix commit:** see PR for `fix/smoke-test-org-scoped-count`.
+
+---
+
 ## B-093 — `demo-sync.sh` smoke-test step aborts on unbound `KEYCLOAK_ADMIN_CLIENT_SECRET` (deploy + seed succeed, smoke never runs)
 
 - **Resolved:** 2026-05-31, hit while redeploying the demo box for the round-2 walkthrough fixes.
