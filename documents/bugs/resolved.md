@@ -54,6 +54,88 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-091 — relative-time formatters rendered every future timestamp as "just now" ("expires just now" on a 30-day expiry)
+
+- **Resolved:** 2026-05-31 (#246), found during the round-2 self-paced walkthrough on the agent-detail page.
+- **Severity:** Low — cosmetic, but it made expiries look broken (a connection reference 30 days out read "expires just now").
+- **Area:** `apps/web/src/features/notifications/category-labels.ts`, `apps/web/src/shared/utils/format-time.ts`.
+
+**What was wrong.** Both `formatRelativeTime` helpers computed `now - then` and clamped negatives, so any FUTURE timestamp (an expiry) collapsed to "just now."
+
+**Fix.** Detect `diffMs < 0` and format the absolute delta as future ("in Xd") vs past ("Xd ago"); far-future falls back to the date.
+
+- **Fix commit:** #246 (`fix/relative-time-future-dates`).
+
+---
+
+## B-090 — seeded a synthetic trust-score trajectory (SUPERSEDED by B-092)
+
+- **Resolved:** 2026-05-31 (#245) — **then superseded the same day by [B-092](#b-092--seeded-trust-score-drop-was-a-synthetic-number-the-live-trust-engine-overwrote-revises-b-090).**
+- **Severity:** Medium.
+- **Area:** `packages/seed/src/runner.ts` (trust step), `apps/api/src/seed/seed.controller.ts` + `apps/api/src/trust-score/trust-score.service.ts` (`recordHistoricalScore` + `/seed/trust-score-history`).
+
+**What it did.** Seeded an explicit declining `trust_score_history` trajectory for revenue-daily and skipped the recompute, so the demo's "trust dropped" notification had a matching VIEW. **Why it didn't hold:** the trust engine recomputes from real data (event-driven + a 5-min cron) and overwrote the synthetic number — see B-092 for the root cause and the data-degradation approach that replaced it. The `recordHistoricalScore` method + `/seed/trust-score-history` endpoint it added are still used (now only for the back-dated trend lead-in).
+
+- **Fix commit:** #245 (superseded by #247).
+
+---
+
+## B-089 — connection-snippet destination dropdown offered every destination regardless of port interface type
+
+- **Resolved:** 2026-05-31 (#244).
+- **Severity:** Low — confusing UX; e.g. a `snowflake_share` destination appeared for non-Snowflake ports, and SQL-only destinations appeared for a semantic port.
+- **Area:** `apps/web/src/shared/api/marketplace.ts`, `apps/web/src/features/discovery/ProductDetailPage.tsx`.
+
+**What was wrong.** The Ports tab rendered a fixed `SNIPPET_DESTINATIONS` list for every port.
+
+**Fix.** New `snippetDestinationsFor(interfaceType, isSnowflake)` scopes the list: `sql_jdbc` → the full destination set (minus `snowflake_share` unless the source is Snowflake); other interface types → Python only.
+
+- **Fix commit:** #244 (`fix/lineage-nav-snippet-destinations`).
+
+---
+
+## B-088 — lineage graph nodes were not navigable (clicking a product node did nothing)
+
+- **Resolved:** 2026-05-31 (#244).
+- **Severity:** Low — the lineage explorer looked interactive but a node click only logged to the console.
+- **Area:** `apps/web/src/features/lineage/LineageExplorer.tsx`, `apps/web/src/features/lineage/components/NodeDetailPanel.tsx`.
+
+**What was wrong.** `handleNodeClick` had a leftover `console.log` and the detail panel had no way to navigate to the selected product.
+
+**Fix.** `NodeDetailPanel` now renders a "View product →" `Link` for `DataProduct` nodes other than the central one (it receives `orgId` + `centralProductId`), so the graph is a real navigation surface.
+
+- **Fix commit:** #244.
+
+---
+
+## B-087 — approval UI showed the requester's raw principal UUID instead of a name
+
+- **Resolved:** 2026-05-31 (#243), found on the Pending Access Requests page during the walkthrough.
+- **Severity:** Medium — an approver saw "Product `<uuid>`" / a bare requester UUID and couldn't tell who was asking.
+- **Area:** `packages/types/src/access.ts`, `apps/api/src/access/access.service.ts`, `apps/api/src/access/access.module.ts`, `apps/web/src/features/access-requests/PendingAccessRequestsPage.tsx`.
+
+**What was wrong.** `AccessRequest` carried only `requesterPrincipalId`; the UI rendered the UUID.
+
+**Fix.** Added `requesterName` / `requesterEmail` to the `AccessRequest` type; `AccessService.enrichRequesters` batch-resolves them via the principal repo (a deliberate cross-tenant lookup — under [B-071](#b-071-cross-org-access-requests-structurally-broken-rresolved-2026-05-23) Model A an owner in org B resolves a requester who lives in org A — annotated `@cross-tenant-by-design`) in `listRequests` + `getRequest`. The page renders `requesterName ?? requesterEmail ?? uuid`. Note the systemic UUID→name cleanup elsewhere (agent-detail page, product names on grants) is tracked separately.
+
+- **Fix commit:** #243 (`fix/approval-requester-identity`).
+
+---
+
+## B-086 — the marketplace listed products across ALL orgs (cross-org tenant-isolation leak)
+
+- **Resolved:** 2026-05-31 (#242). **Security.**
+- **Severity:** High — a tenant-isolation breach: any authenticated principal saw every org's products in the marketplace (6 Acme + 4 Beta for an Acme caller). Cross-**domain** discovery *within* an org is intended; cross-**org** visibility is a leak.
+- **Area:** `apps/api/src/search/marketplace-global.controller.ts`, `apps/api/src/search/marketplace.service.ts`, `apps/api/src/search/__tests__/marketplace.service.spec.ts`.
+
+**What was wrong.** The global marketplace controller passed `undefined` org (and a `listAllProducts` path) into the service, whose `orgId` was optional and whose org filter was conditional — so the listing spanned all tenants.
+
+**Fix.** Every marketplace read is now scoped to `ctx.orgId` (`listProducts`, detail, schema, lineage, SLOs, my-requests). Removed `listAllProducts`; made `orgId` **required** on the service methods with fail-loud guards; the org filter is now unconditional. The spec's "does NOT add orgId filter" test was flipped to assert it always scopes. Surfaced when a self-paced walkthrough showed another org's products in the marketplace.
+
+- **Fix commit:** #242 (`fix/marketplace-org-scope`).
+
+---
+
 ## B-082 — MCP `get_product` returned HTTP 500 (not a structured tool error) when `domain_id` was omitted; `"undefined"` reached a `uuid` column
 
 - **Resolved:** 2026-05-30 (filed 2026-05-30 during the #226 seed-extension verification).

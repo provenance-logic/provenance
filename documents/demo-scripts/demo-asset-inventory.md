@@ -90,7 +90,7 @@ Use Acme for general-audience walkthroughs; switch to Beta when you want to lean
 | Campaign Attribution | Marketing | Maya | 12h | REST | marketing, attribution | Currently **in SLO violation** (p95 latency 742ms vs 500ms threshold) |
 | Daily Inventory Snapshot | Supply Chain | Samuel | 24h | SQL/JDBC | supply-chain, inventory | Currently **in SLO violation** (snapshot freshness 11.4h vs 8h threshold) |
 | Supplier Performance | Supply Chain | Samuel | 7d | REST | supply-chain, suppliers | Healthy product; good example of weekly cadence |
-| Daily Revenue Recognition | Finance | Fatima | 24h | SQL/JDBC | finance, revenue, **sox-relevant** | **Trust score just dropped 0.91 → 0.78** (reconciliation failed SLO twice this week). Best "the platform tells you something is wrong" moment |
+| Daily Revenue Recognition | Finance | Fatima | 24h | SQL/JDBC | finance, revenue, **sox-relevant** | **Trust score collapsed 0.91 → 0.30 (critical / RED)** — reconciliation SLOs breaching for ~6 days *and* flagged non-compliant; the score is genuinely engine-computed and cron-stable (B-092), not a seeded number. The strongest "the platform tells you something is wrong" moment |
 | Weekly Revenue Forecast | Finance | Fatima | 7d | GraphQL | finance, forecast | Shows GraphQL interface in the connection details |
 
 ### Beta Industries (4 products)
@@ -106,7 +106,7 @@ Use Acme for general-audience walkthroughs; switch to Beta when you want to lean
 
 - **Five port interface types covered:** SQL/JDBC, REST, GraphQL, Streaming (Kafka), Semantic (MCP). Picks the right interface for whatever audience you're talking to.
 - **Three lifecycle realities:** all 10 are Published right now, but the lifecycle UI exists (Draft / Published / Deprecated / Decommissioned) — note this when explaining the model.
-- **Two active SLO violations and one trust-score drop seeded in** — see Section 6.
+- **Two active SLO violations and one real trust-score collapse** (revenue-daily → 0.30 critical/red, engine-computed) seeded in — see Section 6.
 
 ---
 
@@ -151,11 +151,11 @@ This is what makes the demo feel *alive* — open the right login and there's al
 
 ### As `governance@acme.example.com`
 - **Compliance drift detected** on Customer 360 — PII completeness at 93.2% vs 95% policy floor. Deep links to `/governance/compliance`.
-- **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Same signal `finance-lead` sees, fanned out to governance because material trust regressions are governance-relevant across all domains. Deep links to `/marketplace/revenue-daily/trust`.
+- **Trust score significant change** on Daily Revenue Recognition — collapsed from 0.91 to **0.30 (critical/red)**. Same signal `finance-lead` sees, fanned out to governance because material trust regressions are governance-relevant across all domains. Deep links to `/marketplace/revenue-daily/trust`.
 - **Classification changed** for Marketing Copilot (observed → supervised). Already read but in history. Deep links to `/agents/marketing-copilot`. *Caveat: this is a seeded notification only — the agent's current classification is still `observed` and the Classification History tab shows only the initial Observed entry. The notification is a "platform surfaces state-changes" beat; don't deep-link into the agent expecting to see the change.*
 
 ### As `finance-lead@acme.example.com`
-- **Trust score significant change** on Daily Revenue Recognition — dropped from 0.91 to 0.78. Reason: reconciliation match rate fell below 99.5% SLO floor twice this week. Deep links to `/marketplace/revenue-daily/trust`. **This is the strongest single moment in the demo for "the platform tells you something is wrong before you ask."**
+- **Trust score significant change** on Daily Revenue Recognition — collapsed from 0.91 to **0.30 (critical/red)**. Reason: reconciliation freshness/match SLOs breaching for ~6 days and the product is now flagged non-compliant. Deep links to `/marketplace/revenue-daily/trust`. **This is the strongest single moment in the demo for "the platform tells you something is wrong before you ask"** — the red badge is genuinely engine-computed from the breaching SLOs + non-compliant state, and the history chart shows the decline (0.91 → 0.82 → 0.64 → 0.45 → 0.30).
 - **Pending access request** from Samuel Okafor (supply-lead) wanting to reconcile inventory write-offs against revenue postings.
 
 ### As `marketing-lead@acme.example.com`
@@ -174,9 +174,9 @@ Beta seed has similar patterns (access requests, SLO signals, KYC-related notifi
 
 ---
 
-## 7. Governance policies (6 seeded, all OPA Rego)
+## 7. Governance policies (6 seeded, compiled to OPA Rego)
 
-Visible in the Policy Studio when logged in as `governance@acme.example.com` or `compliance@beta.example.com`.
+Set/viewed in the Policy Studio when logged in as `governance@acme.example.com` or `compliance@beta.example.com`. **Note (corrected 2026-05-31):** the Policy Studio is a *settings-based authoring UI* — these 6 are the *effective* policies that result from per-domain rule choices, not documents you open and read as Rego (see Demo angle).
 
 | Org | Policy key | Scope | Plain-English summary |
 |---|---|---|---|
@@ -187,7 +187,7 @@ Visible in the Policy Studio when logged in as `governance@acme.example.com` or 
 | beta-industries | `beta.risk-domain-observed-only` | domain | Risk-domain products require Observed agents (governance grant required for higher classification) |
 | beta-industries | `beta.kyc-retention-90d` | product | KYC ports must cap output to 90 days of retention |
 
-**Demo angle.** These are real Rego — open one in the Policy Studio and you can read the actual policy body. The "policy as code, enforced automatically" claim is provable in 90 seconds.
+**Demo angle.** The Policy Studio is a **settings-based authoring UI**, *not* a Rego viewer (corrected 2026-05-31 after a walkthrough — there is no "open a policy and read the Rego" surface). Governance authors structured rules across **8 policy-domain tabs** (Schema Compliance, Data Classification, Versioning Policy, Access Control, Lineage Completeness, SLO Requirements, Agent Access, Interoperability) via dropdowns/checkboxes; on **Publish**, those choices compile to OPA Rego server-side and are enforced at request time. The 6 policies above are the *effective* policies that result. The beat is "governance is computational, not procedural — you set federated rules per policy domain and the platform enforces them automatically," **not** "read the Rego." (The Rego is real and hot-reloadable under the hood; the UI just doesn't surface the source, by design.)
 
 ---
 
@@ -236,14 +236,14 @@ These are *skeletons* — bullet points that mark out the shape of a walk. Take 
 
 The story is "**this is a coordination platform for the AI-agent era.**" Show, don't explain.
 
-1. **Open marketplace** as `analyst@acme.example.com` (a non-owner consumer). One screen: 10 products across two orgs, with trust scores, owners, lifecycle states, freshness SLAs. *"This is what data looks like when it's a *product*, not a table."*
+1. **Open marketplace** as `analyst@acme.example.com` (a non-owner consumer). One screen: **Acme's 6 products spanning its domains** (marketing, finance, supply-chain), with trust scores, owners, lifecycle states, freshness SLAs. *"This is what data looks like when it's a *product*, not a table — and discovery is federated across domains within your org."* **(Marketplace is org-scoped — B-086, #242: a consumer sees their own org's products across all its domains, never another tenant's. Cross-*domain* discovery is the data-mesh story; cross-*org* would be a leak.)**
 2. **Click Customer 360** → show schema + ownership + lineage tab + trust score breakdown. *"Every product has a contract, an owner, a service level."* (Analyst already has a grant here, so its Ports tab shows live connection snippets — good for the contract story, but use a different product for the *request* beat below.)
 3. **Open Campaign Attribution → click "Request Access."** Show the request form. Submit. *"Self-serve, not a Jira ticket."* (Campaign Attribution is the one Acme product analyst has no grant on — so the Request Access button is present. Customer 360 / Revenue Daily / Supplier Performance already have grants and won't show it.)
 4. **Switch login to `marketing-lead@acme.example.com`** (the owner of Campaign Attribution). Open **Access Requests** in the left nav (or click the notification — deep-links resolve correctly now). The request you just submitted is at the top with inline Approve / Deny actions. Click Approve, confirm in the dialog. *"The compliant path is the easy path — and every approval is an explicit, audited gesture."*
 5. **Switch back to analyst.** Now the connection package is visible — JDBC URL, curl snippet, Python snippet, MCP integration guide (snippets render for every interface type, B-084 fixed). *"Approved means *usable*, not 'wait three days for IT.'"*
 6. **Open the Agent Registry** (one click). Show the two registered agents with trust classifications. *"And it works the same way for AI agents. Same governance, same audit, same trust contract."*
 7. **Click Marketing Copilot.** Detail page loads with four tabs: Overview, Access Grants, Connection References, Classification History. The **Connection References tab now shows two active references** (customer-360, revenue-daily — seeded by PR #226). *"Every agent action is provenanced — same word the company is named for. The Connection References tab is the Domain 12 surface: per-use-case consent records governing what this agent can do, with what data, for how long."* ⚠️ The Classification History tab shows only the initial Observed entry — don't promise a visible observed→supervised transition (the seeded notification is a synthetic signal; see Section 5 caveat).
-8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score drop** on Daily Revenue Recognition (0.91 → 0.78, reconciliation match rate breached SLO twice this week). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."*
+8. **Open `governance@acme.example.com`.** Two governance-relevant signals are already waiting: the **compliance drift** on Customer 360 (PII completeness below policy floor) and the **trust-score collapse** on Daily Revenue Recognition (0.91 → 0.30, critical/red — SLOs breaching + non-compliant). *"And the platform tells you when something is wrong before you ask — both compliance regressions and trust regressions surface in the governance lens without anyone having to go look."*
 
 **What to avoid:** Don't show the dev-mode URL bar (port 3000 etc.). Don't say "this is built on Kubernetes" — it's not, yet. The architecture story is *the right one for production*; the current MVP is Docker Compose on EC2 and that's fine.
 
@@ -253,7 +253,7 @@ The story is "**we made all the right architecture calls and there's evidence of
 
 1. **Open the Lineage Explorer** on `revenue-daily`. Show the DAG. *"Native graph database for the lineage layer (Neo4j) — arbitrary-depth traversal is the wrong shape for relational, here's why."*
 2. **Click any upstream node.** Show navigation. *"Time travel is on the roadmap (F5.17), not yet shipped — but the data model already supports it."*
-3. **Open the Policy Studio.** Show one of the seeded OPA policies — `beta.pci-scope-isolation` is a good one. *"Governance is computational, not procedural. This is real Rego, hot-reloadable, enforced at request time."*
+3. **Open the Policy Studio.** Walk the 8 policy-domain tabs and show how rules are set (e.g. the access-control / classification choices behind `beta.pci-scope-isolation`). *"Governance is computational, not procedural — you author federated rules per policy domain in the UI, they compile to OPA Rego on publish, hot-reloadable and enforced at request time."* (It's a settings UI, not a Rego viewer — don't promise to show raw Rego.)
 4. **Show the Compliance Monitor.** Drift detection on Customer 360 with the 93.2% vs 95% number. *"Drift detection runs continuously; products move through Compliant / Drift Detected / Grace Period / Non-Compliant automatically."*
 5. **Open the API docs at `/api/v1/docs`.** OpenAPI 3.1 rendered live, source-of-truth specs in `packages/openapi/`. *"Every API surface in the platform is spec-first."*
 6. **Live MCP demo.** From your terminal, hit the MCP server as Marketing Copilot and call `list_products` then `get_trust_score` with `product_id` for customer-360. *"Agents are first-class. Same JWTs, same row-level-security, same audit log."* **For the violation beat:** also exchange a Risk Assistant JWT and call `get_trust_score` against credit-risk-decisions — denied with a structured `CONNECTION_REFERENCE_SCOPE_VIOLATION` because the seeded reference is discovery-only. Both verified end-to-end on the demo box 2026-05-30. `get_product` is also safe to demo from the CLI now — it takes `product_id` alone (B-082 fixed in #236, verified end-to-end via MCP on the box 2026-05-30), matching the other three product-bound tools.
@@ -268,7 +268,7 @@ The story is "**we made your job a software problem.**"
 
 1. **Log in as `governance@acme.example.com`.** Notification center shows compliance drift + classification change. *"Continuous compliance monitoring is how the platform's day starts."*
 2. **Click into the drift on Customer 360.** Show what triggered it (PII completeness 93.2% vs 95% floor). *"The threshold is yours, configured via UI. The check runs against live SLO data continuously."*
-3. **Open Policy Studio → `acme.pii-requires-governance-approval`.** Show the Rego. *"Every governance rule is code. Every change is audited. There are no spreadsheets and no email approvals."*
+3. **Open Policy Studio → the Access Control / Data Classification tabs** behind `acme.pii-requires-governance-approval`. Show how the rule is configured (and the Publish → compile-to-Rego flow). *"Every governance rule is code under the hood — authored as settings here, compiled to Rego, every change audited. No spreadsheets, no email approvals."* (Settings UI, not a Rego viewer.)
 4. **Switch to `compliance@beta.example.com`.** Different tenant, completely isolated, different policies. *"Multi-tenancy is row-level. The PCI scope policy you just saw doesn't even *exist* in the other org's namespace."*
 5. **Click the Marketing Copilot agent.** Show classification history + the policy that gates a promotion to Autonomous. *"AI agents are governed the same way. Same audit trail. Same approval requirement. The compliance team is the gatekeeper for autonomy."*
 6. **Open the Audit Log query view.** Show recent agent activity with verified identity context. *"Every agent action is signed, scoped, and recoverable. Append-only. No DELETE permissions at the database level."*
