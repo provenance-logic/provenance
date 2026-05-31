@@ -78,8 +78,8 @@ export const acmeCorpNotifications: SeedNotification[] = [
     payload: {
       productName: 'Daily Revenue Recognition',
       previousScore: 0.91,
-      currentScore: 0.78,
-      reason: 'Reconciliation match rate fell below the 99.5% SLO floor twice this week.',
+      currentScore: 0.30,
+      reason: 'Reconciliation freshness and match-rate SLOs have been breaching for six days and the product is now flagged non-compliant — trust has fallen to critical.',
     },
     deepLink: '/marketplace/revenue-daily/trust',
     seedKey: 'acme:finance:trust:revenue-daily',
@@ -94,8 +94,8 @@ export const acmeCorpNotifications: SeedNotification[] = [
     payload: {
       productName: 'Daily Revenue Recognition',
       previousScore: 0.91,
-      currentScore: 0.78,
-      reason: 'Reconciliation match rate fell below the 99.5% SLO floor twice this week.',
+      currentScore: 0.30,
+      reason: 'Reconciliation freshness and match-rate SLOs have been breaching for six days and the product is now flagged non-compliant — trust has fallen to critical.',
     },
     deepLink: '/marketplace/revenue-daily/trust',
     seedKey: 'acme:governance:trust:revenue-daily',
