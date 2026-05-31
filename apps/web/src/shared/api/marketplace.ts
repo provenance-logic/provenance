@@ -176,6 +176,21 @@ export const SNIPPET_DESTINATIONS: { value: SnippetDestination; label: string }[
   { value: 'snowflake_share', label: 'Snowflake share (cross-org)' },
 ];
 
+// Which destinations actually apply to a port's interface type. Only sql_jdbc
+// supports the full toolset; every other interface type (semantic_query_endpoint,
+// rest_api, graphql, streaming_topic, file_object_export) is python-only — the
+// backend returns `destination_not_yet_supported` for the rest, which surfaced
+// in the UI as a wall of "not yet generated" errors. Filter the picker instead.
+export function snippetDestinationsFor(
+  interfaceType: string | null | undefined,
+  isSnowflake = false,
+): { value: SnippetDestination; label: string }[] {
+  if (interfaceType === 'sql_jdbc') {
+    return SNIPPET_DESTINATIONS.filter((d) => d.value !== 'snowflake_share' || isSnowflake);
+  }
+  return SNIPPET_DESTINATIONS.filter((d) => d.value === 'python');
+}
+
 export interface PortSnippetResponse {
   destination: SnippetDestination;
   language: 'python' | 'yaml' | 'text' | 'json' | 'xml';

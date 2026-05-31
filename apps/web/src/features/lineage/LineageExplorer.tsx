@@ -113,7 +113,6 @@ export function LineageExplorer({ productId, orgId }: Props) {
   }, [orgId, productId, depth, direction, retryKey]);
 
   const handleNodeClick = useCallback((node: LineageGraphNode) => {
-    console.log('Node clicked, data:', JSON.stringify(node, null, 2));
     setSelectedNode(node);
   }, []);
 
@@ -151,7 +150,12 @@ export function LineageExplorer({ productId, orgId }: Props) {
           />
           {selectedNode && (
             <ErrorBoundary fallback={<div className="absolute top-0 right-0 w-80 bg-red-50 p-4 z-10">Panel error - check console</div>}>
-              <NodeDetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+              <NodeDetailPanel
+                node={selectedNode}
+                orgId={orgId}
+                centralProductId={productId}
+                onClose={() => setSelectedNode(null)}
+              />
             </ErrorBoundary>
           )}
         </div>
