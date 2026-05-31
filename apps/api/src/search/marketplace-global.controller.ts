@@ -16,6 +16,12 @@ import type {
   MarketplaceSortOption,
 } from '@provenance/types';
 
+// Marketplace discovery is cross-DOMAIN within a single org — NEVER cross-org.
+// Organization is a hard tenant boundary. Every method here scopes to the
+// caller's org via `ctx.orgId`; passing `undefined` to the service (its
+// cross-org path) leaked Beta products into an Acme user's marketplace and is
+// not permitted. (The org is in the route on the sibling
+// `organizations/:orgId/marketplace` controller; here it comes from the JWT.)
 @UseGuards(JwtAuthGuard)
 @Controller('marketplace')
 export class MarketplaceGlobalController {
@@ -23,6 +29,7 @@ export class MarketplaceGlobalController {
 
   @Get('products')
   listProducts(
+    @ReqContext() ctx: RequestContext,
     @Query('q') q?: string,
     @Query('domain') domain?: string,
     @Query('outputPortType') outputPortType?: string,
@@ -46,7 +53,8 @@ export class MarketplaceGlobalController {
     if (includeDeprecated === 'true') filters.includeDeprecated = true;
     if (sort)         filters.sort             = sort as MarketplaceSortOption;
 
-    return this.marketplaceService.listAllProducts(
+    return this.marketplaceService.listProducts(
+      ctx.orgId,
       filters,
       page  ? parseInt(page,  10) : 1,
       limit ? parseInt(limit, 10) : 20,
@@ -58,30 +66,33 @@ export class MarketplaceGlobalController {
     @Param('productId') productId: string,
     @ReqContext() ctx: RequestContext,
   ): Promise<MarketplaceProductDetail> {
-    return this.marketplaceService.getProductDetail(undefined, productId, ctx);
+    return this.marketplaceService.getProductDetail(ctx.orgId, productId, ctx);
   }
 
   @Get('products/:productId/schema')
   getProductSchema(
     @Param('productId') productId: string,
+    @ReqContext() ctx: RequestContext,
   ): Promise<ProductSchema> {
-    return this.marketplaceService.getProductSchema(undefined, productId);
+    return this.marketplaceService.getProductSchema(ctx.orgId, productId);
   }
 
   @Get('products/:productId/lineage')
   getProductLineage(
     @Param('productId') productId: string,
+    @ReqContext() ctx: RequestContext,
     @Query('depth') depth?: string,
   ): Promise<LineageGraph> {
     const d = depth ? Math.min(5, Math.max(1, parseInt(depth, 10))) : 3;
-    return this.marketplaceService.getProductLineage(undefined, productId, d);
+    return this.marketplaceService.getProductLineage(ctx.orgId, productId, d);
   }
 
   @Get('products/:productId/slos')
   getProductSlos(
     @Param('productId') productId: string,
+    @ReqContext() ctx: RequestContext,
   ): Promise<SloSummary> {
-    return this.marketplaceService.getProductSlos(undefined, productId);
+    return this.marketplaceService.getProductSlos(ctx.orgId, productId);
   }
 
   @Get('products/:productId/access-requests')
@@ -92,6 +103,7 @@ export class MarketplaceGlobalController {
     @Query('offset') offset?: string,
   ): Promise<AccessRequestList> {
     return this.marketplaceService.getMyAccessRequests(
+      ctx.orgId,
       productId,
       ctx.principalId,
       limit  ? parseInt(limit,  10) : 20,

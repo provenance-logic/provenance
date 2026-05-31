@@ -106,13 +106,10 @@ export class MarketplaceService {
   // Marketplace listing (PostgreSQL-first)
   // ---------------------------------------------------------------------------
 
-  async listAllProducts(
-    filters: MarketplaceFilters = {},
-    page = 1,
-    limit = 20,
-  ): Promise<MarketplaceProductList> {
-    return this.queryProducts(undefined, filters, page, limit);
-  }
+  // NOTE: there is intentionally no cross-org listing method. Marketplace
+  // discovery is org-scoped (cross-domain within one org only); the previous
+  // `listAllProducts` (orgId=undefined → no filter) leaked products across the
+  // org tenant boundary and was removed. All entry points require an orgId.
 
   async listProducts(
     orgId: string,
@@ -124,11 +121,12 @@ export class MarketplaceService {
   }
 
   private async queryProducts(
-    orgId: string | undefined,
+    orgId: string,
     filters: MarketplaceFilters = {},
     page = 1,
     limit = 20,
   ): Promise<MarketplaceProductList> {
+    if (!orgId) throw new Error('queryProducts: orgId is required (marketplace is org-scoped — no cross-org listing)');
     page  = Math.max(1, page);
     limit = Math.min(100, Math.max(1, limit));
     const offset = (page - 1) * limit;
@@ -160,9 +158,7 @@ export class MarketplaceService {
           : "p.status = 'published'",
       );
 
-    if (orgId) {
-      qb.andWhere('p.orgId = :orgId', { orgId });
-    }
+    qb.andWhere('p.orgId = :orgId', { orgId });
 
     if (searchIds && searchIds.length > 0) {
       qb.andWhere('p.id IN (:...searchIds)', { searchIds });
@@ -287,7 +283,7 @@ export class MarketplaceService {
   // Product detail
   // ---------------------------------------------------------------------------
 
-  async getProductDetail(orgId: string | undefined, productId: string, ctx?: RequestContext): Promise<MarketplaceProductDetail> {
+  async getProductDetail(orgId: string, productId: string, ctx?: RequestContext): Promise<MarketplaceProductDetail> {
     const product = await this.findProduct(productId, orgId, ['ports']);
     const resolvedOrgId = product.orgId;
 
@@ -336,7 +332,7 @@ export class MarketplaceService {
   // Schema
   // ---------------------------------------------------------------------------
 
-  async getProductSchema(orgId: string | undefined, productId: string): Promise<ProductSchema> {
+  async getProductSchema(orgId: string, productId: string): Promise<ProductSchema> {
     const product = await this.findProduct(productId, orgId);
     const resolvedOrgId = product.orgId;
 
@@ -375,7 +371,7 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   async getProductLineage(
-    orgId: string | undefined,
+    orgId: string,
     productId: string,
     depth: number,
   ): Promise<LineageGraph> {
@@ -403,7 +399,7 @@ export class MarketplaceService {
   // SLOs (Phase 3 placeholder)
   // ---------------------------------------------------------------------------
 
-  async getProductSlos(orgId: string | undefined, productId: string): Promise<SloSummary> {
+  async getProductSlos(orgId: string, productId: string): Promise<SloSummary> {
     const product = await this.findProduct(productId, orgId);
     const resolvedOrgId = product.orgId;
 
@@ -431,12 +427,13 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   async getMyAccessRequests(
+    orgId: string,
     productId: string,
     requesterPrincipalId: string,
     limit = 20,
     offset = 0,
   ): Promise<AccessRequestList> {
-    const product = await this.findProduct(productId);
+    const product = await this.findProduct(productId, orgId);
 
     const qb = this.requestRepo
       .createQueryBuilder('req')
@@ -546,7 +543,7 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   private async searchProductIds(
-    orgId: string | undefined,
+    orgId: string,
     q: string,
     includeDeprecated: boolean,
   ): Promise<{ ids: string[]; scoreById: Map<string, number> }> {
@@ -613,11 +610,12 @@ export class MarketplaceService {
 
   private async findProduct(
     productId: string,
-    orgId?: string,
+    orgId: string,
     relations?: string[],
   ): Promise<DataProductEntity> {
-    const where: Record<string, string> = { id: productId };
-    if (orgId) where.orgId = orgId;
+    if (!orgId) throw new Error('findProduct: orgId is required (marketplace is org-scoped)');
+    // Org-scoped lookup: a product in another org returns 404 here, not its data.
+    const where: Record<string, string> = { id: productId, orgId };
     const opts: { where: Record<string, string>; relations?: string[] } = { where };
     if (relations) opts.relations = relations;
     const product = await this.productRepo.findOne(opts);
