@@ -324,7 +324,7 @@ describe('SeedController — POST /seed/agents (B-076 KC client provisioning)', 
     expect(agentRepo.update).toHaveBeenCalledWith(AGENT_ID, { keycloakClientProvisioned: true });
   });
 
-  it('returns early without calling createAgentClient when the agent already exists', async () => {
+  it('re-provisions the Keycloak client to self-heal stale mappers when the agent already exists, without re-running the create transaction (B-095)', async () => {
     agentRepo.findOne.mockResolvedValueOnce({ agentId: AGENT_ID, orgId: AGENT_ORG_ID });
 
     const result = await controller.agent({
@@ -337,8 +337,17 @@ describe('SeedController — POST /seed/agents (B-076 KC client provisioning)', 
     });
 
     expect(result).toEqual({ id: AGENT_ID });
-    expect(keycloakAdmin.createAgentClient).not.toHaveBeenCalled();
+    // No new agent is created — the create transaction is skipped...
     expect(transactionFn).not.toHaveBeenCalled();
+    // ...but the Keycloak client IS re-provisioned (idempotent 409 delete +
+    // recreate) so a stale client picks up the current hardcoded-claim mappers.
+    expect(keycloakAdmin.createAgentClient).toHaveBeenCalledTimes(1);
+    expect(keycloakAdmin.createAgentClient).toHaveBeenCalledWith(
+      AGENT_ID,
+      AGENT_ORG_ID,
+      `agent-${AGENT_SLUG}`,
+    );
+    expect(agentRepo.update).toHaveBeenCalledWith(AGENT_ID, { keycloakClientProvisioned: true });
   });
 
   it('throws and does not mark as provisioned when createAgentClient fails', async () => {

@@ -620,16 +620,16 @@ export class SeedController {
   @Post('agents')
   @HttpCode(HttpStatus.OK)
   async agent(@Body() dto: SeedAgentDto): Promise<{ id: string }> {
-    // Idempotency guard — if the agent already exists, return early.
-    // We still skip the Keycloak call on repeated runs: the client was
-    // already provisioned on the first run, and re-running createAgentClient
-    // would throw a 409. The agent identity row's keycloakClientProvisioned
-    // flag is the authoritative record.
-    //
-    // Self-heal: pre-existing agents from older seed runs (before this
-    // commit) were created WITHOUT a matching identity.principals row.
-    // Without that row, any access_grant insert against this agent FK-fails.
-    // Ensure the principals row exists for every agent we return, new or old.
+    // Idempotency guard — if the agent already exists, repair-and-return.
+    // Two self-heals run on the existing path:
+    //   (1) the identity.principals row — pre-existing agents from older seed
+    //       runs were created WITHOUT it, and any access_grant insert against
+    //       this agent FK-fails without it.
+    //   (2) the Keycloak client mappers (B-095) — agent clients provisioned by
+    //       seed runs from before createAgentClient attached the hardcoded-claim
+    //       mappers (provenance_principal_type / agent_id / provenance_org_id)
+    //       issue tokens the Agent Query Layer rejects with 401. This path used
+    //       to skip Keycloak entirely, so a reseed never repaired them.
     const existing = await this.agentRepo.findOne({
       where: { orgId: dto.orgId, displayName: dto.displayName },
     });
@@ -649,6 +649,19 @@ export class SeedController {
           }),
         );
       }
+      // Re-provision the Keycloak client so a stale client picks up the current
+      // mapper set. createAgentClient is idempotent — its 409 handler deletes
+      // and recreates — so this repairs rather than throws. The client secret
+      // re-rotates, which is harmless for seed agents (the secret is fetched
+      // fresh from Keycloak when needed, never persisted by the platform).
+      await this.keycloakAdmin.createAgentClient(
+        existing.agentId,
+        dto.orgId,
+        `agent-${dto.agentSlug}`,
+      );
+      await this.agentRepo.update(existing.agentId, {
+        keycloakClientProvisioned: true,
+      });
       return { id: existing.agentId };
     }
 
