@@ -75,15 +75,20 @@ export function formatRelativeTime(iso: string): string {
   try {
     const then = new Date(iso).getTime();
     const now = Date.now();
-    const diff = Math.max(0, now - then);
-    const seconds = Math.floor(diff / 1000);
+    // Handle FUTURE dates (e.g. an expiry) too — clamping to 0 made every
+    // future timestamp render as "just now" (so an expiry 30 days out read as
+    // "expires just now"). Past → "Xd ago", future → "in Xd", far → the date.
+    const diffMs = now - then;
+    const future = diffMs < 0;
+    const abs = Math.abs(diffMs);
+    const seconds = Math.floor(abs / 1000);
     if (seconds < 60) return 'just now';
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 60) return future ? `in ${minutes}m` : `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return future ? `in ${hours}h` : `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    if (days < 7) return `${days}d ago`;
+    if (days < 7) return future ? `in ${days}d` : `${days}d ago`;
     return new Date(iso).toLocaleDateString();
   } catch {
     return iso;
