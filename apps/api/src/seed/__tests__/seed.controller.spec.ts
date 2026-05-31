@@ -24,6 +24,7 @@ import { LineageService } from '../../lineage/lineage.service.js';
 import { SearchIndexingService } from '../../search/search-indexing.service.js';
 import { ProductIndexService } from '../../search/product-index.service.js';
 import { OpaClient } from '../../governance/opa/opa-client.js';
+import { GovernanceService } from '../../governance/governance.service.js';
 
 // Controller-level coverage for the /seed/principals endpoint. The behavior
 // under test is the Keycloak attribute write that closes B-048: after the
@@ -115,6 +116,7 @@ describe('SeedController — POST /seed/principals (B-048 Keycloak attribute wri
         { provide: SearchIndexingService, useValue: noopService() },
         { provide: ProductIndexService, useValue: noopService() },
         { provide: OpaClient, useValue: noopService() },
+        { provide: GovernanceService, useValue: noopService() },
       ],
     }).compile();
 
@@ -280,6 +282,7 @@ describe('SeedController — POST /seed/agents (B-076 KC client provisioning)', 
         { provide: SearchIndexingService, useValue: noopService() },
         { provide: ProductIndexService, useValue: noopService() },
         { provide: OpaClient, useValue: noopService() },
+        { provide: GovernanceService, useValue: noopService() },
       ],
     }).compile();
 

@@ -41,6 +41,7 @@ import { LineageService } from '../lineage/lineage.service.js';
 import { SearchIndexingService } from '../search/search-indexing.service.js';
 import { ProductIndexService } from '../search/product-index.service.js';
 import { OpaClient } from '../governance/opa/opa-client.js';
+import { GovernanceService } from '../governance/governance.service.js';
 import { KeycloakAdminService } from '../auth/keycloak-admin.service.js';
 import type {
   RoleType,
@@ -49,6 +50,8 @@ import type {
   DataClassification,
   PortType,
   OutputPortInterfaceType,
+  ComplianceStateValue,
+  ComplianceViolation,
 } from '@provenance/types';
 
 // Phase 5.6 — dev-experience seed surface.
@@ -250,6 +253,7 @@ export class SeedController {
     private readonly searchIndexingService: SearchIndexingService,
     private readonly productIndexService: ProductIndexService,
     private readonly opaClient: OpaClient,
+    private readonly governanceService: GovernanceService,
     private readonly keycloakAdmin: KeycloakAdminService,
   ) {}
 
@@ -1143,6 +1147,32 @@ export class SeedController {
     }
     const computedAt = new Date(Date.now() - dto.daysAgo * 24 * 60 * 60 * 1000);
     await this.trustScoreService.recordHistoricalScore(product.orgId, productId, dto.score, computedAt);
+    return { ok: true };
+  }
+
+  // Force a product's compliance state so a demo can stage a genuinely
+  // untrustworthy product. Unlike trust-score-history (which seeds a number),
+  // this degrades the underlying DATA the trust engine reads — so the
+  // engine-computed score and the @Cron recompute agree with the seeded story
+  // (governance component drops to 0.0 for `non_compliant`) instead of
+  // overwriting it. Idempotent: upserts the single compliance_states row.
+  @Public()
+  @Post('compliance-state/:productId')
+  @HttpCode(HttpStatus.OK)
+  async seedComplianceState(
+    @Param('productId') productId: string,
+    @Body() dto: { state: ComplianceStateValue; violations?: ComplianceViolation[] },
+  ): Promise<{ ok: true }> {
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    await this.governanceService.seedComplianceState(
+      product.orgId,
+      productId,
+      dto.state,
+      dto.violations ?? [],
+    );
     return { ok: true };
   }
 

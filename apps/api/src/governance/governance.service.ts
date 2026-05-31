@@ -686,6 +686,23 @@ export class GovernanceService {
     this.trustScoreService.recompute(orgId, productId).catch(() => {});
   }
 
+  /**
+   * Seed-only: force a product's compliance state. The seed package uses this
+   * to stage a deliberately non-compliant product so the demo shows a real,
+   * engine-computed trust-score collapse (governance component → 0.0) rather
+   * than a synthetic number the live recompute would overwrite. Routes through
+   * `upsertComplianceState` so the drift notification and trust recompute side
+   * effects fire exactly as they would in production.
+   */
+  async seedComplianceState(
+    orgId: string,
+    productId: string,
+    state: ComplianceStateValue,
+    violations: ComplianceViolation[] = [],
+  ): Promise<void> {
+    await this.upsertComplianceState(orgId, productId, state, violations, null);
+  }
+
   // ---------------------------------------------------------------------------
   // Mappers
   // ---------------------------------------------------------------------------

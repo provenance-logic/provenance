@@ -72,6 +72,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// Products deliberately staged as untrustworthy so the demo can show a REAL,
+// engine-computed trust-score collapse (into the critical/red band) instead of
+// a synthetic number. Their SLO evaluations are seeded as breaching and their
+// compliance state is set non_compliant; the trust engine then computes the
+// low score from that data, and the @Cron recompute keeps it there because the
+// data genuinely says so. A declining backdated history is seeded separately
+// (see the trust-score step) so the trend chart leads down into the red value.
+const DEGRADED_TRUST_PRODUCTS = new Set<string>(['revenue-daily']);
+
 export async function runSeed(ctx: RunContext): Promise<void> {
   const { logger } = ctx;
 
@@ -279,13 +288,22 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       evaluationWindowHours: slo.evaluationWindowHours,
     });
 
-    // Generate 7 daily evaluations: 6 passing + 1 failing 2 days ago.
-    // Story per SLO: "one bad day mid-week, recovered." The summary
-    // endpoint reports pass_rate_7d ≈ 85.7% for every product on
-    // first seed.
+    // Generate 7 daily evaluations.
+    //
+    // Healthy products: 6 passing + 1 failing 2 days ago — story "one bad day
+    // mid-week, recovered" — so the summary endpoint reports pass_rate_7d ≈
+    // 85.7%.
+    //
+    // Degraded products (see DEGRADED_TRUST_PRODUCTS): only the oldest eval
+    // passes — SLOs began breaching ~a week ago and never recovered, so
+    // pass_rate_7d ≈ 14%. Combined with the non-compliant compliance state
+    // staged below, this drives the trust engine to a real critical/red score
+    // (the slo + governance components both collapse) rather than a synthetic
+    // number the live recompute would overwrite.
+    const degraded = DEGRADED_TRUST_PRODUCTS.has(slo.productSlug);
     for (let i = 0; i < 7; i++) {
       const daysAgo = 7 - i;
-      const isFailingSlot = daysAgo === 2;
+      const isFailingSlot = degraded ? daysAgo !== 7 : daysAgo === 2;
       const measuredValue = computeSeedSloMeasurement(
         slo.thresholdOperator,
         slo.thresholdValue,
@@ -304,6 +322,33 @@ export async function runSeed(ctx: RunContext): Promise<void> {
         },
       });
     }
+  }
+
+  // Stage the deliberately untrustworthy products as non_compliant so the
+  // governance trust component (the heaviest weight, 0.35) collapses to 0.0.
+  // Done after SLOs so the recompute these trigger already sees the breaching
+  // eval data. Together with the breaching SLOs this is what lands the
+  // engine-computed score in the critical/red band — a coherent "failed
+  // governance + blown SLOs" story, not a faked number.
+  logger.info('seed: compliance overrides');
+  for (const slug of DEGRADED_TRUST_PRODUCTS) {
+    const productId = productIdBySlug.get(slug);
+    if (!productId) continue;
+    await ctx.api.post(`/seed/compliance-state/${productId}`, {
+      state: 'non_compliant',
+      violations: [
+        {
+          policyDomain: 'slo',
+          ruleId: 'slo.freshness.breaching',
+          detail: 'Daily reconciliation freshness SLO has been breaching for 6 consecutive days.',
+        },
+        {
+          policyDomain: 'lineage',
+          ruleId: 'lineage.completeness.stale',
+          detail: 'Upstream lineage has not been refreshed since the freshness incident began.',
+        },
+      ],
+    });
   }
 
   logger.info('seed: access requests');
@@ -479,18 +524,24 @@ export async function runSeed(ctx: RunContext): Promise<void> {
   }
 
   logger.info('seed: trust score');
-  // Demo trust-trajectory: the finance/governance "trust dropped 0.91 → 0.78"
-  // notifications need the trust VIEW to actually show that drop. A plain
-  // recompute produces a single flat current score, so for these products we
-  // seed an explicit downward history instead and SKIP the recompute (the
-  // latest seeded point must stay the current score). All other products get
-  // the normal recompute.
+  // The finance/governance "trust collapsed" notifications need the trust VIEW
+  // to actually show a drop. Earlier attempts seeded a synthetic current score,
+  // but the live trust engine (event-driven + @Cron every 5 min) recomputes
+  // from real data and overwrites it. So instead we degrade the underlying DATA
+  // (breaching SLOs + non_compliant state, staged above) and let the engine
+  // compute the low/red score itself — then it stays low because the data says
+  // so. Here we only seed a BACK-DATED declining history so the trend chart has
+  // a downward shape leading into that real current value, and recompute EVERY
+  // product so the current score is always the genuine engine value.
   const TRUST_HISTORY: Record<string, { score: number; daysAgo: number }[]> = {
+    // Declining trajectory for revenue-daily, leading down into the real
+    // critical/red score (~0.32) the engine now computes from its degraded
+    // data. The final, current point is the live recompute below — not seeded.
     'revenue-daily': [
       { score: 0.91, daysAgo: 14 },
-      { score: 0.91, daysAgo: 9 },
-      { score: 0.84, daysAgo: 4 },
-      { score: 0.78, daysAgo: 2 },
+      { score: 0.82, daysAgo: 9 },
+      { score: 0.64, daysAgo: 4 },
+      { score: 0.45, daysAgo: 2 },
     ],
   };
   for (const [slug, id] of productIdBySlug.entries()) {
@@ -499,9 +550,11 @@ export async function runSeed(ctx: RunContext): Promise<void> {
       for (const point of trajectory) {
         await ctx.api.post(`/seed/trust-score-history/${id}`, point);
       }
-    } else {
-      await ctx.api.post(`/seed/trust-score-recompute/${id}`, {});
     }
+    // Recompute every product — including trajectory products — so the CURRENT
+    // score is the real engine value. For revenue-daily that lands red; the
+    // back-dated points above give the chart its declining lead-in.
+    await ctx.api.post(`/seed/trust-score-recompute/${id}`, {});
   }
 
   logger.info('seed complete');
