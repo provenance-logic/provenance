@@ -12,6 +12,7 @@ import { ApprovalEventEntity } from '../entities/approval-event.entity.js';
 import { TEMPORAL_CLIENT } from '../temporal/temporal-client.provider.js';
 import { DataProductEntity } from '../../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../../products/entities/port-declaration.entity.js';
+import { PrincipalEntity } from '../../organizations/entities/principal.entity.js';
 import { ConnectionPackageService } from '../connection-package.service.js';
 import { ConsentService } from '../../consent/consent.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
@@ -135,6 +136,7 @@ describe('AccessService', () => {
         { provide: getRepositoryToken(ApprovalEventEntity), useFactory: mockRepo },
         { provide: getRepositoryToken(DataProductEntity),   useFactory: mockRepo },
         { provide: getRepositoryToken(PortDeclarationEntity), useFactory: mockRepo },
+        { provide: getRepositoryToken(PrincipalEntity), useFactory: mockRepo },
         { provide: TEMPORAL_CLIENT, useFactory: mockTemporalClient },
         {
           provide: ConnectionPackageService,

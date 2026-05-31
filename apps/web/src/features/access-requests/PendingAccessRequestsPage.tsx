@@ -58,7 +58,8 @@ export function PendingAccessRequestsPage() {
 
   const handleApprove = async (request: AccessRequest) => {
     if (!orgId) return;
-    if (!window.confirm(`Approve access request from ${request.requesterPrincipalId.slice(0, 8)}… for this product?`)) return;
+    const who = request.requesterName ?? request.requesterEmail ?? `${request.requesterPrincipalId.slice(0, 8)}…`;
+    if (!window.confirm(`Approve access request from ${who} for this product?`)) return;
     markActing(request.id, true);
     setActionError(null);
     try {
@@ -141,7 +142,16 @@ export function PendingAccessRequestsPage() {
                     </div>
                     <p className="mt-2 text-sm text-slate-700">
                       <span className="text-slate-500">Requester:</span>{' '}
-                      <span className="font-mono text-xs">{request.requesterPrincipalId}</span>
+                      {request.requesterName || request.requesterEmail ? (
+                        <span>
+                          {request.requesterName ?? request.requesterEmail}
+                          {request.requesterName && request.requesterEmail
+                            ? ` (${request.requesterEmail})`
+                            : ''}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-xs">{request.requesterPrincipalId}</span>
+                      )}
                     </p>
                     {request.justification && (
                       <p className="mt-2 text-sm text-slate-700">

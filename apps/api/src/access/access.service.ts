@@ -7,7 +7,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, In, Repository } from 'typeorm';
 import type { Client } from '@temporalio/client';
 import { TEMPORAL_CLIENT } from './temporal/temporal-client.provider.js';
 import { APPROVAL_TASK_QUEUE } from './temporal/temporal-worker.service.js';
@@ -17,6 +17,7 @@ import { AccessRequestEntity } from './entities/access-request.entity.js';
 import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { ConnectionPackageService } from './connection-package.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -54,6 +55,8 @@ export class AccessService {
     private readonly productRepo: Repository<DataProductEntity>,
     @InjectRepository(PortDeclarationEntity)
     private readonly portRepo: Repository<PortDeclarationEntity>,
+    @InjectRepository(PrincipalEntity)
+    private readonly principalRepo: Repository<PrincipalEntity>,
     @Inject(TEMPORAL_CLIENT)
     private readonly temporalClient: Client | null,
     private readonly connectionPackageService: ConnectionPackageService,
@@ -520,7 +523,7 @@ export class AccessService {
 
     const [items, total] = await qb.getManyAndCount();
     return {
-      items: items.map((r) => this.toRequest(r)),
+      items: await this.enrichRequesters(items.map((r) => this.toRequest(r))),
       meta: { total, limit: filters.limit, offset: filters.offset },
     };
   }
@@ -668,7 +671,7 @@ export class AccessService {
     const request = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException(`Access request ${requestId} not found`);
     await this.assertCallerCanReadRequest(orgId, request, callerPrincipalId);
-    return this.toRequest(request);
+    return (await this.enrichRequesters([this.toRequest(request)]))[0];
   }
 
   async approveRequest(
@@ -1036,6 +1039,9 @@ export class AccessService {
       orgId: e.orgId,
       productId: e.productId,
       requesterPrincipalId: e.requesterPrincipalId,
+      // Resolved by enrichRequesters() on the read paths; null until then.
+      requesterName: null,
+      requesterEmail: null,
       justification: e.justification,
       accessScope: e.accessScope,
       status: e.status,
@@ -1046,6 +1052,27 @@ export class AccessService {
       resolutionNote: e.resolutionNote,
       updatedAt: e.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Fill requesterName / requesterEmail from identity.principals so approvers
+   * see a human, not a raw UUID (walkthrough finding — the approval UI showed
+   * the bare requesterPrincipalId). Batch lookup; unresolved principals stay
+   * null. Org-scoped: principals are looked up within their own org rows, but
+   * since principal ids are globally unique we resolve by id directly.
+   */
+  private async enrichRequesters(requests: AccessRequest[]): Promise<AccessRequest[]> {
+    const ids = [...new Set(requests.map((r) => r.requesterPrincipalId).filter(Boolean))];
+    if (ids.length === 0) return requests;
+    // @cross-tenant-by-design: requester identity is display metadata for the
+    // approver; principal ids are globally-unique UUIDs and only name/email
+    // are exposed. No tenant-scoped data crosses here.
+    const principals = await this.principalRepo.find({ where: { id: In(ids) } });
+    const byId = new Map(principals.map((p) => [p.id, p]));
+    return requests.map((r) => {
+      const p = byId.get(r.requesterPrincipalId);
+      return p ? { ...r, requesterName: p.displayName, requesterEmail: p.email } : r;
+    });
   }
 
   private toEvent(e: ApprovalEventEntity): ApprovalEvent {
