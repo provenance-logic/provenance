@@ -6,6 +6,7 @@ import { ApprovalEventEntity } from './entities/approval-event.entity.js';
 import { DataProductEntity } from '../products/entities/data-product.entity.js';
 import { PortDeclarationEntity } from '../products/entities/port-declaration.entity.js';
 import { RoleAssignmentEntity } from '../organizations/entities/role-assignment.entity.js';
+import { PrincipalEntity } from '../organizations/entities/principal.entity.js';
 import { temporalClientProvider } from './temporal/temporal-client.provider.js';
 import { TemporalWorkerService } from './temporal/temporal-worker.service.js';
 import { AccessService } from './access.service.js';
@@ -29,6 +30,7 @@ import { AccessNotificationsTriggerWorker } from './access-notifications-trigger
       DataProductEntity,
       PortDeclarationEntity,
       RoleAssignmentEntity,
+      PrincipalEntity,
     ]),
     forwardRef(() => ConsentModule),
     NotificationsModule,

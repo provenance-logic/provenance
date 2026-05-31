@@ -102,6 +102,10 @@ export interface AccessRequest {
   orgId: Uuid;
   productId: Uuid;
   requesterPrincipalId: Uuid;
+  /** Requester's display name / email, resolved from the principal for UI
+   * display (so approvers see a human, not a raw UUID). Null if unresolved. */
+  requesterName: string | null;
+  requesterEmail: string | null;
   justification: string | null;
   /** NULL means full access was requested. */
   accessScope: AccessScope | null;

@@ -453,6 +453,10 @@ export class MarketplaceService {
         orgId: e.orgId,
         productId: e.productId,
         requesterPrincipalId: e.requesterPrincipalId,
+        // These are the caller's OWN requests (marketplace "my requests"), so
+        // requester identity display isn't needed here — left null.
+        requesterName: null,
+        requesterEmail: null,
         justification: e.justification,
         accessScope: e.accessScope,
         status: e.status,
