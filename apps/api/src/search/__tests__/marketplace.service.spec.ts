@@ -212,16 +212,16 @@ describe('MarketplaceService', () => {
   // B-072 — q parameter on the marketplace listing path
   // ---------------------------------------------------------------------------
 
-  describe('listAllProducts / listProducts — q parameter (B-072)', () => {
+  describe('listProducts — q parameter (B-072)', () => {
     it('does NOT call OpenSearch when q is unset (filter-only path)', async () => {
-      await service.listAllProducts({});
+      await service.listProducts('org-test',{});
 
       expect(osClient.search).not.toHaveBeenCalled();
     });
 
     it('short-circuits to empty results when q is set and OpenSearch returns no hits', async () => {
       // mockOsClient default returns an empty hit array.
-      const result = await service.listAllProducts({ q: 'nomatch' });
+      const result = await service.listProducts('org-test',{ q: 'nomatch' });
 
       expect(osClient.search).toHaveBeenCalledTimes(1);
       expect(result.items).toEqual([]);
@@ -233,7 +233,7 @@ describe('MarketplaceService', () => {
     });
 
     it('passes q as multi_match bool_prefix so type-as-you-search matches partial typing', async () => {
-      await service.listAllProducts({ q: 'cam' });
+      await service.listProducts('org-test',{ q: 'cam' });
 
       const call = osClient.search.mock.calls[0][0] as {
         body: { query: { bool: { must: Array<{ multi_match: { query: string; fields: string[]; type: string } }> } } };
@@ -249,7 +249,7 @@ describe('MarketplaceService', () => {
     });
 
     it('scopes the OpenSearch query to status=published when includeDeprecated is unset', async () => {
-      await service.listAllProducts({ q: 'campaign' });
+      await service.listProducts('org-test',{ q: 'campaign' });
 
       const call = osClient.search.mock.calls[0][0] as {
         body: { query: { bool: { filter: Array<unknown> } } };
@@ -260,7 +260,7 @@ describe('MarketplaceService', () => {
     });
 
     it('scopes the OpenSearch query to status IN (published, deprecated) when includeDeprecated is true', async () => {
-      await service.listAllProducts({ q: 'campaign', includeDeprecated: true });
+      await service.listProducts('org-test',{ q: 'campaign', includeDeprecated: true });
 
       const call = osClient.search.mock.calls[0][0] as {
         body: { query: { bool: { filter: Array<unknown> } } };
@@ -281,24 +281,23 @@ describe('MarketplaceService', () => {
       );
     });
 
-    it('does NOT add an orgId filter when listAllProducts (cross-org) is called', async () => {
-      await service.listAllProducts({ q: 'campaign' });
+    it('ALWAYS scopes to orgId — there is no cross-org listing path (org tenant boundary)', async () => {
+      await service.listProducts('org-test', { q: 'campaign' });
 
       const call = osClient.search.mock.calls[0][0] as {
         body: { query: { bool: { filter: Array<unknown> } } };
       };
-      // No filter element should have an `orgId` term key
       const hasOrgFilter = call.body.query.bool.filter.some(
         (f) => typeof f === 'object' && f !== null && 'term' in f &&
-               (f as { term: Record<string, unknown> }).term.orgId !== undefined,
+               (f as { term: Record<string, unknown> }).term.orgId === 'org-test',
       );
-      expect(hasOrgFilter).toBe(false);
+      expect(hasOrgFilter).toBe(true);
     });
 
     it('falls back to an empty match set if OpenSearch is unavailable when q is set', async () => {
       osClient.search.mockRejectedValueOnce(new Error('Connection refused'));
 
-      const result = await service.listAllProducts({ q: 'campaign' });
+      const result = await service.listProducts('org-test',{ q: 'campaign' });
 
       // Short-circuit path: empty IDs → empty results; PG not queried.
       expect(result.items).toEqual([]);
