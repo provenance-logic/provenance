@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   marketplaceApi,
-  SNIPPET_DESTINATIONS,
+  snippetDestinationsFor,
   type SnippetDestination,
   type PortSnippetResponse,
 } from '../../shared/api/marketplace.js';
@@ -523,6 +523,12 @@ function SnippetPicker({
   const isSnowflake = portIsSnowflakeBacked(port);
   const showLocatorInput = destination === 'snowflake_share' && isSnowflake;
 
+  // Only offer destinations that apply to this port's interface type — a
+  // semantic / REST / GraphQL / streaming / file port is python-only, so we
+  // don't list SQL/JDBC/dbt/etc. (which previously errored with "not yet
+  // generated"). sql_jdbc gets the full set (+ Snowflake share if applicable).
+  const destinations = snippetDestinationsFor(port.interfaceType, isSnowflake);
+
   // F10.15 — call the per-port situation endpoint once per port. The result
   // drives the access banner (A vs B + grant/no-grant) and is independent
   // of which destination the user picks; we cache it for the lifetime of
@@ -603,7 +609,7 @@ function SnippetPicker({
           onChange={(e) => setDestination(e.target.value as SnippetDestination)}
           className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
         >
-          {SNIPPET_DESTINATIONS.map((opt) => (
+          {destinations.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>

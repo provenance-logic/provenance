@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { LineageGraphNode } from '@provenance/types';
 
 const NODE_BADGE_COLORS: Record<string, string> = {
@@ -12,13 +13,24 @@ const NODE_BADGE_COLORS: Record<string, string> = {
 
 interface Props {
   node: LineageGraphNode | null;
+  /** Org of the lineage being viewed — used to build the product link. */
+  orgId?: string;
+  /** The product the graph is centered on; we don't link a node to itself. */
+  centralProductId?: string;
   onClose: () => void;
 }
 
-export function NodeDetailPanel({ node, onClose }: Props) {
+export function NodeDetailPanel({ node, orgId, centralProductId, onClose }: Props) {
   if (!node) return null;
 
   const badgeColor = NODE_BADGE_COLORS[node.type] ?? NODE_BADGE_COLORS.Unknown;
+  // DataProduct nodes carry the product id as node.id — offer navigation to the
+  // product page (cross-domain within the same org). Not for the central node
+  // (that's the page you're already on) or non-product node types.
+  const productLink =
+    node.type === 'DataProduct' && orgId && node.id !== centralProductId
+      ? `/marketplace/${orgId}/${node.id}`
+      : null;
   const metadata = node.metadata && Object.keys(node.metadata).length > 0
     ? node.metadata
     : null;
@@ -44,6 +56,16 @@ export function NodeDetailPanel({ node, onClose }: Props) {
       </div>
 
       <div className="p-4 space-y-3">
+        {productLink && (
+          <Link
+            to={productLink}
+            onClick={onClose}
+            className="block w-full text-center bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 rounded"
+          >
+            View product →
+          </Link>
+        )}
+
         <div>
           <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Node ID</dt>
           <dd className="mt-0.5 text-sm text-slate-700 font-mono break-all">{node.id}</dd>
