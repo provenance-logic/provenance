@@ -9,24 +9,6 @@ Known bugs and unresolved issues on the Provenance platform. Sorted by severity 
 
 ---
 
-## B-095 — Seeded agent Keycloak clients lack the provenance claim mappers on long-lived environments → every agent MCP call 401s; reseed never self-heals
-
-- **Severity:** **High** — breaks the agent/MCP path (the platform's headline differentiator) end-to-end on any long-lived environment whose agent rows predate the mapper code. Found live-broken on **dev** 2026-05-31 during a pre-launch MCP-over-SSE verification: every agent token was rejected `401` at the Agent Query Layer. **Fresh installs are unaffected** (a clean seed provisions correct clients), so this is environment-specific, not an OSS-onboarding blocker.
-- **Status:** In progress. Immediate dev un-break applied by hand (the three mappers added to `agent-acme-marketing-copilot`, handshake re-verified green); durable seed self-heal fix on branch `fix/seed-agent-client-mappers`. Other dev agents (e.g. `agent-beta-risk-assistant`) remain stale until reseeded or hand-patched.
-- **Area:** `apps/api/src/seed/seed.controller.ts` (POST /seed/agents existing-agent path); `apps/api/src/auth/keycloak-admin.service.ts` (`createAgentClient`); `apps/agent-query/src/auth/auth.middleware.ts` (the 401 site).
-
-**Root cause.** The AQL auth middleware requires `provenance_principal_type=ai_agent` + `agent_id` + `provenance_org_id` claims on every MCP request. `createAgentClient` attaches these as hardcoded-claim protocol mappers — but only when it actually runs. The seed's `POST /seed/agents` short-circuits when the agent DB row already exists (`if (existing) return`), skipping Keycloak entirely. On a long-lived box (dev holds months of ad-hoc state, rarely hard-reset) the agent rows persist, so a reseed never re-provisions the Keycloak client. Any agent client created before the mappers were added to `createAgentClient` therefore stays mapper-less forever, and its tokens 401.
-
-**Why demo/fresh don't show it.** A hard reset truncates Postgres (incl. `identity.agent_identities`) but not Keycloak, so on the next seed the agent is "new" → `createAgentClient` runs → 409 (client exists) → delete + recreate **with** current mappers (the B-085 idempotency path). Demo gets hard-reset routinely; dev does not.
-
-**Evidence (dev, 2026-05-31).** Token for `agent-acme-marketing-copilot` carried none of the three claims; its Keycloak client had only the default mappers (Client Host/ID/IP). `GET /mcp/sse` → `401`. After hand-adding the three mappers, the full handshake went green: SSE session established, `tools/list` returned all 9 tools, `list_products` returned 14 products, `get_agent_status` resolved the agent by its `agent_id` claim.
-
-**Fix.** `POST /seed/agents` now re-provisions the Keycloak client on the existing-agent path too (calls `createAgentClient`, which idempotently deletes + recreates with the current mappers), so a reseed self-heals stale clients. The create transaction is still skipped for existing agents; only the Keycloak client is repaired. Trade-off: the seed agent's client secret re-rotates each run, which is harmless (seed secrets are fetched fresh from Keycloak, never persisted).
-
-**Follow-ups.** (1) The smoke test should drive the agent handshake against an *existing-agent* reseed so this class of regression can't hide — it already exercises MCP-over-SSE on demo, but demo's routine hard reset masks the existing-agent path. (2) Consider a lighter repair (add only the missing mappers in place, no client recreate / secret rotation) if the per-run churn proves noisy. (3) Same recurring class as the Phase 4 MCP silent regression and B-076/B-077 — "✅ on paper, agent path silently down."
-
----
-
 ## B-081 — Consumer-side onboarding: human-consumer access is genuinely self-service; agent registration and visibility have UI, but agent connection-reference request/approval is still API-only (credential model already settled by ADR-011 + ADR-013)
 
 - **Severity:** **Medium** — *downgraded from High on 2026-05-30 correction.* Companion to [B-080](#B-080). Together B-080 (register a connector) + B-081 (consume a product, human + agent) cover the three onboarding paths that *are* the platform's whole promise. Matt's framing 2026-05-26: "these three things are among the most important." After the 2026-05-30 correction (see below), B-081's remaining scope is UI/UX-shaped, not architectural — hence the downgrade.

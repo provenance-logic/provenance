@@ -6,6 +6,26 @@ Entries are ordered newest first. When opening a bug in [open.md](./open.md), ch
 
 ---
 
+## B-095 — Seeded agent Keycloak clients lack the provenance claim mappers on long-lived environments → every agent MCP call 401s; reseed never self-heals
+
+- **Resolved:** 2026-06-06 (merged). Found live-broken on **dev** 2026-05-31 during a pre-launch MCP-over-SSE verification.
+- **Severity:** High — broke the agent/MCP path (the platform's headline differentiator) end-to-end on any long-lived environment whose agent rows predate the mapper code. Fresh installs were unaffected (a clean seed provisions correct clients), so this was environment-specific, not an OSS-onboarding blocker.
+- **Area:** `apps/api/src/seed/seed.controller.ts` (POST /seed/agents existing-agent path); `apps/api/src/auth/keycloak-admin.service.ts` (`createAgentClient`); `apps/agent-query/src/auth/auth.middleware.ts` (the 401 site).
+
+**Root cause.** The AQL auth middleware requires `provenance_principal_type=ai_agent` + `agent_id` + `provenance_org_id` claims on every MCP request. `createAgentClient` attaches these as hardcoded-claim protocol mappers — but only when it actually runs. The seed's `POST /seed/agents` short-circuited when the agent DB row already existed (`if (existing) return`), skipping Keycloak entirely. On a long-lived box (dev holds months of ad-hoc state, rarely hard-reset) the agent rows persist, so a reseed never re-provisioned the Keycloak client. Any agent client created before the mappers were added to `createAgentClient` therefore stayed mapper-less forever, and its tokens 401'd.
+
+**Why demo/fresh don't show it.** A hard reset truncates Postgres (incl. `identity.agent_identities`) but not Keycloak, so on the next seed the agent is "new" → `createAgentClient` runs → 409 (client exists) → delete + recreate **with** current mappers (the B-085 idempotency path). Demo gets hard-reset routinely; dev does not.
+
+**Fix.** `POST /seed/agents` now re-provisions the Keycloak client on the existing-agent path too (calls `createAgentClient`, which idempotently deletes + recreates with the current mappers), so a reseed self-heals stale clients. The create transaction is still skipped for existing agents; only the Keycloak client (and the `identity.principals` self-heal row) is repaired. Trade-off: the seed agent's client secret re-rotates each run, which is harmless (seed secrets are fetched fresh from Keycloak, never persisted).
+
+**Deployment note.** The fix self-heals **only when a seed runs against a box carrying the new code**. As of resolution, the code is deployed to dev (api at `f6873a1`), but dev's stale seed-agent clients are **not yet repaired** — only `agent-acme-marketing-copilot` was hand-patched on 2026-05-31. They self-heal on the next `POST /seed/agents` run (deferred to the next agent/persona walkthrough reseed, to avoid reconciling dev's ad-hoc state toward seed state). Demo self-heals automatically on its routine hard-reset+reseed.
+
+**Follow-ups (open).** (1) The smoke test should drive the agent handshake against an *existing-agent* reseed so this class of regression can't hide — it already exercises MCP-over-SSE on demo, but demo's routine hard reset masks the existing-agent path. (2) Consider a lighter repair (add only the missing mappers in place, no client recreate / secret rotation) if the per-run churn proves noisy. (3) Same recurring class as the Phase 4 MCP silent regression and B-076/B-077 — "✅ on paper, agent path silently down."
+
+- **Fix commit:** `f6873a1` (PR #251).
+
+---
+
 ## B-094 — `demo-smoke-test.sh` product-count assertion was stale after the marketplace org-scoping (B-086)
 
 - **Resolved:** 2026-05-31, surfaced the first time the smoke test actually ran post-deploy (it had been silently skipped — see B-093).
