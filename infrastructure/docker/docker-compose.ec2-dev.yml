@@ -771,6 +771,11 @@ services:
     networks:
       - provenance
     depends_on:
-      - api
-      - web
-      - agent-query
+      keycloak:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      agent-query:
+        condition: service_healthy
