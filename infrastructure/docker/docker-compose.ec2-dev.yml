@@ -169,7 +169,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    command: start-dev --import-realm --http-enabled=true --hostname-strict=false --hostname-strict-https=false
+    # --hostname-strict-https was a Hostname-v1 CLI option, removed outright
+    # in this image's build (hostname:v2 is the only feature compiled in) —
+    # passing it as a CLI arg (unlike the env-var form) hard-fails startup
+    # with "Unknown option". KC_HOSTNAME_STRICT_HTTPS below still applies via
+    # the v1-compat env-var path (warns, doesn't fail — verified).
+    command: start-dev --import-realm --http-enabled=true --hostname-strict=false
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
