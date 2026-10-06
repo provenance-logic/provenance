@@ -257,7 +257,7 @@ services:
   # Depends on: postgres (healthy)
   # ---------------------------------------------------------------------------
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0.3
+    image: quay.io/keycloak/keycloak:26.8.0
     container_name: provenance-keycloak
     restart: unless-stopped
     command: start-dev --import-realm
@@ -273,8 +273,8 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-provenance_dev_admin}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-provenance_dev_admin}
     volumes:
       - keycloak_data:/opt/keycloak/data
       - ./config/keycloak/realms:/opt/keycloak/data/import:ro
@@ -286,7 +286,10 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      # Keycloak 26 moved health/metrics to a separate management interface
+      # (default port 9000) — KC_HEALTH_ENABLED alone no longer serves
+      # /health/ready on the main HTTP port (verified against the real image).
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 15s
       timeout: 10s
       retries: 20

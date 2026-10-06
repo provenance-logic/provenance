@@ -28,9 +28,10 @@
 	# and redirects HTTP → HTTPS by default. Keycloak serves /realms/*,
 	# /resources/*, and /admin/* natively at root — no path handling needed.
 	#
-	# Explicit header_up directives so Keycloak (KC_PROXY=edge) generates
-	# https:// URLs and sets Secure cookies. Caddy v2 sets these by default,
-	# but we keep them explicit for clarity and robustness against config drift.
+	# Explicit header_up directives so Keycloak (KC_PROXY_HEADERS=xforwarded)
+	# generates https:// URLs and sets Secure cookies. Caddy v2 sets these by
+	# default, but we keep them explicit for clarity and robustness against
+	# config drift.
 	reverse_proxy keycloak:8080 {
 		header_up Host {host}
 		header_up X-Forwarded-Proto {scheme}
